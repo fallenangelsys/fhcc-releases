@@ -1,0 +1,37 @@
+.system-event-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:22px 0}
+.system-event-feed{display:grid;gap:12px;min-height:420px;padding:4px 0}
+.system-event-card{position:relative;display:grid;grid-template-columns:12px 1fr;gap:14px;padding:17px 18px;border:1px solid rgba(154,145,255,.2);border-radius:18px;background:linear-gradient(135deg,rgba(23,24,72,.92),rgba(17,18,56,.82));transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+.system-event-card:hover{transform:translateY(-2px);border-color:rgba(139,130,255,.58);box-shadow:0 16px 38px rgba(4,5,25,.26)}
+.system-event-marker{width:9px;height:9px;margin-top:5px;border-radius:999px;background:#8b82ff;box-shadow:0 0 18px rgba(139,130,255,.75)}
+.system-event-card.boost_started .system-event-marker{background:#43e5a2}
+.system-event-card.boost_ended .system-event-marker{background:#ff758d}
+.system-event-card.member_joined .system-event-marker{background:#58c9ff}
+.system-event-card header,.system-event-card footer{display:flex;align-items:center;gap:12px}
+.system-event-card header{justify-content:space-between}
+.system-event-card header b{font-size:14px}
+.system-event-card time,.system-event-card footer{font-size:11px;color:var(--muted,#9698bb)}
+.system-event-card p{margin:12px 0 11px;line-height:1.5;color:var(--text,#f5f5ff)}
+.system-event-card footer{flex-wrap:wrap}
+.system-event-card footer em{margin-left:auto;padding:4px 8px;border:1px solid rgba(139,130,255,.25);border-radius:999px;font-style:normal;text-transform:uppercase;letter-spacing:.08em;font-size:9px}
+.system-event-member{width:100%;display:flex;align-items:center;gap:12px;margin-top:13px;padding:11px 12px;border:1px solid rgba(154,145,255,.22);border-radius:14px;background:rgba(8,10,40,.38);color:inherit;text-align:left;transition:border-color .18s ease,background .18s ease,transform .18s ease}
+.system-event-member:not(.static){cursor:pointer}
+.system-event-member:not(.static):hover{transform:translateX(3px);border-color:rgba(113,226,255,.52);background:rgba(20,25,74,.72)}
+.system-event-member img,.system-event-avatar-fallback{width:42px;height:42px;flex:0 0 42px;border-radius:13px;object-fit:cover;border:1px solid rgba(255,255,255,.14)}
+.system-event-avatar-fallback{display:grid;place-items:center;background:linear-gradient(135deg,#776cff,#3dd9c5);font-weight:900;color:#fff}
+.system-event-member span{display:grid;gap:3px;min-width:0}
+.system-event-member strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.system-event-member small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted,#9698bb);font-size:10px}
+.system-event-member>i{margin-left:auto;color:#8fead2;font-size:10px;font-style:normal;white-space:nowrap}
+.system-event-boost-count{padding:4px 8px;border:1px solid rgba(67,229,162,.35);border-radius:999px;color:#75efbd;font-weight:800}
+.system-events-pager{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid rgba(154,145,255,.2);border-radius:16px;background:rgba(11,13,48,.72)}
+.system-events-page-summary{color:var(--muted,#9698bb);font-size:11px;font-weight:700}
+.system-events-page-controls{display:flex;align-items:center;gap:12px}.system-events-page-controls>label{display:flex;align-items:center;gap:7px;color:var(--muted,#9698bb);font-size:11px;font-weight:750}.system-events-page-controls select{height:34px;border:1px solid rgba(154,145,255,.25);border-radius:10px;padding:0 28px 0 10px;background:#1f205b;color:#fff;font:inherit;font-weight:800;cursor:pointer}
+.system-events-page-actions{display:flex;align-items:center;gap:7px}
+.system-events-page-actions button{width:36px;height:34px;border:1px solid rgba(154,145,255,.25);border-radius:10px;background:rgba(31,32,91,.72);color:#fff;font:inherit;font-weight:900;cursor:pointer;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+.system-events-page-actions button:hover:not(:disabled){transform:translateY(-1px);border-color:rgba(139,130,255,.7);background:rgba(74,68,173,.72)}
+.system-events-page-actions button:disabled{cursor:default;opacity:.35}
+.system-events-page-number{min-width:58px;text-align:center;color:#c8c5ed;font-size:11px;font-weight:800}
+@media(max-width:680px){.system-events-pager{align-items:stretch;flex-direction:column}.system-events-page-controls{align-items:stretch;flex-direction:column}.system-events-page-actions{justify-content:space-between}}
+@media(max-width:1050px){.system-event-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:680px){.system-event-summary{grid-template-columns:1fr}.system-event-card footer em{margin-left:0}.system-event-member>i{display:none}}
+.system-event-progress{margin:22px 0 14px;padding:20px;border:1px solid rgba(139,130,255,.3);border-radius:22px;background:linear-gradient(135deg,rgba(32,31,95,.88),rgba(12,17,58,.88))}.system-event-progress.complete{border-color:rgba(67,229,162,.3)}.system-event-progress-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px}.system-event-progress-head div{display:grid;gap:5px}.system-event-progress-head span{color:#aaa5ff;font-size:9px;font-weight:900;letter-spacing:.16em}.system-event-progress-head strong{font-size:18px}.system-event-progress-head>b{font-size:25px}.system-event-progress>i{display:block;height:8px;margin:15px 0;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden}.system-event-progress>i span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#8174ff,#40ddb0);transition:width .3s ease}.system-event-progress-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.system-event-progress-meta span{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);color:#9997b8;font-size:10px}.system-event-progress-meta b{display:block;margin-bottom:3px;color:#fff;font-size:14px}.system-event-summary{grid-template-columns:repeat(5,minmax(0,1fr))}.system-event-card.membership .system-event-marker{background:#58c9ff}.system-event-card.channel .system-event-marker{background:#8b82ff}.system-event-card.stage .system-event-marker{background:#db79ff}.system-event-card.safety .system-event-marker{background:#ff9b69}.system-event-card.subscriptions .system-event-marker{background:#ffd069}@media(max-width:1050px){.system-event-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.system-event-progress-meta{grid-template-columns:1fr}}

@@ -1,0 +1,46 @@
+#editor-preview {
+  display: block;
+  width: 100%;
+  min-height: clamp(720px, calc(100vh - 180px), 1120px);
+  border: 0;
+  border-radius: 22px;
+  background: #0b0c16;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .34);
+}
+
+body.editor-focus-mode #editor-preview {
+  position: fixed;
+  z-index: 90000;
+  inset: 76px 22px 22px;
+  width: calc(100vw - 44px);
+  height: calc(100vh - 98px);
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, .16);
+}
+
+body.editor-focus-mode::after {
+  content: "";
+  position: fixed;
+  z-index: 89999;
+  inset: 0;
+  background: rgba(5, 6, 14, .9);
+  backdrop-filter: blur(18px);
+}
+
+#editor-element-list {
+  scrollbar-width: thin;
+  scrollbar-color: #5865f2 rgba(255, 255, 255, .06);
+}
+
+.editor-element {
+  min-height: 64px;
+  transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.editor-element:hover {
+  transform: translateX(3px);
+}
+
+@media (max-width: 1180px) {
+  #editor-preview { min-height: 660px; }
+}

@@ -1,0 +1,17 @@
+node_modules/
+.env
+.build-tools/
+/.vscode/
+/data/backups/
+# Runtime-Datenbanken (Live-Serverdaten inkl. .bak-Varianten, nie committen)
+/data/*.json*
+/data/member-activity/
+/data/server-context/
+/data/server-backups/
+/dist/
+/runtime/
+tmp-*
+.freebuff/
+npm-debug.log*
+.DS_Store
+*.log

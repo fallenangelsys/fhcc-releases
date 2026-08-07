@@ -1,0 +1,134 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { featureCards, normalizeConfig } from '../src/defaultConfig.js';
+import {
+  calculateServerTagDecision,
+  evaluateServerTagState,
+  normalizeServerTagTrackerConfig,
+  _serverTagTrackerInternals
+} from '../src/features/serverTagTracker.js';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
+
+const matching = evaluateServerTagState({
+  primaryGuild: { identityGuildId: 'guild-1', identityEnabled: true, tag: 'FH' }
+}, 'guild-1');
+assert.equal(matching.state, 'wearing', 'Die eigene Server-ID muss als aktiver Server-Tag erkannt werden.');
+assert.equal(matching.tag, 'FH');
+
+const lookalike = evaluateServerTagState({
+  primaryGuild: { identityGuildId: 'guild-2', identityEnabled: true, tag: 'FH' }
+}, 'guild-1');
+assert.equal(lookalike.state, 'not-wearing', 'Ein gleicher sichtbarer Tag eines anderen Servers darf nicht zählen.');
+
+assert.equal(evaluateServerTagState({ primaryGuild: null }, 'guild-1').state, 'not-wearing');
+assert.equal(evaluateServerTagState({}, 'guild-1').state, 'unknown', 'Fehlende Discord-Daten dürfen keinen Rollenentzug auslösen.');
+assert.equal(evaluateServerTagState({ primaryGuild: { identityGuildId: 'guild-1', identityEnabled: null } }, 'guild-1').state, 'not-wearing');
+assert.equal(evaluateServerTagState({ primaryGuild: { identityGuildId: 'guild-1', identityEnabled: true, tag: '' } }, 'guild-1').state, 'unknown', 'Ein unvollständiges Primärserver-Profil darf keine Rolle auslösen.');
+assert.equal(_serverTagTrackerInternals.selectInitialObservation({
+  authoritativeUser: null,
+  memberUser: { primaryGuild: null },
+  guildId: 'guild-1'
+}).state, 'not-wearing', 'Ein Vollabgleich ohne Ereignisprofil darf nicht an einem Nullwert abbrechen.');
+
+const firstNegative = calculateServerTagDecision({
+  state: 'not-wearing', previousMisses: 0, hasRole: true, removalConfirmations: 2
+});
+assert.deepEqual(firstNegative, { action: 'none', nextPositiveConfirmations: 0, nextMisses: 1, confirmed: false });
+
+const duplicateNegative = calculateServerTagDecision({
+  state: 'not-wearing', previousMisses: 1, hasRole: true, removalConfirmations: 2, allowMissIncrement: false
+});
+assert.deepEqual(duplicateNegative, { action: 'none', nextPositiveConfirmations: 0, nextMisses: 1, confirmed: false }, 'Doppelte Ereignisse dürfen nicht als neue Bestätigung zählen.');
+
+const secondNegative = calculateServerTagDecision({
+  state: 'not-wearing', previousMisses: 1, hasRole: true, removalConfirmations: 2
+});
+assert.deepEqual(secondNegative, { action: 'remove', nextPositiveConfirmations: 0, nextMisses: 2, confirmed: true });
+
+const unknown = calculateServerTagDecision({
+  state: 'unknown', previousMisses: 1, hasRole: true, removalConfirmations: 2
+});
+assert.deepEqual(unknown, { action: 'none', nextPositiveConfirmations: 0, nextMisses: 1, confirmed: false });
+
+const firstPositive = calculateServerTagDecision({
+  state: 'wearing', previousMisses: 2, hasRole: false, removalConfirmations: 2
+});
+assert.deepEqual(firstPositive, { action: 'none', nextPositiveConfirmations: 1, nextMisses: 0, confirmed: false });
+
+const duplicatePositive = calculateServerTagDecision({
+  state: 'wearing', previousPositiveConfirmations: 1, hasRole: false, assignmentConfirmations: 2, allowPositiveIncrement: false
+});
+assert.deepEqual(duplicatePositive, { action: 'none', nextPositiveConfirmations: 1, nextMisses: 0, confirmed: false });
+
+const secondPositive = calculateServerTagDecision({
+  state: 'wearing', previousPositiveConfirmations: 1, hasRole: false, assignmentConfirmations: 2
+});
+assert.deepEqual(secondPositive, { action: 'add', nextPositiveConfirmations: 2, nextMisses: 0, confirmed: true });
+
+const immediatePositiveEvent = calculateServerTagDecision({
+  state: 'wearing', hasRole: false, authoritativeEvent: true
+});
+assert.deepEqual(immediatePositiveEvent, { action: 'add', nextPositiveConfirmations: 1, nextMisses: 0, confirmed: true });
+
+const immediateNegativeEvent = calculateServerTagDecision({
+  state: 'not-wearing', hasRole: true, authoritativeEvent: true
+});
+assert.deepEqual(immediateNegativeEvent, { action: 'remove', nextPositiveConfirmations: 0, nextMisses: 1, confirmed: true });
+
+const normalized = normalizeServerTagTrackerConfig({
+  enabled: true,
+  roleIds: [' 123 ', '456', '123'],
+  scanIntervalMinutes: 1,
+  assignmentConfirmations: 99,
+  removalConfirmations: 99,
+  maxAssignmentsPerScan: 0,
+  excludedRoleIds: ['7', '7', '8']
+});
+assert.equal(normalized.roleId, '123');
+assert.deepEqual(normalized.roleIds, ['123', '456']);
+assert.equal(normalized.scanIntervalMinutes, 5);
+assert.equal(normalized.assignmentConfirmations, 5);
+assert.equal(normalized.removalConfirmations, 5);
+assert.equal(normalized.maxAssignmentsPerScan, 1);
+assert.deepEqual(normalized.excludedRoleIds, ['7', '8']);
+assert.equal(_serverTagTrackerInternals.MIN_NEGATIVE_CONFIRMATION_GAP_MS, 60_000);
+assert.equal(_serverTagTrackerInternals.MIN_POSITIVE_CONFIRMATION_GAP_MS, 60_000);
+
+const defaultTracker = normalizeConfig({}).serverTagTracker;
+assert.equal(defaultTracker.enabled, false, 'Das neue Modul darf nach einer Migration nicht ungefragt Rollen verändern.');
+assert.equal(defaultTracker.monitorOnly, true, 'Neue und migrierte Konfigurationen müssen zuerst ohne Rollenänderungen prüfen.');
+assert.equal(defaultTracker.removalConfirmations, 2);
+assert.equal(defaultTracker.assignmentConfirmations, 2);
+assert.equal(defaultTracker.maxAssignmentsPerScan, 10);
+assert.equal(defaultTracker.excludeBots, true);
+assert.deepEqual(normalizeConfig({ serverTagTracker: { roleId: '789' } }).serverTagTracker.roleIds, ['789'], 'Eine bestehende Einzelrolle muss automatisch in die Mehrfachauswahl migriert werden.');
+
+const card = featureCards.find((entry) => entry.id === 'serverTagTracker');
+assert.ok(card, 'Die Modulkarte für den Server-Tag-Tracker fehlt.');
+const fields = new Map(card.fields.map((field) => [field.key, String(field.type || '').toLowerCase()]));
+assert.equal(fields.get('serverTagTracker.roleIds'), 'multiroleselect');
+assert.equal(fields.get('serverTagTracker.monitorOnly'), 'checkbox');
+assert.equal(fields.get('serverTagTracker.excludedRoleIds'), 'multiroleselect');
+assert.equal(fields.get('serverTagTracker.logChannelId'), 'channelselect');
+
+const indexSource = read('src/index.js');
+const dashboardSource = read('src/dashboard.js');
+const rendererSource = read('desktop/renderer/app.js');
+const trackerSource = read('src/features/serverTagTracker.js');
+assert.match(indexSource, /Events\.UserUpdate/);
+assert.match(indexSource, /return queueServerTagReconcile\(/, 'Der manuelle Abgleich muss sofort antworten und im Hintergrund laufen.');
+assert.match(dashboardSource, /\/server-tag-tracker\/sync/);
+assert.match(rendererSource, /data-sync-server-tags/);
+assert.match(trackerSource, /users\.fetch\(userId, \{ cache: true, force: true \}\)/, 'Positive oder rollenrelevante Prüfungen müssen das Discord-Profil ohne Cache neu laden.');
+assert.match(trackerSource, /ASSIGNMENT_SAFETY_WINDOW_MS/, 'Ein Schutz gegen ungewöhnlich viele Rollenvergaben fehlt.');
+assert.match(trackerSource, /authoritativeEvent: true[\s\S]{0,180}authoritativeUser: newUser/, 'Discord-Profilereignisse müssen unmittelbar als autoritative Einzelprüfung verarbeitet werden.');
+assert.doesNotMatch(trackerSource, /\.sendDM\s*\(|\.createDM\s*\(|member\.send\s*\(/, 'Der Tracker darf keine DMs senden.');
+assert.equal((trackerSource.match(/Ã|Â|â€/g) || []).length, 0, 'Der Tracker enthält fehlerhaft kodierte Umlaute.');
+assert.equal((rendererSource.slice(rendererSource.indexOf('function serverTagTrackerOverview'), rendererSource.indexOf('function boostAutomationOverview')).match(/Ã|Â|â€/g) || []).length, 0, 'Die Tracker-Oberfläche enthält fehlerhaft kodierte Umlaute.');
+
+console.log('Server-Tag-Tracker-Smoke: Identität, Sicherheitslogik, Konfiguration, API und UI geprüft.');

@@ -1,0 +1,276 @@
+{
+  "1276125977805721640": {
+    "guildId": "1276125977805721640",
+    "guildName": "FALLEN HEAVEN",
+    "general": {
+      "prefix": "!",
+      "locale": "de-DE",
+      "timezone": "Europe/Berlin",
+      "statusMessage": "„Fallen Heaven – Wo gefallene Engel landen.“",
+      "statusType": "Competing",
+      "onlineStatus": "dnd",
+      "ownerUserIds": [
+        "918550968440860723",
+        "542068115161350174",
+        "852183152042049546"
+      ],
+      "staffRoleIds": [
+        "1371908853679132784",
+        "1305621766286082058",
+        "1305620638505107488",
+        "1305621442519634010",
+        "1305621474790342706",
+        "1305145161709387856",
+        "1305619820586340383",
+        "1305076686030897192"
+      ],
+      "commandLogChannelId": "",
+      "enableTypingIndicator": true,
+      "autoBackupMinutes": 10
+    },
+    "moderation": {
+      "enabled": false,
+      "badWords": [
+        "spam",
+        "werbung",
+        "bannedword"
+      ],
+      "autoDelete": true,
+      "antiSpamEnabled": true,
+      "antiSpamThreshold": 8,
+      "antiSpamWindowSeconds": 12,
+      "timeoutMinutes": 10,
+      "maxWarnings": 3
+    },
+    "welcomeFarewell": {
+      "enabled": false,
+      "welcomeEnabled": true,
+      "welcomeChannelId": "",
+      "welcomeMessage": "Willkommen {user} auf {guild}!",
+      "farewellEnabled": true,
+      "farewellChannelId": "",
+      "farewellMessage": "{user} hat den Server verlassen.",
+      "autoRoleEnabled": true,
+      "autoRoleName": "Member"
+    },
+    "autoresponder": {
+      "enabled": false,
+      "cooldownSeconds": 120,
+      "caseInsensitive": true,
+      "mentionOnly": false,
+      "deleteCommand": false,
+      "rules": [
+        {
+          "trigger": "hallo",
+          "response": "Hi! Wie kann ich helfen?"
+        },
+        {
+          "trigger": "hilfe",
+          "response": "Nutze /help f?r Hilfetexte."
+        }
+      ]
+    },
+    "aiChat": {
+      "enabled": true,
+      "channelId": "1524484484236578919",
+      "model": "qwen2.5:7b",
+      "ollamaUrl": "http://127.0.0.1:11434",
+      "requireStart": true,
+      "memoryEnabled": true,
+      "rememberUserFacts": true,
+      "memoryScope": "user-channel",
+      "replyMode": "channel",
+      "memoryLimitGb": 50,
+      "maxHistoryMessages": 12,
+      "maxStoredMessages": 800,
+      "maxUserFacts": 80,
+      "maxResponseChars": 700,
+      "temperature": 0.7,
+      "contextTokens": 4096,
+      "sendTyping": true,
+      "strictSafetyEnabled": true,
+      "blockInsults": true,
+      "blockPrivilegedActions": true,
+      "onlyMeaningfulQuestions": true,
+      "floodProtectionEnabled": true,
+      "userCooldownSeconds": 8,
+      "channelCooldownSeconds": 3,
+      "maxUserMessagesPerMinute": 6,
+      "maxChannelMessagesPerMinute": 18,
+      "duplicateWindowSeconds": 45,
+      "webSearchEnabled": true,
+      "webSearchCooldownSeconds": 45,
+      "personaName": "Fallen Heaven AI",
+      "personality": "Warm, direkt, aufmerksam, loyal zur Community, ein bisschen dark-futuristisch, aber nie cringe.",
+      "speakingStyle": "kurzes natürliches Deutsch, wie ein normaler Discord-User, keine Sprachmischung, keine KI-Floskeln, Begrüßungen nur kurz erwidern",
+      "responseLength": "kurz",
+      "lore": "Du bist die lokale Server-KI von Fallen Heaven. Du lernst die Community ?ber getrennte User-Erinnerungen kennen und hilfst wie ein ruhiger Operator im Hintergrund.",
+      "relationshipMode": "Merke dir hilfreiche Vorlieben, Namen, Projekte und wiederkehrende Themen. Sei persoenlicher bei Stammusern, aber nicht aufdringlich oder creepy.",
+      "safetyRules": "Keine Rollen vergeben. Keine Rechte Ã¤ndern. Keine Bans, Kicks, Mutes, Timeouts oder Admin-Aktionen ausfÃ¼hren oder versprechen. Keine Beleidigungen Ã¼bernehmen. Keine Massenmentions. Keine privaten Daten erfinden. Keine gefÃ¤hrlichen Anleitungen.",
+      "forbiddenTopics": "",
+      "systemPrompt": "Du bist Fallen Heaven AI im Discord. Antworte ausschließlich auf Deutsch, außer der User fordert ausdrücklich eine andere Sprache. Misch keine Sprachen. Schreib wie ein normaler Mensch im Chat: kurz, locker, direkt und hilfreich. Keine KI-Floskeln. Wenn jemand nur guten Abend, moin oder hallo schreibt, antworte nur natürlich passend zurück, ohne Hilfe-Floskel."
+    },
+    "levels": {
+      "enabled": false,
+      "xpPerMessageMin": 6,
+      "xpPerMessageMax": 16,
+      "cooldownSeconds": 60,
+      "announce": true,
+      "announceChannelId": "",
+      "levelUpMessage": "{user} erreicht Level {level}!"
+    },
+    "tickets": {
+      "enabled": true,
+      "supportRoleId": "",
+      "useThreadMode": true,
+      "closeArchive": true,
+      "closeMessage": "Das Ticket wurde geschlossen."
+    },
+    "logging": {
+      "enabled": false,
+      "channelId": "",
+      "logMessages": true,
+      "logMembers": true,
+      "logRoles": true,
+      "logModeration": true
+    },
+    "memberManagement": {
+      "enabled": false,
+      "pageSize": 10,
+      "hideBots": true,
+      "adminRoleIds": [],
+      "moderatorRoleIds": [],
+      "logChannelId": ""
+    },
+    "autoRole": {
+      "enabled": false,
+      "excludeBots": true,
+      "roleIds": []
+    },
+    "antiraid": {
+      "enabled": false,
+      "joinThreshold": 10,
+      "joinWindowSeconds": 60,
+      "action": "timeout",
+      "actionDurationMinutes": 15,
+      "whitelistRoleIds": []
+    },
+    "embeds": {
+      "selectedTemplateId": "level-up",
+      "templates": [
+        {
+          "id": "level-up",
+          "name": "Level Up",
+          "category": "Automation",
+          "channelId": "",
+          "content": "",
+          "messageId": "",
+          "enabled": true,
+          "embed": {
+            "title": "Level Up!",
+            "description": "{user} hat Level **{level}** erreicht.",
+            "color": "#35d07f",
+            "authorName": "",
+            "authorIconUrl": "",
+            "thumbnailUrl": "{userAvatar}",
+            "imageUrl": "",
+            "footerText": "{guild} Level-System",
+            "footerIconUrl": "",
+            "timestamp": true,
+            "fields": [
+              {
+                "name": "Neues Level",
+                "value": "{level}",
+                "inline": true
+              },
+              {
+                "name": "Server",
+                "value": "{guild}",
+                "inline": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "welcome",
+          "name": "Welcome",
+          "category": "Automation",
+          "channelId": "",
+          "content": "",
+          "messageId": "",
+          "enabled": true,
+          "embed": {
+            "title": "Willkommen auf {guild}",
+            "description": "Sch?n, dass du da bist, {user}. Lies die Regeln und f?hl dich zuhause.",
+            "color": "#27c4e8",
+            "authorName": "",
+            "authorIconUrl": "",
+            "thumbnailUrl": "{userAvatar}",
+            "imageUrl": "",
+            "footerText": "Mitglied beigetreten",
+            "footerIconUrl": "",
+            "timestamp": true,
+            "fields": []
+          }
+        },
+        {
+          "id": "farewell",
+          "name": "Farewell",
+          "category": "Automation",
+          "channelId": "",
+          "content": "",
+          "messageId": "",
+          "enabled": true,
+          "embed": {
+            "title": "Mitglied verlassen",
+            "description": "{username} hat {guild} verlassen.",
+            "color": "#ff6b6b",
+            "authorName": "",
+            "authorIconUrl": "",
+            "thumbnailUrl": "{userAvatar}",
+            "imageUrl": "",
+            "footerText": "Farewell-System",
+            "footerIconUrl": "",
+            "timestamp": true,
+            "fields": []
+          }
+        },
+        {
+          "id": "announcement",
+          "name": "Announcement",
+          "category": "Custom",
+          "channelId": "",
+          "content": "",
+          "messageId": "",
+          "enabled": true,
+          "embed": {
+            "title": "Ank?ndigung",
+            "description": "Schreibe hier deine Nachricht.",
+            "color": "#f1b84b",
+            "authorName": "",
+            "authorIconUrl": "",
+            "thumbnailUrl": "",
+            "imageUrl": "",
+            "footerText": "{guild}",
+            "footerIconUrl": "",
+            "timestamp": true,
+            "fields": []
+          }
+        }
+      ]
+    },
+    "botProfile": {
+      "applyProfileOnStartup": false,
+      "forceApplyImages": false,
+      "username": "",
+      "guildNickname": "",
+      "avatarImage": "",
+      "bannerImage": "",
+      "appIconImage": "",
+      "appCoverImage": "",
+      "applicationDescription": "https://discord.gg/fallen-heaven",
+      "applicationTags": [],
+      "serverTagNote": ""
+    }
+  }
+}

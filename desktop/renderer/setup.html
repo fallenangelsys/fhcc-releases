@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://cdn.discordapp.com data:; style-src 'self'; script-src 'self'">
+  <title>FALLEN HEAVEN Einrichtung</title>
+  <link rel="stylesheet" href="setup.css">
+  <link rel="stylesheet" href="setup-polish.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div><img src="assets/fallen-heaven-app-icon.png" alt=""><b>FALLEN HEAVEN</b><span>SICHERE EINRICHTUNG</span></div>
+    <nav><button id="minimize" aria-label="Minimieren">−</button><button id="close" aria-label="Schließen">×</button></nav>
+  </header>
+  <main>
+    <section class="intro">
+      <p class="eyebrow">WINDOWS SECURITY SETUP</p>
+      <h1>Bot und Login<br>sicher verbinden.</h1>
+      <p>Bot-Token, Application-ID und Client-Secret werden lokal mit Windows verschlüsselt. Dein persönliches Discord-Konto wird anschließend ausschließlich über das offizielle Discord-OAuth2-Fenster verbunden.</p>
+      <div class="security-list"><span><i></i>Windows DPAPI</span><span><i></i>Kein Klartext in Dateien</span><span><i></i>Discord-Verbindungstest</span></div>
+    </section>
+    <section class="setup-card">
+      <header><div class="step" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-5"></path></svg></div><div><small>DISCORD-ANWENDUNG</small><h2>Bot und OAuth2</h2></div><span id="credential-state" class="state">Wird geprüft</span></header>
+      <p>Trage die Daten derselben Discord-Anwendung ein. Der Bot-Token wird direkt bei Discord geprüft; alle Werte werden danach verschlüsselt gespeichert.</p>
+      <div class="credential-group">
+        <label for="bot-token">Bot-Token</label>
+        <div class="token-field"><input id="bot-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="Bot-Token aus dem Developer Portal"><button id="toggle-token" type="button">Anzeigen</button></div>
+      </div>
+      <div class="credential-grid">
+        <div class="credential-group">
+          <label for="discord-client-id">Application-ID</label>
+          <div class="token-field single"><input id="discord-client-id" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="Discord Application-ID"></div>
+        </div>
+        <div class="credential-group">
+          <label for="discord-client-secret">Client-Secret</label>
+          <div class="token-field"><input id="discord-client-secret" type="password" autocomplete="new-password" spellcheck="false" placeholder="OAuth2 Client-Secret"><button id="toggle-client-secret" type="button">Anzeigen</button></div>
+        </div>
+      </div>
+      <p class="redirect-note">OAuth2 Redirect: <code id="oauth-redirect-uri">http://127.0.0.1:3000/api/auth/discord/callback</code></p>
+      <div id="result" class="result" aria-live="polite">Bereit für die sichere Einrichtung.</div>
+      <div id="bot-identity" class="bot-identity" hidden><img id="bot-avatar" src="assets/fallen-heaven-app-icon.png" alt=""><div><small>VERIFIZIERT</small><b id="bot-name">Discord Bot</b><span id="bot-id"></span></div></div>
+      <div class="actions"><button id="delete-token" class="secondary" type="button">Alle Zugangsdaten löschen</button><button id="save-token" class="primary" type="button">Prüfen & alles speichern</button></div>
+      <footer><div><b>Persönlicher Discord-Account</b><span>Die Anmeldung erfolgt in der Haupt-App über Discord OAuth2. Die Redirect-URI oben muss im Developer Portal exakt hinterlegt sein.</span></div><button id="open-main" type="button">Haupt-App öffnen</button></footer>
+    </section>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

@@ -1,0 +1,2905 @@
+﻿body.fh-reborn-ready {
+  --fh-bg: #0f1015;
+  --fh-panel: #15161d;
+  --fh-panel-2: #1a1b24;
+  --fh-line: rgba(255, 255, 255, .09);
+  --fh-text: #f7f8ff;
+  --fh-muted: #8a90a3;
+  --fh-accent: #8588ff;
+  --fh-accent-2: #a4a7ff;
+  --fh-green: #28d77d;
+  --fh-red: #ff5f74;
+  margin: 0;
+  background: var(--fh-bg) !important;
+  color: var(--fh-text) !important;
+  font-family: "Segoe UI", "Plus Jakarta Sans", sans-serif !important;
+  overflow-x: hidden;
+}
+
+body.fh-reborn-ready .fh-legacy-root {
+  display: none !important;
+}
+
+body.fh-reborn-ready #sidebar-toggle,
+body.fh-reborn-ready .sidebar-toggle,
+body.fh-reborn-ready .collapse-toggle,
+body.fh-reborn-ready [data-sidebar-toggle],
+body.fh-reborn-ready [data-collapse-sidebar],
+body.fh-reborn-ready [aria-label="Sidebar"],
+body.fh-reborn-ready [aria-label="Menü"],
+body.fh-reborn-ready [aria-label="Menu"] {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.fh-reborn-ready .fh-legacy-root:has(.fh-mounted) {
+  display: contents !important;
+}
+
+#fh-reborn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+#fh-reborn button,
+#fh-info-modal button {
+  font: inherit;
+}
+
+#fh-side {
+  position: fixed;
+  inset: 16px auto 16px 16px;
+  width: 224px;
+  z-index: 10000;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--fh-line);
+  border-radius: 12px;
+  background: #131419;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .38);
+  overflow: hidden auto;
+  transition: transform .22s ease;
+}
+
+body.fh-collapsed #fh-side {
+  transform: translateX(-280px);
+}
+
+#fh-main {
+  min-height: 100vh;
+  margin-left: 256px;
+  padding: 0 24px 44px;
+  transition: margin-left .22s ease;
+}
+
+body.fh-collapsed #fh-main {
+  margin-left: 72px;
+}
+
+body.fh-collapsed .fh-top > button[data-collapse] {
+  display: none !important;
+}
+
+body.fh-login-mode .fh-login {
+  background:
+    radial-gradient(circle at 13% 24%, rgba(255, 255, 255, .34) 0 8%, transparent 9%),
+    radial-gradient(circle at 74% 18%, rgba(255, 255, 255, .24) 0 7%, transparent 8%),
+    radial-gradient(circle at 84% 75%, rgba(255, 255, 255, .22) 0 9%, transparent 10%),
+    linear-gradient(180deg, #8ea1ff 0%, #6e7dff 42%, #5865f2 100%) !important;
+}
+
+body.fh-login-mode[data-theme='fallen'] .fh-login {
+  background:
+    radial-gradient(circle at 12% 24%, rgba(255, 255, 255, .18) 0 8%, transparent 9%),
+    radial-gradient(circle at 76% 20%, rgba(255, 255, 255, .14) 0 7%, transparent 8%),
+    radial-gradient(circle at 50% 100%, rgba(21, 24, 55, .82), transparent 46%),
+    linear-gradient(180deg, #5865f2 0%, #404eed 48%, #1f2255 100%) !important;
+}
+
+body.fh-login-mode .fh-login-nav .fh-theme-toggle {
+  width: 44px !important;
+  min-width: 44px !important;
+  height: 44px !important;
+  padding: 0 !important;
+  border-radius: 999px !important;
+  display: inline-grid !important;
+  place-items: center !important;
+  font-size: 21px !important;
+  line-height: 1 !important;
+}
+
+body.fh-login-mode[data-theme='light'] .fh-login-nav,
+body.fh-login-mode[data-theme='light'] .fh-login-copy,
+body.fh-login-mode[data-theme='light'] .fh-login-panel,
+body.fh-login-mode[data-theme='light'] .fh-login-card {
+  color: #101320 !important;
+}
+
+body.fh-login-mode[data-theme='light'] .fh-login-panel,
+body.fh-login-mode[data-theme='light'] .fh-login-card {
+  background: rgba(255, 255, 255, .86) !important;
+  border-color: rgba(255, 255, 255, .72) !important;
+  box-shadow: 0 24px 70px rgba(25, 33, 90, .22) !important;
+}
+
+body.fh-login-mode[data-theme='light'] .fh-login-copy p,
+body.fh-login-mode[data-theme='light'] .fh-login-panel p,
+body.fh-login-mode[data-theme='light'] .fh-login-card small {
+  color: rgba(16, 19, 32, .68) !important;
+}
+
+body.fh-login-mode #fh-side,
+body.fh-login-mode #fh-float {
+  display: none !important;
+}
+
+body.fh-login-mode #fh-main,
+body.fh-login-mode.fh-collapsed #fh-main {
+  margin-left: 0;
+  padding: 0;
+}
+
+#fh-float {
+  position: fixed;
+  left: 16px;
+  top: 16px;
+  z-index: 10001;
+  width: 44px;
+  height: 44px;
+  display: none;
+  place-items: center;
+  border: 1px solid var(--fh-line);
+  border-radius: 12px;
+  background: rgba(19, 20, 25, .96);
+  color: white;
+  cursor: pointer;
+}
+
+body.fh-collapsed #fh-float {
+  display: grid;
+}
+
+.fh-brand,
+.fh-account,
+.fh-user,
+.fh-current-server {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.fh-brand {
+  min-height: 52px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--fh-line);
+}
+
+.fh-brand img,
+.fh-account img,
+.fh-user img,
+.fh-current-server img,
+.fh-server-head img,
+.fh-server-mini img {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, .13);
+}
+
+.fh-brand strong,
+.fh-account strong,
+.fh-user strong,
+.fh-current-server strong {
+  display: block;
+  min-width: 0;
+  color: white;
+  font-size: 13px;
+  line-height: 1.1;
+  font-weight: 950;
+  letter-spacing: -.025em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fh-brand strong {
+  font-size: 18px;
+}
+
+.fh-brand small,
+.fh-account small,
+.fh-user small,
+.fh-current-server small {
+  display: block;
+  margin-top: 3px;
+  color: var(--fh-muted);
+  font-size: 11px;
+  font-weight: 760;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fh-primary,
+.fh-meta {
+  display: grid;
+  gap: 8px;
+}
+
+.fh-nav,
+.fh-current-server,
+.fh-server-mini {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #9fa5b7;
+  cursor: pointer;
+  text-align: left;
+  transition: background .16s ease, color .16s ease, transform .16s ease, border-color .16s ease;
+}
+
+.fh-nav {
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.fh-nav span {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--fh-accent);
+}
+
+.fh-nav b {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fh-nav:hover,
+.fh-nav.is-active {
+  color: white;
+  background: rgba(133, 136, 255, .16);
+  transform: translateX(2px);
+}
+
+.fh-nav-label {
+  margin: 8px 8px 2px;
+  color: #676e82;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.fh-current-server {
+  min-height: 56px;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  background: rgba(255, 255, 255, .045);
+}
+
+.fh-server-menu {
+  display: none;
+  gap: 7px;
+  padding-left: 8px;
+}
+
+.fh-server-menu.is-open {
+  display: grid;
+}
+
+.fh-server-mini {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--fh-line);
+  background: #0e0f14;
+}
+
+.fh-server-mini img {
+  width: 32px;
+  height: 32px;
+}
+
+.fh-server-mini strong {
+  display: block;
+  color: white;
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fh-server-mini small,
+.fh-empty-mini {
+  color: var(--fh-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.fh-server-mini:hover,
+.fh-server-mini.is-active {
+  border-color: rgba(133, 136, 255, .45);
+  background: rgba(133, 136, 255, .12);
+}
+
+.fh-side-fill {
+  min-height: 16px;
+}
+
+.fh-meta {
+  padding-top: 12px;
+  border-top: 1px solid var(--fh-line);
+}
+
+.fh-meta .fh-nav {
+  min-height: 30px;
+  color: #777f91;
+}
+
+.fh-account {
+  margin: 0 -16px -16px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--fh-line);
+  background: rgba(0, 0, 0, .16);
+}
+
+.fh-account-action {
+  grid-column: 1 / -1;
+  height: 34px;
+  margin-top: 10px;
+  border: 1px solid rgba(133, 136, 255, .35);
+  border-radius: 9px;
+  background: rgba(133, 136, 255, .16);
+  color: white;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.fh-account-action:hover {
+  background: rgba(133, 136, 255, .28);
+}
+
+.fh-top {
+  height: 64px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--fh-line);
+  margin-bottom: 22px;
+}
+
+.fh-top > button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #aeb4c5;
+  cursor: pointer;
+}
+
+.fh-top > button:hover {
+  background: rgba(255, 255, 255, .06);
+  color: white;
+}
+
+.fh-breadcrumb small {
+  display: block;
+  color: var(--fh-muted);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.fh-breadcrumb strong {
+  color: white;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.fh-user {
+  justify-self: end;
+}
+
+.fh-home-hero {
+  min-height: 210px;
+  display: grid;
+  align-items: end;
+  padding: 30px;
+  margin-bottom: 18px;
+  border: 1px solid var(--fh-line);
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(6, 7, 12, .96), rgba(6, 7, 12, .58), rgba(6, 7, 12, .88)),
+    url('/assets/fallen-heaven-bg.png') center / cover;
+}
+
+.fh-login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(133, 136, 255, .22), transparent 28%),
+    radial-gradient(circle at 78% 80%, rgba(98, 206, 255, .12), transparent 26%),
+    linear-gradient(90deg, rgba(5, 6, 12, .94), rgba(5, 6, 12, .74)),
+    url('/assets/fallen-heaven-bg.png') center / cover;
+}
+
+body.fh-login-mode .fh-top {
+  display: none;
+}
+
+.fh-login-card {
+  width: min(760px, 100%);
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  padding: 46px;
+  border: 1px solid var(--fh-line);
+  border-radius: 26px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .025)),
+    #14151d;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .46);
+}
+
+.fh-login-card img {
+  width: 86px;
+  height: 86px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, .16);
+  margin-bottom: 18px;
+}
+
+.fh-login-card p {
+  margin: 0 0 8px;
+  color: var(--fh-accent-2);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .16em;
+}
+
+.fh-login-card h1 {
+  margin: 0;
+  color: white;
+  font-size: clamp(38px, 6vw, 72px);
+  line-height: .92;
+  letter-spacing: -.07em;
+}
+
+.fh-login-card span {
+  max-width: 620px;
+  margin-top: 16px;
+  color: rgba(238, 241, 255, .78);
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.55;
+}
+
+.fh-login-card button {
+  height: 46px;
+  margin-top: 24px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #7f84ff, #a2a6ff);
+  color: white;
+  font-size: 14px;
+  font-weight: 950;
+  cursor: pointer;
+  box-shadow: 0 16px 42px rgba(127, 132, 255, .32);
+}
+
+.fh-login-card button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  box-shadow: none;
+}
+
+.fh-login-card small {
+  margin-top: 14px;
+  color: var(--fh-red);
+  font-weight: 850;
+}
+
+.fh-home-hero p,
+.fh-section-title p {
+  margin: 0 0 5px;
+  color: var(--fh-accent-2);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.fh-home-hero h1 {
+  margin: 0;
+  color: white;
+  font-size: clamp(42px, 6vw, 84px);
+  line-height: .9;
+  letter-spacing: -.075em;
+  font-weight: 950;
+}
+
+.fh-home-hero span {
+  display: block;
+  max-width: 760px;
+  margin-top: 12px;
+  color: rgba(238, 241, 255, .76);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.fh-guild-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.fh-guild-card {
+  position: relative;
+  height: 158px;
+  overflow: hidden;
+  border: 1px solid var(--fh-line);
+  border-radius: 14px;
+  background: #07080d;
+  color: white;
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+
+.fh-guild-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(133, 136, 255, .62);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .36);
+}
+
+.fh-guild-card > i {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: saturate(.82) contrast(1.04);
+}
+
+.fh-guild-card > em {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, .38);
+  color: rgba(255, 255, 255, .72);
+  font-style: normal;
+  z-index: 2;
+}
+
+.fh-guild-card > span {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+}
+
+.fh-guild-card img {
+  width: 52px;
+  height: 52px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.fh-guild-card b {
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .12);
+  color: white;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.fh-guild-card small {
+  color: rgba(255, 255, 255, .72);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.fh-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.fh-status-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.fh-status {
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 0 16px;
+  border: 1px solid var(--fh-line);
+  border-radius: 14px;
+  background: var(--fh-panel);
+}
+
+.fh-status > span {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--fh-green);
+  background: rgba(40, 215, 125, .14);
+}
+
+.fh-status.bad > span {
+  color: var(--fh-red);
+  background: rgba(255, 95, 116, .14);
+}
+
+.fh-status.info > span {
+  color: #62ceff;
+  background: rgba(98, 206, 255, .13);
+}
+
+.fh-status strong {
+  display: block;
+  color: white;
+  font-size: 17px;
+  font-weight: 950;
+  margin-bottom: 3px;
+}
+
+.fh-status small {
+  display: block;
+  color: var(--fh-green);
+  font-size: 13px;
+  font-weight: 850;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fh-status.bad small {
+  color: var(--fh-red);
+}
+
+.fh-status.info small {
+  color: #80d9ff;
+}
+
+.fh-server-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.fh-server-head img {
+  width: 50px;
+  height: 50px;
+}
+
+.fh-server-head h1 {
+  margin: 0;
+  color: white;
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 950;
+  letter-spacing: -.055em;
+}
+
+.fh-server-head p {
+  margin: 6px 0 0;
+  color: var(--fh-muted);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.fh-mount {
+  min-height: 420px;
+}
+
+.fh-section-title {
+  margin-bottom: 16px;
+}
+
+.fh-section-title h2 {
+  margin: 0;
+  color: white;
+  font-size: 26px;
+  font-weight: 950;
+  letter-spacing: -.045em;
+}
+
+.fh-mounted {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+#feature-grid.fh-mounted {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)) !important;
+  gap: 16px !important;
+}
+
+#dashboard-view.fh-mounted {
+  display: block !important;
+}
+
+.fh-placeholder,
+.fh-empty {
+  min-height: 190px;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  padding: 28px;
+  border: 1px dashed rgba(255, 255, 255, .16);
+  border-radius: 14px;
+  background: var(--fh-panel);
+}
+
+.fh-placeholder span {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--fh-accent);
+  background: rgba(133, 136, 255, .14);
+}
+
+.fh-placeholder h3,
+.fh-empty h2 {
+  margin: 0;
+  color: white;
+  font-size: 22px;
+  font-weight: 950;
+}
+
+.fh-placeholder p,
+.fh-empty p {
+  margin: 0;
+  color: var(--fh-muted);
+  font-weight: 800;
+}
+
+#fh-info-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: none;
+  place-items: center;
+  padding: 24px;
+}
+
+#fh-info-modal.is-open {
+  display: grid;
+}
+
+.fh-info-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, .72);
+  backdrop-filter: blur(16px);
+}
+
+.fh-info-panel {
+  position: relative;
+  width: min(920px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 26px;
+  border: 1px solid var(--fh-line);
+  border-radius: 24px;
+  background: #14151d;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .62);
+}
+
+.fh-info-close {
+  float: right;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--fh-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .06);
+  color: white;
+  cursor: pointer;
+}
+
+.fh-info-panel header {
+  clear: both;
+  min-height: 180px;
+  display: grid;
+  align-content: end;
+  padding: 26px;
+  margin-bottom: 16px;
+  border: 1px solid var(--fh-line);
+  border-radius: 18px;
+  background:
+    linear-gradient(90deg, rgba(6, 7, 12, .95), rgba(6, 7, 12, .68)),
+    url('/assets/fallen-heaven-bg.png') center / cover;
+}
+
+.fh-info-panel header p {
+  margin: 0 0 5px;
+  color: var(--fh-accent-2);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .16em;
+}
+
+.fh-info-panel header h1 {
+  margin: 0;
+  color: white;
+  font-size: clamp(36px, 6vw, 70px);
+  line-height: .9;
+  letter-spacing: -.07em;
+}
+
+.fh-info-panel header span {
+  display: block;
+  margin-top: 10px;
+  color: rgba(238, 241, 255, .78);
+  font-weight: 760;
+}
+
+.fh-info-panel > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fh-info-panel article {
+  padding: 16px;
+  border: 1px solid var(--fh-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .045);
+}
+
+.fh-info-panel article small {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--fh-muted);
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+}
+
+.fh-info-panel article strong {
+  color: white;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+@media (max-width: 1200px) {
+  .fh-status-grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  #fh-side {
+    transform: translateX(-280px);
+  }
+
+  body:not(.fh-collapsed) #fh-side {
+    transform: translateX(0);
+  }
+
+  #fh-main,
+  body.fh-collapsed #fh-main {
+    margin-left: 0;
+    padding: 0 14px 32px;
+  }
+
+  #fh-float {
+    display: grid;
+  }
+
+  .fh-guild-grid,
+  .fh-status-grid,
+  .fh-status-grid.compact,
+  .fh-info-panel > div {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Discord-inspired standalone login page */
+body.fh-login-mode #fh-main,
+body.fh-login-mode.fh-collapsed #fh-main {
+  margin-left: 0 !important;
+  padding: 0 !important;
+}
+
+body.fh-login-mode #fh-side,
+body.fh-login-mode #fh-float,
+body.fh-login-mode .fh-top {
+  display: none !important;
+}
+
+body.fh-login-mode .fh-login {
+  position: relative !important;
+  min-height: 100vh !important;
+  overflow: hidden !important;
+  display: grid !important;
+  grid-template-rows: auto 1fr !important;
+  padding: 28px clamp(20px, 5vw, 78px) 42px !important;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(255,255,255,.18), transparent 16%),
+    radial-gradient(circle at 82% 76%, rgba(0,0,0,.22), transparent 28%),
+    linear-gradient(135deg, #5865f2 0%, #4653d8 48%, #2d36a6 100%) !important;
+}
+
+body.fh-login-mode .fh-login::before,
+body.fh-login-mode .fh-login::after {
+  content: '' !important;
+  position: absolute !important;
+  pointer-events: none !important;
+  opacity: .24 !important;
+  background: rgba(255,255,255,.9) !important;
+  filter: blur(1px) !important;
+}
+
+body.fh-login-mode .fh-login::before {
+  width: 360px !important;
+  height: 360px !important;
+  left: -120px !important;
+  bottom: -150px !important;
+  border-radius: 42% 58% 63% 37% !important;
+}
+
+body.fh-login-mode .fh-login::after {
+  width: 420px !important;
+  height: 420px !important;
+  right: -140px !important;
+  top: 120px !important;
+  border-radius: 58% 42% 37% 63% !important;
+}
+
+body.fh-login-mode .fh-login-nav {
+  position: relative !important;
+  z-index: 2 !important;
+  height: 52px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 28px !important;
+  color: #fff !important;
+}
+
+body.fh-login-mode .fh-login-nav div {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  margin-right: auto !important;
+}
+
+body.fh-login-mode .fh-login-nav img {
+  width: 38px !important;
+  height: 38px !important;
+  border-radius: 999px !important;
+  object-fit: cover !important;
+  border: 1px solid rgba(255,255,255,.22) !important;
+}
+
+body.fh-login-mode .fh-login-nav strong {
+  color: white !important;
+  font-size: 17px !important;
+  font-weight: 950 !important;
+  letter-spacing: -.03em !important;
+}
+
+body.fh-login-mode .fh-login-nav span {
+  color: rgba(255,255,255,.86) !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+}
+
+body.fh-login-mode .fh-login-nav button,
+body.fh-login-mode .fh-login-actions button {
+  border: 0 !important;
+  cursor: pointer !important;
+  font-weight: 950 !important;
+  transition: transform .16s ease, box-shadow .16s ease, opacity .16s ease !important;
+}
+
+body.fh-login-mode .fh-login-nav button {
+  height: 38px !important;
+  padding: 0 18px !important;
+  border-radius: 999px !important;
+  color: #23272a !important;
+  background: #fff !important;
+}
+
+body.fh-login-mode .fh-login-nav button:hover,
+body.fh-login-mode .fh-login-actions button:hover {
+  transform: translateY(-2px) !important;
+}
+
+body.fh-login-mode .fh-login-stage {
+  position: relative !important;
+  z-index: 1 !important;
+  width: min(1240px, 100%) !important;
+  margin: 0 auto !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr) !important;
+  align-items: center !important;
+  gap: clamp(24px, 5vw, 78px) !important;
+}
+
+body.fh-login-mode .fh-login-copy {
+  color: #fff !important;
+}
+
+body.fh-login-mode .fh-login-copy p {
+  margin: 0 0 16px !important;
+  color: rgba(255,255,255,.78) !important;
+  font-size: 13px !important;
+  font-weight: 950 !important;
+  letter-spacing: .18em !important;
+}
+
+body.fh-login-mode .fh-login-copy h1 {
+  max-width: 760px !important;
+  margin: 0 !important;
+  color: #fff !important;
+  font-size: clamp(58px, 8vw, 116px) !important;
+  line-height: .86 !important;
+  letter-spacing: -.085em !important;
+  font-weight: 1000 !important;
+  text-transform: uppercase !important;
+}
+
+body.fh-login-mode .fh-login-copy > span {
+  display: block !important;
+  max-width: 620px !important;
+  margin-top: 22px !important;
+  color: rgba(255,255,255,.88) !important;
+  font-size: 18px !important;
+  line-height: 1.55 !important;
+  font-weight: 700 !important;
+}
+
+body.fh-login-mode .fh-login-actions {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: wrap !important;
+  gap: 14px !important;
+  margin-top: 28px !important;
+}
+
+body.fh-login-mode .fh-login-actions button {
+  height: 54px !important;
+  padding: 0 28px !important;
+  border-radius: 999px !important;
+  color: #23272a !important;
+  background: #fff !important;
+  font-size: 16px !important;
+  box-shadow: 0 18px 42px rgba(0,0,0,.22) !important;
+}
+
+body.fh-login-mode .fh-login-actions b {
+  color: rgba(255,255,255,.82) !important;
+  font-size: 13px !important;
+  font-weight: 850 !important;
+}
+
+body.fh-login-mode .fh-login-copy small {
+  display: block !important;
+  width: fit-content !important;
+  margin-top: 14px !important;
+  padding: 10px 13px !important;
+  border-radius: 999px !important;
+  color: #fff !important;
+  background: rgba(0,0,0,.22) !important;
+  font-weight: 850 !important;
+}
+
+body.fh-login-mode .fh-login-preview {
+  position: relative !important;
+  min-height: 540px !important;
+}
+
+body.fh-login-mode .fh-login-preview article,
+body.fh-login-mode .fh-login-preview section {
+  position: absolute !important;
+  display: grid !important;
+  align-items: center !important;
+  border-radius: 28px !important;
+  background: rgba(255,255,255,.96) !important;
+  color: #23272a !important;
+  box-shadow: 0 28px 70px rgba(0,0,0,.22) !important;
+}
+
+body.fh-login-mode .fh-login-preview article {
+  grid-template-columns: 58px minmax(0,1fr) !important;
+  gap: 14px !important;
+  width: 330px !important;
+  min-height: 92px !important;
+  padding: 18px !important;
+}
+
+body.fh-login-mode .fh-login-preview article.one { left: 16px !important; top: 58px !important; transform: rotate(-5deg) !important; }
+body.fh-login-mode .fh-login-preview article.two { right: 18px !important; top: 210px !important; transform: rotate(4deg) !important; }
+body.fh-login-mode .fh-login-preview article.three { left: 54px !important; bottom: 68px !important; transform: rotate(-2deg) !important; }
+
+body.fh-login-mode .fh-login-preview img,
+body.fh-login-mode .fh-login-preview i {
+  width: 58px !important;
+  height: 58px !important;
+  border-radius: 18px !important;
+  object-fit: cover !important;
+  background: linear-gradient(135deg, #5865f2, #111827) !important;
+}
+
+body.fh-login-mode .fh-login-preview i::before {
+  content: '' !important;
+  display: block !important;
+  width: 22px !important;
+  height: 22px !important;
+  margin: 18px !important;
+  border-radius: 999px !important;
+  background: #fff !important;
+}
+
+body.fh-login-mode .fh-login-preview strong {
+  display: block !important;
+  color: #23272a !important;
+  font-size: 18px !important;
+  font-weight: 950 !important;
+}
+
+body.fh-login-mode .fh-login-preview span,
+body.fh-login-mode .fh-login-preview p {
+  color: #58616f !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+}
+
+body.fh-login-mode .fh-login-preview section {
+  right: 90px !important;
+  bottom: 24px !important;
+  width: 190px !important;
+  min-height: 160px !important;
+  justify-items: center !important;
+  text-align: center !important;
+  transform: rotate(5deg) !important;
+}
+
+body.fh-login-mode .fh-login-preview h2 {
+  margin: 0 !important;
+  color: #5865f2 !important;
+  font-size: 56px !important;
+  letter-spacing: -.06em !important;
+}
+
+body.fh-login-mode .fh-login-preview p {
+  margin: -16px 0 0 !important;
+}
+
+body.fh-login-mode .fh-login-nav button:disabled,
+body.fh-login-mode .fh-login-actions button:disabled {
+  cursor: not-allowed !important;
+  opacity: .58 !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+@media (max-width: 980px) {
+  body.fh-login-mode .fh-login { padding: 20px !important; }
+  body.fh-login-mode .fh-login-nav span { display: none !important; }
+  body.fh-login-mode .fh-login-stage { grid-template-columns: 1fr !important; align-content: center !important; }
+  body.fh-login-mode .fh-login-preview { display: none !important; }
+  body.fh-login-mode .fh-login-copy { text-align: center !important; }
+  body.fh-login-mode .fh-login-copy > span { margin-left: auto !important; margin-right: auto !important; }
+  body.fh-login-mode .fh-login-actions { justify-content: center !important; }
+}
+/* Light/Dark theme and brighter Discord-like login stage */
+body.fh-reborn-ready[data-theme='light'] {
+  --fh-bg: #f6f7ff;
+  --fh-panel: #ffffff;
+  --fh-panel-2: #eef0ff;
+  --fh-line: rgba(34, 39, 74, .12);
+  --fh-text: #1f2333;
+  --fh-muted: #667085;
+  --fh-accent: #5865f2;
+  --fh-accent-2: #4350d8;
+  --fh-green: #168a4a;
+  --fh-red: #d92d4b;
+  background: var(--fh-bg) !important;
+  color: var(--fh-text) !important;
+}
+
+body.fh-reborn-ready[data-theme='light'] #fh-side,
+body.fh-reborn-ready[data-theme='light'] .fh-status,
+body.fh-reborn-ready[data-theme='light'] .fh-placeholder,
+body.fh-reborn-ready[data-theme='light'] .fh-empty,
+body.fh-reborn-ready[data-theme='light'] .fh-info-panel {
+  background: #ffffff !important;
+  color: var(--fh-text) !important;
+  box-shadow: 0 18px 50px rgba(29, 37, 82, .08) !important;
+}
+
+body.fh-reborn-ready[data-theme='light'] .fh-brand strong,
+body.fh-reborn-ready[data-theme='light'] .fh-account strong,
+body.fh-reborn-ready[data-theme='light'] .fh-user strong,
+body.fh-reborn-ready[data-theme='light'] .fh-current-server strong,
+body.fh-reborn-ready[data-theme='light'] .fh-status strong,
+body.fh-reborn-ready[data-theme='light'] .fh-server-head h1,
+body.fh-reborn-ready[data-theme='light'] .fh-section-title h2 {
+  color: #1f2333 !important;
+}
+
+body.fh-reborn-ready[data-theme='light'] .fh-nav,
+body.fh-reborn-ready[data-theme='light'] .fh-meta .fh-nav {
+  color: #667085 !important;
+}
+
+body.fh-reborn-ready[data-theme='light'] .fh-nav:hover,
+body.fh-reborn-ready[data-theme='light'] .fh-nav.is-active {
+  color: #1f2333 !important;
+  background: rgba(88, 101, 242, .12) !important;
+}
+
+body.fh-login-mode .fh-login {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(255,255,255,.72), transparent 13%),
+    radial-gradient(circle at 88% 20%, rgba(255,255,255,.5), transparent 12%),
+    radial-gradient(circle at 26% 90%, rgba(255,255,255,.45), transparent 18%),
+    linear-gradient(180deg, #8793ff 0%, #6574f6 45%, #5865f2 100%) !important;
+}
+
+body.fh-login-mode .fh-login::before {
+  opacity: .95 !important;
+  filter: none !important;
+  width: 520px !important;
+  height: 190px !important;
+  left: -90px !important;
+  bottom: -34px !important;
+  border-radius: 50% 50% 0 0 !important;
+  background:
+    radial-gradient(circle at 22% 50%, #ffffff 0 34%, transparent 35%),
+    radial-gradient(circle at 48% 34%, #ffffff 0 40%, transparent 41%),
+    radial-gradient(circle at 74% 54%, #ffffff 0 36%, transparent 37%) !important;
+}
+
+body.fh-login-mode .fh-login::after {
+  opacity: .92 !important;
+  filter: none !important;
+  width: 560px !important;
+  height: 190px !important;
+  right: -120px !important;
+  bottom: -48px !important;
+  top: auto !important;
+  border-radius: 50% 50% 0 0 !important;
+  background:
+    radial-gradient(circle at 20% 58%, #ffffff 0 34%, transparent 35%),
+    radial-gradient(circle at 52% 34%, #ffffff 0 42%, transparent 43%),
+    radial-gradient(circle at 82% 58%, #ffffff 0 36%, transparent 37%) !important;
+}
+
+body.fh-login-mode[data-theme='fallen'] .fh-login {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(255,255,255,.72), transparent 13%),
+    radial-gradient(circle at 88% 20%, rgba(255,255,255,.5), transparent 12%),
+    linear-gradient(180deg, #8793ff 0%, #6574f6 45%, #5865f2 100%) !important;
+}
+
+body.fh-login-mode .fh-login-nav button[data-theme-toggle] {
+  background: rgba(255,255,255,.18) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255,255,255,.28) !important;
+}
+
+body.fh-login-mode .fh-login-preview article,
+body.fh-login-mode .fh-login-preview section {
+  background: #ffffff !important;
+}
+
+body.fh-login-mode[data-theme='light'] .fh-login-preview article,
+body.fh-login-mode[data-theme='light'] .fh-login-preview section,
+body.fh-login-mode[data-theme='light'] .fh-login-actions button,
+body.fh-login-mode[data-theme='light'] .fh-login-nav button:not([data-theme-toggle]) {
+  background: #ffffff !important;
+  color: #23272a !important;
+}
+
+
+/* FALLEN HEAVEN Discord-inspired standalone login */
+body.fh-login-mode #fh-side,
+body.fh-login-mode #fh-float,
+body.fh-login-mode .fh-top {
+  display: none !important;
+}
+
+body.fh-login-mode #fh-reborn,
+body.fh-login-mode #fh-main {
+  width: 100vw !important;
+  min-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+.fh-discord-login {
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: visible;
+  color: #fff;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255,255,255,.24) 0 7%, transparent 8%),
+    radial-gradient(circle at 78% 22%, rgba(255,255,255,.16) 0 6%, transparent 7%),
+    radial-gradient(circle at 48% 92%, rgba(255,255,255,.18) 0 8%, transparent 9%),
+    linear-gradient(180deg, #8ea1ff 0%, #6f7dff 38%, #5865f2 100%);
+  isolation: isolate;
+}
+
+.fh-discord-login::before {
+  content: "";
+  position: absolute;
+  inset: auto -8vw -20vh -8vw;
+  height: 42vh;
+  background:
+    radial-gradient(ellipse at 10% 60%, rgba(255,255,255,.95) 0 12%, transparent 13%),
+    radial-gradient(ellipse at 28% 45%, rgba(255,255,255,.92) 0 18%, transparent 19%),
+    radial-gradient(ellipse at 53% 64%, rgba(255,255,255,.9) 0 16%, transparent 17%),
+    radial-gradient(ellipse at 78% 45%, rgba(255,255,255,.88) 0 19%, transparent 20%),
+    radial-gradient(ellipse at 96% 62%, rgba(255,255,255,.93) 0 14%, transparent 15%);
+  opacity: .62;
+  filter: blur(10px);
+  z-index: -1;
+}
+
+.fh-discord-login::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255,255,255,.08) 1px, transparent 1px);
+  background-size: 96px 96px;
+  mask-image: linear-gradient(180deg, rgba(0,0,0,.36), transparent 72%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+body.fh-login-mode[data-theme='fallen'] .fh-discord-login {
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255,255,255,.12) 0 7%, transparent 8%),
+    radial-gradient(circle at 78% 22%, rgba(255,255,255,.1) 0 6%, transparent 7%),
+    radial-gradient(circle at 42% 100%, rgba(9,12,34,.88), transparent 48%),
+    linear-gradient(180deg, #5865f2 0%, #404eed 42%, #141735 100%);
+}
+
+.fh-discord-nav {
+  width: min(1180px, calc(100vw - 40px));
+  height: 76px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  position: relative;
+  z-index: 3;
+}
+
+body.fh-login-mode .fh-discord-nav {
+  width: min(1280px, calc(100vw - 48px));
+}
+
+.fh-discord-brand,
+.fh-discord-actions,
+.fh-discord-links {
+  display: flex;
+  align-items: center;
+}
+
+.fh-discord-brand {
+  gap: 12px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 21px;
+  letter-spacing: -.03em;
+}
+
+.fh-discord-brand img {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  object-fit: cover;
+  box-shadow: 0 14px 35px rgba(0,0,0,.25);
+}
+
+.fh-discord-links {
+  gap: 27px;
+  font-weight: 800;
+  font-size: 16px;
+  justify-content: center;
+  flex: 1;
+}
+
+.fh-discord-links span,
+.fh-discord-links .fh-nav-link {
+  opacity: .92;
+  cursor: default;
+}
+
+.fh-discord-links .fh-nav-link {
+  color: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 10px 0;
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.fh-discord-links .fh-nav-link:hover,
+.fh-discord-menu > button:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.fh-discord-menu {
+  position: relative;
+}
+
+.fh-discord-menu::before {
+  content: "";
+  position: absolute;
+  left: -28px;
+  right: -28px;
+  top: 100%;
+  height: 30px;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.fh-discord-menu > button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 10px 0;
+  opacity: .92;
+  white-space: nowrap;
+}
+
+.fh-discord-menu > button::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 10px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .18s ease;
+}
+
+.fh-discord-menu:hover > button::after,
+.fh-discord-menu:focus-within > button::after {
+  transform: rotate(225deg) translateY(-1px);
+}
+
+.fh-nav-dropdown {
+  position: absolute;
+  top: calc(100% + 16px);
+  left: 50%;
+  width: 560px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 26px;
+  background: rgba(18, 20, 35, .92);
+  border: 1px solid rgba(255, 255, 255, .18);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .32);
+  backdrop-filter: blur(24px);
+  transform: translateX(-50%) translateY(10px) scale(.98);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+
+.fh-discord-menu:first-of-type .fh-nav-dropdown {
+  left: 0;
+  transform: translateX(-24px) translateY(10px) scale(.98);
+}
+
+.fh-discord-menu:first-of-type:hover .fh-nav-dropdown,
+.fh-discord-menu:first-of-type:focus-within .fh-nav-dropdown {
+  transform: translateX(-24px) translateY(0) scale(1);
+}
+
+.fh-discord-menu:first-of-type .fh-nav-dropdown::before {
+  left: 64px;
+}
+
+.fh-nav-dropdown::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  background: rgba(18, 20, 35, .92);
+  border-left: 1px solid rgba(255, 255, 255, .18);
+  border-top: 1px solid rgba(255, 255, 255, .18);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.fh-discord-menu:hover .fh-nav-dropdown,
+.fh-discord-menu:focus-within .fh-nav-dropdown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+
+.fh-nav-dropdown section {
+  grid-column: 1 / -1;
+  padding: 18px;
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(88, 101, 242, .5), rgba(35, 243, 154, .13)),
+    rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .12);
+}
+
+.fh-nav-dropdown section strong {
+  display: block;
+  font-size: 15px;
+  letter-spacing: -.02em;
+}
+
+.fh-nav-dropdown section p {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, .68);
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 700;
+}
+
+.fh-nav-dropdown a {
+  color: inherit;
+  text-decoration: none;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid rgba(255, 255, 255, .08);
+  transition: transform .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.fh-nav-dropdown a:hover,
+.fh-nav-dropdown a:focus-visible {
+  transform: translateY(-2px);
+  background: rgba(255, 255, 255, .1);
+  border-color: rgba(255, 255, 255, .2);
+  outline: none;
+}
+
+.fh-nav-dropdown b,
+.fh-nav-dropdown small {
+  display: block;
+}
+
+.fh-nav-dropdown b {
+  font-size: 14px;
+}
+
+.fh-nav-dropdown small {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, .56);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown {
+  background: rgba(255, 255, 255, .94);
+  color: #23272a;
+  border-color: rgba(255, 255, 255, .72);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown::before {
+  background: rgba(255, 255, 255, .94);
+  border-color: rgba(255, 255, 255, .72);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown section {
+  background:
+    linear-gradient(135deg, rgba(88, 101, 242, .18), rgba(35, 243, 154, .1)),
+    rgba(88, 101, 242, .06);
+  border-color: rgba(88, 101, 242, .12);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown section p,
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown small {
+  color: rgba(35, 39, 42, .58);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown a {
+  background: rgba(88, 101, 242, .06);
+  border-color: rgba(88, 101, 242, .1);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown a:hover,
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown a:focus-visible {
+  background: rgba(88, 101, 242, .12);
+  border-color: rgba(88, 101, 242, .22);
+}
+
+/* Discord-original-like nav dropdown override */
+.fh-discord-menu {
+  isolation: isolate;
+}
+
+.fh-discord-menu > button {
+  border-radius: 999px;
+  padding: 10px 6px;
+}
+
+.fh-nav-dropdown {
+  width: 522px !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 10px 14px !important;
+  padding: 18px !important;
+  border-radius: 24px !important;
+  background: #ffffff !important;
+  color: #23272a !important;
+  border: 1px solid rgba(0, 0, 0, .08) !important;
+  box-shadow: 0 24px 68px rgba(15, 19, 34, .22) !important;
+  backdrop-filter: none !important;
+}
+
+.fh-nav-dropdown.is-compact,
+.fh-nav-dropdown.is-blog {
+  width: 468px !important;
+}
+
+.fh-nav-dropdown.is-compact .fh-nav-dropdown,
+.fh-nav-dropdown.is-blog .fh-nav-dropdown {
+  width: 468px !important;
+}
+
+.fh-nav-dropdown::before {
+  width: 18px !important;
+  height: 18px !important;
+  top: -9px !important;
+  background: #ffffff !important;
+  border-left: 1px solid rgba(0, 0, 0, .08) !important;
+  border-top: 1px solid rgba(0, 0, 0, .08) !important;
+}
+
+.fh-nav-dd-col {
+  display: grid !important;
+  gap: 4px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.fh-nav-dropdown a {
+  position: relative !important;
+  min-height: 66px !important;
+  display: grid !important;
+  grid-template-columns: 38px 1fr 18px !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 11px 12px !important;
+  border-radius: 14px !important;
+  background: transparent !important;
+  border: 0 !important;
+  color: #23272a !important;
+}
+
+.fh-nav-dropdown a::after {
+  content: "›";
+  justify-self: end;
+  color: #6d7482;
+  font-size: 24px;
+  line-height: 1;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.fh-nav-dropdown a:hover,
+.fh-nav-dropdown a:focus-visible {
+  transform: none !important;
+  background: #f6f6f7 !important;
+  border-color: transparent !important;
+}
+
+.fh-nav-dropdown a:hover::after,
+.fh-nav-dropdown a:focus-visible::after {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.fh-nav-dropdown i {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #eef0ff;
+  color: #5865f2;
+  font-style: normal;
+  font-weight: 950;
+  font-size: 14px;
+}
+
+.fh-nav-dropdown span {
+  min-width: 0;
+}
+
+.fh-nav-dropdown b {
+  color: #23272a !important;
+  font-size: 14px !important;
+  line-height: 1.15;
+  letter-spacing: -.01em;
+}
+
+.fh-nav-dropdown small {
+  color: #6d7482 !important;
+  font-size: 12px !important;
+  line-height: 1.28 !important;
+  margin-top: 4px !important;
+  font-weight: 700 !important;
+}
+
+body.fh-login-mode[data-theme='fallen'] .fh-nav-dropdown,
+body.fh-login-mode[data-theme='fallen'] .fh-nav-dropdown::before,
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown,
+body.fh-login-mode[data-theme='light'] .fh-nav-dropdown::before {
+  background: #ffffff !important;
+  color: #23272a !important;
+}
+
+.fh-discord-actions {
+  gap: 10px;
+}
+
+.fh-discord-actions button,
+.fh-discord-cta-row button {
+  border: 0;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+}
+
+.fh-discord-actions button:hover,
+.fh-discord-cta-row button:hover {
+  transform: translateY(-2px);
+}
+
+.fh-login-open,
+.fh-theme-toggle {
+  height: 42px;
+  border-radius: 999px;
+  background: #fff;
+  color: #23272a;
+  padding: 0 18px;
+  box-shadow: 0 14px 34px rgba(0,0,0,.16);
+}
+
+.fh-theme-toggle {
+  width: 42px;
+  min-width: 42px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+}
+
+.fh-discord-hero {
+  width: min(1180px, calc(100vw - 40px));
+  margin: 44px auto 0;
+  min-height: calc(100vh - 160px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, .72fr);
+  align-items: center;
+  gap: 54px;
+  position: relative;
+  z-index: 2;
+}
+
+.fh-discord-copy h1 {
+  margin: 14px 0 20px;
+  max-width: 760px;
+  font-size: clamp(54px, 8vw, 118px);
+  line-height: .86;
+  letter-spacing: -.07em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+
+.fh-discord-copy p {
+  max-width: 650px;
+  margin: 0;
+  color: rgba(255,255,255,.9);
+  font-size: 20px;
+  line-height: 1.55;
+  font-weight: 700;
+}
+
+.fh-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-size: 12px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  font-weight: 950;
+}
+
+.fh-discord-cta-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 30px;
+}
+
+.fh-discord-primary,
+.fh-discord-secondary {
+  min-height: 56px;
+  border-radius: 999px;
+  padding: 0 28px;
+  box-shadow: 0 22px 48px rgba(0,0,0,.18);
+}
+
+.fh-discord-primary {
+  background: #fff;
+  color: #23272a;
+}
+
+.fh-discord-secondary {
+  background: #23272a;
+  color: #fff;
+}
+
+.fh-discord-preview {
+  border-radius: 34px;
+  padding: 22px;
+  background: rgba(35,39,42,.82);
+  border: 1px solid rgba(255,255,255,.18);
+  box-shadow: 0 34px 90px rgba(0,0,0,.34);
+  backdrop-filter: blur(20px);
+  transform: rotate(1.4deg);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-discord-preview {
+  background: rgba(255,255,255,.88);
+  color: #23272a;
+  border-color: rgba(255,255,255,.7);
+}
+
+.fh-preview-top {
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 24px;
+  background: rgba(255,255,255,.08);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-preview-top {
+  background: rgba(88,101,242,.09);
+}
+
+.fh-preview-top img {
+  width: 52px;
+  height: 52px;
+  border-radius: 18px;
+  object-fit: cover;
+}
+
+.fh-preview-top strong,
+.fh-preview-top small,
+.fh-preview-chat b,
+.fh-preview-chat small {
+  display: block;
+}
+
+.fh-preview-top small,
+.fh-preview-chat small,
+.fh-preview-console p {
+  color: rgba(255,255,255,.62);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-preview-top small,
+body.fh-login-mode[data-theme='light'] .fh-preview-chat small,
+body.fh-login-mode[data-theme='light'] .fh-preview-console p {
+  color: rgba(35,39,42,.56);
+}
+
+.fh-preview-top span {
+  padding: 8px 11px;
+  border-radius: 999px;
+  color: #0d5d3a;
+  background: #35f39a;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.fh-preview-chat {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.fh-preview-chat div {
+  padding: 16px;
+  border-radius: 22px;
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+body.fh-login-mode[data-theme='light'] .fh-preview-chat div {
+  background: rgba(88,101,242,.08);
+  border-color: rgba(88,101,242,.1);
+}
+
+.fh-preview-console {
+  border-radius: 22px;
+  background: #101320;
+  padding: 18px;
+  min-height: 94px;
+}
+
+.fh-preview-console span {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: #35f39a;
+}
+
+.fh-preview-console span:nth-child(2) { background: #ffd166; }
+.fh-preview-console span:nth-child(3) { background: #ff6b6b; }
+
+.fh-discord-orbit {
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  animation: fhFloaty 8s ease-in-out infinite;
+}
+
+.fh-discord-orbit.one {
+  left: 6vw;
+  bottom: 12vh;
+  width: 118px;
+  height: 118px;
+  padding: 12px;
+  background: rgba(255,255,255,.16);
+  backdrop-filter: blur(10px);
+}
+
+.fh-discord-orbit.one img {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.fh-discord-orbit.two {
+  right: 8vw;
+  top: 17vh;
+  width: 86px;
+  height: 86px;
+  background: rgba(255,255,255,.18);
+  animation-delay: -2s;
+}
+
+.fh-discord-orbit.three {
+  right: 26vw;
+  bottom: 13vh;
+  width: 46px;
+  height: 46px;
+  background: rgba(255,255,255,.22);
+  animation-delay: -4s;
+}
+
+@keyframes fhFloaty {
+  0%, 100% { transform: translate3d(0,0,0) rotate(0deg); }
+  50% { transform: translate3d(0,-18px,0) rotate(4deg); }
+}
+
+@media (max-width: 920px) {
+  .fh-discord-links { display: none; }
+  .fh-discord-hero { grid-template-columns: 1fr; margin-top: 24px; padding-bottom: 54px; }
+  .fh-discord-preview { transform: none; }
+  .fh-discord-copy h1 { font-size: clamp(46px, 14vw, 78px); }
+}
+
+/* FALLEN HEAVEN full landing takeover: Discord-style structure, original branding */
+body.fh-login-mode {
+  background: #050724 !important;
+}
+
+body.fh-login-mode .fh-discord-login {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 1.4% 32%, rgba(128, 115, 255, .28) 0 4px, transparent 5px),
+    radial-gradient(circle at 5.8% 35%, rgba(255, 255, 255, .16) 0 8px, transparent 9px),
+    radial-gradient(circle at 56% 44%, rgba(255, 255, 255, .22) 0 5px, transparent 6px),
+    radial-gradient(circle at 71% 26%, rgba(128, 115, 255, .22) 0 8px, transparent 9px),
+    linear-gradient(180deg, #07072c 0%, #17154b 34%, #5865f2 100%) !important;
+}
+
+body.fh-login-mode .fh-discord-login::before {
+  position: fixed !important;
+}
+
+body.fh-login-mode .fh-discord-login::after {
+  position: fixed !important;
+}
+
+body.fh-login-mode .fh-discord-scroll {
+  width: min(1280px, calc(100vw - 64px));
+  margin: -28px auto 0;
+  padding: 0 0 120px;
+  display: grid;
+  gap: 28px;
+  position: relative;
+  z-index: 2;
+}
+
+.fh-landing-band {
+  min-height: 360px;
+  border-radius: 42px;
+  padding: clamp(30px, 4vw, 58px);
+  display: grid;
+  align-items: center;
+  gap: 30px;
+  background:
+    radial-gradient(circle at 85% 18%, rgba(255,255,255,.18), transparent 26%),
+    rgba(255,255,255,.92);
+  color: #23272a;
+  box-shadow: 0 34px 90px rgba(0, 0, 0, .18);
+}
+
+.fh-landing-band.is-wide {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, .72fr);
+}
+
+.fh-landing-band.split {
+  grid-template-columns: 1fr 1fr;
+  background: #f6f6f7;
+  box-shadow: none;
+}
+
+.fh-landing-band.is-dark {
+  grid-template-columns: minmax(0, 1fr) auto;
+  background:
+    radial-gradient(circle at 80% 20%, rgba(88,101,242,.36), transparent 34%),
+    #23272a;
+  color: #fff;
+}
+
+.fh-landing-band span {
+  display: inline-block;
+  color: #5865f2;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+.fh-landing-band.is-dark span {
+  color: #8ea1ff;
+}
+
+.fh-landing-band h2 {
+  margin: 0;
+  max-width: 760px;
+  font-size: clamp(34px, 4.6vw, 72px);
+  line-height: .92;
+  letter-spacing: -.055em;
+}
+
+.fh-landing-band p {
+  max-width: 620px;
+  margin: 18px 0 0;
+  color: rgba(35,39,42,.68);
+  font-size: 18px;
+  line-height: 1.55;
+  font-weight: 750;
+}
+
+.fh-landing-band.is-dark p {
+  color: rgba(255,255,255,.72);
+}
+
+.fh-landing-band button {
+  border: 0;
+  min-height: 58px;
+  border-radius: 999px;
+  padding: 0 28px;
+  background: #fff;
+  color: #23272a;
+  font: inherit;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.fh-landing-mock {
+  min-height: 270px;
+  border-radius: 34px;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(88,101,242,.9), rgba(35,39,42,.92)),
+    #5865f2;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 30px 70px rgba(88,101,242,.26);
+}
+
+.fh-landing-mock b {
+  display: block;
+  margin-bottom: 28px;
+  font-size: 18px;
+}
+
+.fh-landing-mock i {
+  display: block;
+  height: 42px;
+  margin-top: 14px;
+  border-radius: 18px;
+  background: rgba(255,255,255,.18);
+}
+
+@media (max-width: 920px) {
+  body.fh-login-mode .fh-discord-scroll {
+    width: min(100vw - 28px, 720px);
+    margin-top: 0;
+  }
+
+  .fh-landing-band,
+  .fh-landing-band.is-wide,
+  .fh-landing-band.split,
+  .fh-landing-band.is-dark {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Discord-style background layer and floating decorative assets */
+body.fh-login-mode .fh-discord-login {
+  background:
+    linear-gradient(180deg, rgba(6, 7, 36, .48), rgba(16, 15, 66, .34) 44%, rgba(88, 101, 242, .78) 100%),
+    url("https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/673df7fbe95a8e90a7571751_D-bg.png") center top / cover no-repeat,
+    linear-gradient(180deg, #060724 0%, #17154b 38%, #5865f2 100%) !important;
+}
+
+body.fh-login-mode[data-theme='light'] .fh-discord-login {
+  background:
+    linear-gradient(180deg, rgba(10, 12, 52, .26), rgba(88, 101, 242, .28) 52%, rgba(88, 101, 242, .66) 100%),
+    url("https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/673df7fbe95a8e90a7571751_D-bg.png") center top / cover no-repeat,
+    linear-gradient(180deg, #5865f2 0%, #6f7dff 100%) !important;
+}
+
+.fh-discord-floaters {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.fh-float-asset {
+  position: absolute;
+  width: clamp(58px, 7vw, 118px);
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 34px rgba(0, 0, 0, .22));
+  opacity: .92;
+  animation: fhAssetFloat 7.5s ease-in-out infinite;
+  will-change: transform;
+}
+
+.fh-float-asset.paper {
+  left: 7vw;
+  top: 27vh;
+  width: clamp(72px, 8vw, 142px);
+  animation-duration: 8.2s;
+}
+
+.fh-float-asset.egg {
+  right: 12vw;
+  top: 18vh;
+  width: clamp(52px, 5vw, 92px);
+  animation-duration: 6.9s;
+  animation-delay: -1.2s;
+}
+
+.fh-float-asset.set {
+  left: 18vw;
+  bottom: 24vh;
+  width: clamp(78px, 8vw, 138px);
+  animation-duration: 9.4s;
+  animation-delay: -3s;
+}
+
+.fh-float-asset.cube {
+  right: 27vw;
+  bottom: 17vh;
+  width: clamp(58px, 6vw, 104px);
+  animation-duration: 7.8s;
+  animation-delay: -2.1s;
+}
+
+.fh-float-asset.fly {
+  right: 4vw;
+  bottom: 8vh;
+  width: clamp(120px, 16vw, 280px);
+  opacity: .86;
+  animation-duration: 10.5s;
+  animation-delay: -4.4s;
+}
+
+@keyframes fhAssetFloat {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(-2deg) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -22px, 0) rotate(3deg) scale(1.025);
+  }
+}
+
+body.fh-login-mode .fh-discord-hero,
+body.fh-login-mode .fh-discord-scroll,
+body.fh-login-mode .fh-discord-nav {
+  position: relative;
+  z-index: 3;
+}
+
+@media (max-width: 920px) {
+  .fh-float-asset.paper,
+  .fh-float-asset.set,
+  .fh-float-asset.cube {
+    opacity: .42;
+  }
+
+  .fh-float-asset.fly {
+    right: -24vw;
+    opacity: .38;
+  }
+}
+
+/* Discord Webflow-style dropdown refinement */
+body.fh-login-mode .fh-nav-dropdown {
+  width: 522px !important;
+  min-height: 220px !important;
+  overflow: hidden !important;
+  padding: 24px 28px !important;
+  gap: 26px !important;
+  align-items: start !important;
+  border-radius: 24px !important;
+  background: #fff !important;
+  color: #23272a !important;
+  transform-origin: 50% 0 !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .18) !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown.is-compact,
+body.fh-login-mode .fh-nav-dropdown.is-blog {
+  width: 522px !important;
+}
+
+body.fh-login-mode .fh-nav-dd-col {
+  position: relative !important;
+  z-index: 2 !important;
+  gap: 0 !important;
+  min-width: 0 !important;
+}
+
+body.fh-login-mode .fh-dd-title {
+  display: block !important;
+  margin: 0 0 12px !important;
+  color: #5865f2 !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  font-weight: 950 !important;
+  letter-spacing: .12em !important;
+  text-transform: uppercase !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown a {
+  min-height: auto !important;
+  grid-template-columns: 1fr 18px !important;
+  gap: 10px !important;
+  padding: 10px 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #23272a !important;
+  transition: color .16s ease !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown a:hover,
+body.fh-login-mode .fh-nav-dropdown a:focus-visible {
+  background: transparent !important;
+  color: #5865f2 !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown a::after {
+  content: "↗" !important;
+  color: currentColor !important;
+  font-size: 13px !important;
+  opacity: 0 !important;
+  transform: translate(-4px, 4px) !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown a:hover::after,
+body.fh-login-mode .fh-nav-dropdown a:focus-visible::after {
+  opacity: 1 !important;
+  transform: translate(0, 0) !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown i {
+  display: none !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown span {
+  display: block !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown b {
+  color: currentColor !important;
+  font-size: 14px !important;
+  line-height: 1.1 !important;
+  font-weight: 900 !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown small {
+  display: none !important;
+}
+
+body.fh-login-mode .fh-dd-decor {
+  position: absolute !important;
+  right: -16px !important;
+  bottom: -22px !important;
+  width: 136px !important;
+  height: auto !important;
+  object-fit: contain !important;
+  opacity: 0 !important;
+  transform: translate3d(0, 50px, 0) rotate(-6deg) !important;
+  filter: drop-shadow(0 18px 24px rgba(0, 0, 0, .18)) !important;
+  transition: opacity .28s ease .06s, transform .34s ease .06s !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+}
+
+body.fh-login-mode .fh-discord-menu:hover .fh-dd-decor,
+body.fh-login-mode .fh-discord-menu:focus-within .fh-dd-decor {
+  opacity: 1 !important;
+  transform: translate3d(0, 0, 0) rotate(-6deg) !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown::before {
+  top: -8px !important;
+  width: 18px !important;
+  height: 18px !important;
+  border: 0 !important;
+  background: #fff !important;
+}
+
+body.fh-login-mode .fh-discord-menu[data-menu='safety'] .fh-dd-decor {
+  width: 112px !important;
+  right: -4px !important;
+}
+
+body.fh-login-mode .fh-discord-menu[data-menu='quests'] .fh-dd-decor {
+  width: 94px !important;
+  right: 10px !important;
+  bottom: -8px !important;
+}
+
+body.fh-login-mode .fh-discord-menu[data-menu='help'] .fh-dd-decor {
+  width: 104px !important;
+}
+
+/* Focus-on-card interaction layer */
+.fh-guild-card,
+.fh-status,
+.fh-landing-band,
+.fh-preview-chat div,
+.fh-nav-dropdown a {
+  transition:
+    transform .2s cubic-bezier(.2, .8, .2, 1),
+    opacity .2s ease,
+    filter .2s ease,
+    box-shadow .2s ease,
+    border-color .2s ease,
+    background .2s ease !important;
+}
+
+.fh-guild-grid:has(.fh-guild-card:hover) .fh-guild-card:not(:hover),
+.fh-guild-grid:has(.fh-guild-card:focus-visible) .fh-guild-card:not(:focus-visible),
+.fh-status-grid:has(.fh-status:hover) .fh-status:not(:hover),
+.fh-status-grid:has(.fh-status:focus-within) .fh-status:not(:focus-within),
+.fh-discord-scroll:has(.fh-landing-band:hover) .fh-landing-band:not(:hover),
+.fh-discord-scroll:has(.fh-landing-band:focus-within) .fh-landing-band:not(:focus-within),
+.fh-preview-chat:has(div:hover) div:not(:hover),
+.fh-nav-dropdown:has(a:hover) a:not(:hover),
+.fh-nav-dropdown:has(a:focus-visible) a:not(:focus-visible) {
+  opacity: .54 !important;
+  filter: saturate(.82) brightness(.86) blur(.25px) !important;
+  transform: scale(.985) !important;
+}
+
+.fh-guild-card:hover,
+.fh-guild-card:focus-visible,
+.fh-status:hover,
+.fh-status:focus-within,
+.fh-landing-band:hover,
+.fh-landing-band:focus-within,
+.fh-preview-chat div:hover,
+.fh-nav-dropdown a:hover,
+.fh-nav-dropdown a:focus-visible {
+  opacity: 1 !important;
+  filter: saturate(1.08) brightness(1.05) !important;
+  transform: translateY(-6px) scale(1.012) !important;
+  z-index: 5 !important;
+}
+
+.fh-guild-card:hover,
+.fh-guild-card:focus-visible {
+  box-shadow: 0 30px 90px rgba(88, 101, 242, .34), 0 0 0 1px rgba(255, 255, 255, .2) inset !important;
+  border-color: rgba(255, 255, 255, .32) !important;
+}
+
+.fh-status:hover,
+.fh-status:focus-within {
+  box-shadow: 0 24px 70px rgba(88, 101, 242, .22), 0 0 0 1px rgba(255, 255, 255, .16) inset !important;
+}
+
+.fh-landing-band:hover,
+.fh-landing-band:focus-within {
+  box-shadow: 0 42px 110px rgba(0, 0, 0, .24), 0 0 0 1px rgba(88, 101, 242, .12) inset !important;
+}
+
+.fh-nav-dropdown a:hover,
+.fh-nav-dropdown a:focus-visible {
+  transform: translateX(4px) !important;
+}
+
+.fh-guild-card:focus-visible,
+.fh-nav-dropdown a:focus-visible,
+.fh-discord-actions button:focus-visible,
+.fh-discord-cta-row button:focus-visible {
+  outline: 3px solid rgba(255, 255, 255, .72) !important;
+  outline-offset: 4px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fh-guild-card,
+  .fh-status,
+  .fh-landing-band,
+  .fh-preview-chat div,
+  .fh-nav-dropdown a,
+  .fh-float-asset,
+  .fh-discord-orbit {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Full landing structure copied as layout language, prepared for FALLEN HEAVEN reskin */
+body.fh-login-mode .fh-discord-nav::before {
+  content: "";
+  position: absolute;
+  left: -24px;
+  right: -24px;
+  top: 18px;
+  height: 78px;
+  border-radius: 28px;
+  background: rgba(8, 10, 38, .18);
+  border: 1px solid rgba(255, 255, 255, .08);
+  backdrop-filter: blur(18px);
+  opacity: 0;
+  transform: scaleY(.72);
+  transform-origin: top;
+  transition: opacity .22s ease, transform .22s ease;
+  z-index: -1;
+}
+
+body.fh-login-mode .fh-discord-nav:has(.fh-discord-menu:hover)::before,
+body.fh-login-mode .fh-discord-nav:has(.fh-discord-menu:focus-within)::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+body.fh-login-mode .fh-discord-menu.is-open .fh-nav-dropdown {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: translateX(-50%) translateY(0) scale(1) !important;
+}
+
+body.fh-login-mode .fh-discord-menu.is-open > button::after {
+  transform: rotate(225deg) translateY(-1px) !important;
+}
+
+body.fh-login-mode .fh-discord-menu.is-open .fh-dd-decor {
+  opacity: 1 !important;
+  transform: translate3d(0, 0, 0) rotate(-6deg) !important;
+}
+
+.fh-landing-showcase {
+  min-height: 620px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 52px;
+  padding: clamp(34px, 5vw, 72px);
+  display: grid;
+  grid-template-columns: minmax(0, .8fr) minmax(420px, 1fr);
+  align-items: center;
+  gap: 42px;
+  background:
+    radial-gradient(circle at 74% 16%, rgba(255,255,255,.22), transparent 30%),
+    linear-gradient(135deg, #5865f2, #8ea1ff 52%, #f6f6f7);
+  color: #fff;
+  box-shadow: 0 36px 110px rgba(0,0,0,.22);
+}
+
+.fh-showcase-copy span,
+.fh-feature-cloud + span {
+  display: inline-block;
+  color: rgba(255,255,255,.78);
+  font-size: 12px;
+  letter-spacing: .22em;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.fh-showcase-copy h2 {
+  margin: 16px 0 0;
+  max-width: 650px;
+  font-size: clamp(44px, 5.8vw, 88px);
+  line-height: .9;
+  letter-spacing: -.065em;
+}
+
+.fh-showcase-copy p {
+  max-width: 520px;
+  margin: 20px 0 0;
+  color: rgba(255,255,255,.82);
+  font-size: 19px;
+  line-height: 1.55;
+  font-weight: 800;
+}
+
+.fh-showcase-art {
+  position: relative;
+  min-height: 520px;
+}
+
+.fh-showcase-art img {
+  position: absolute;
+  max-width: 62%;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 34px 46px rgba(0,0,0,.24));
+  animation: fhAssetFloat 8.5s ease-in-out infinite;
+}
+
+.fh-showcase-art img:first-child {
+  right: 0;
+  bottom: -20px;
+  max-width: 56%;
+}
+
+.fh-showcase-art img:last-child {
+  left: 0;
+  top: 20px;
+  max-width: 55%;
+  animation-delay: -3.1s;
+}
+
+.fh-feature-cloud {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.fh-feature-cloud article {
+  min-height: 210px;
+  padding: 26px;
+  border-radius: 34px;
+  background: rgba(255,255,255,.92);
+  color: #23272a;
+  box-shadow: 0 24px 70px rgba(0,0,0,.16);
+  transition: transform .2s ease, opacity .2s ease, filter .2s ease, box-shadow .2s ease;
+}
+
+.fh-feature-cloud:has(article:hover) article:not(:hover) {
+  opacity: .54;
+  filter: saturate(.8) brightness(.9);
+  transform: scale(.985);
+}
+
+.fh-feature-cloud article:hover {
+  transform: translateY(-8px) scale(1.018);
+  box-shadow: 0 34px 90px rgba(88,101,242,.26);
+}
+
+.fh-feature-cloud b {
+  display: block;
+  font-size: 22px;
+  letter-spacing: -.035em;
+}
+
+.fh-feature-cloud span {
+  display: block;
+  margin-top: 12px;
+  color: rgba(35,39,42,.62);
+  line-height: 1.45;
+  font-weight: 800;
+}
+
+.fh-landing-footer {
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px 0 0;
+  color: rgba(255,255,255,.82);
+}
+
+.fh-landing-footer div,
+.fh-landing-footer nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.fh-landing-footer img {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  object-fit: cover;
+}
+
+.fh-landing-footer a {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 850;
+  opacity: .8;
+}
+
+.fh-landing-footer a:hover {
+  opacity: 1;
+}
+
+@media (max-width: 1050px) {
+  .fh-feature-cloud {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fh-landing-showcase {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .fh-feature-cloud {
+    grid-template-columns: 1fr;
+  }
+
+  .fh-landing-footer,
+  .fh-landing-footer nav {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+body.fh-login-mode[data-theme='light'] .fh-discord-login {
+  background:
+    radial-gradient(circle at 1.4% 32%, rgba(128, 115, 255, .24) 0 4px, transparent 5px),
+    radial-gradient(circle at 5.8% 35%, rgba(255, 255, 255, .22) 0 8px, transparent 9px),
+    radial-gradient(circle at 56% 44%, rgba(255, 255, 255, .26) 0 5px, transparent 6px),
+    radial-gradient(circle at 71% 26%, rgba(128, 115, 255, .26) 0 8px, transparent 9px),
+    linear-gradient(180deg, #08082e 0%, #1e1a62 28%, #5865f2 100%) !important;
+}
+
+body.fh-login-mode .fh-discord-nav {
+  width: min(1440px, calc(100vw - 64px)) !important;
+  height: 116px !important;
+  padding: 0 !important;
+  align-items: center !important;
+}
+
+body.fh-login-mode .fh-discord-brand {
+  min-width: 218px;
+  font-size: 22px;
+  font-weight: 950;
+}
+
+body.fh-login-mode .fh-discord-brand img {
+  width: 44px;
+  height: 44px;
+  border-radius: 15px;
+}
+
+body.fh-login-mode .fh-discord-links {
+  gap: clamp(18px, 2.35vw, 34px) !important;
+  font-size: clamp(14px, .9vw, 17px) !important;
+  font-weight: 950 !important;
+  letter-spacing: -.015em;
+}
+
+body.fh-login-mode .fh-discord-links .fh-nav-link,
+body.fh-login-mode .fh-discord-menu > button {
+  color: #fff !important;
+  text-shadow: 0 1px 18px rgba(0, 0, 0, .12);
+}
+
+body.fh-login-mode .fh-discord-menu > button::after {
+  width: 8px;
+  height: 8px;
+  border-width: 2px;
+  opacity: .78;
+}
+
+body.fh-login-mode .fh-discord-actions {
+  min-width: 218px;
+  justify-content: flex-end;
+}
+
+body.fh-login-mode .fh-login-open {
+  height: 42px !important;
+  padding: 0 18px !important;
+  border-radius: 999px !important;
+  background: #fff !important;
+  color: #23272a !important;
+  font-weight: 950 !important;
+  box-shadow: none !important;
+}
+
+body.fh-login-mode .fh-theme-toggle {
+  background: rgba(255, 255, 255, .12) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, .2) !important;
+  box-shadow: none !important;
+}
+
+body.fh-login-mode .fh-discord-hero {
+  width: min(1280px, calc(100vw - 64px)) !important;
+  min-height: calc(100vh - 156px) !important;
+  margin-top: 0 !important;
+  grid-template-columns: minmax(0, 1.08fr) minmax(390px, .62fr) !important;
+  gap: clamp(36px, 5vw, 92px) !important;
+}
+
+body.fh-login-mode .fh-discord-copy h1 {
+  max-width: 880px;
+  font-size: clamp(64px, 8.8vw, 132px) !important;
+  line-height: .84 !important;
+  letter-spacing: -.075em !important;
+  margin-bottom: 24px !important;
+}
+
+body.fh-login-mode .fh-discord-copy p {
+  max-width: 690px;
+  font-size: clamp(18px, 1.25vw, 22px) !important;
+  line-height: 1.52 !important;
+  color: rgba(255, 255, 255, .92) !important;
+}
+
+body.fh-login-mode .fh-eyebrow {
+  color: rgba(255, 255, 255, .84) !important;
+  letter-spacing: .22em !important;
+}
+
+body.fh-login-mode .fh-discord-primary {
+  min-height: 58px !important;
+  background: #fff !important;
+  color: #23272a !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .18) !important;
+}
+
+body.fh-login-mode .fh-discord-secondary {
+  min-height: 58px !important;
+  background: #23272a !important;
+  color: #fff !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .2) !important;
+}
+
+body.fh-login-mode .fh-discord-preview {
+  border-radius: 32px !important;
+  background: rgba(21, 24, 38, .72) !important;
+  border: 1px solid rgba(255, 255, 255, .18) !important;
+  box-shadow: 0 36px 110px rgba(0, 0, 0, .34) !important;
+}
+
+body.fh-login-mode[data-theme='light'] .fh-discord-preview {
+  background: rgba(255, 255, 255, .9) !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown {
+  top: calc(100% + 10px) !important;
+  border-radius: 22px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .26) !important;
+}
+
+body.fh-login-mode .fh-nav-dropdown a {
+  min-height: 64px !important;
+}
+
+@media (max-width: 1080px) {
+  body.fh-login-mode .fh-discord-brand,
+  body.fh-login-mode .fh-discord-actions {
+    min-width: auto;
+  }
+
+  body.fh-login-mode .fh-discord-links {
+    gap: 18px !important;
+  }
+}
+
+@media (max-width: 920px) {
+  body.fh-login-mode .fh-discord-nav {
+    width: min(100vw - 28px, 720px) !important;
+    height: 86px !important;
+  }
+
+  body.fh-login-mode .fh-discord-hero {
+    width: min(100vw - 28px, 720px) !important;
+    grid-template-columns: 1fr !important;
+  }
+}

@@ -1,0 +1,218 @@
+﻿<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Discord Bot Control</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/aaa-dashboard.css">
+    <link rel="stylesheet" href="/pro-dashboard.css">
+</head>
+  <body>
+    <div id="auth-overlay" class="overlay">
+      <div class="card auth-card">
+        <p class="eyebrow">Dashboard Zugriff</p>
+        <h1>Discord Bot Control Center</h1>
+        <p>Nur der Bot und dein Discord-Login: Server mit Moderationsrechten werden angezeigt. Bitte zuerst mit Discord einloggen.</p>
+        <button id="discord-login" type="button">Mit Discord verbinden</button>
+        <p id="login-error" class="error hidden"></p>
+      </div>
+    </div>
+
+    <div id="app-shell" class="hidden">
+      <aside class="sidebar">
+        <header>
+          <div class="brand-mark"><img src="/assets/fallen-heaven-avatar.png" alt="FALLEN HEAVEN" /></div>
+          <div>
+            <h2>FALLEN HEAVEN</h2>
+            <p class="muted">Dashboard Control Center</p>
+          </div>
+        </header>
+
+        <div class="sidebar-actions">
+          <button id="refresh-all" type="button">Neu laden</button>
+          <button id="logout" class="secondary-button" type="button">Abmelden</button>
+        </div>
+
+        <section class="guild-panel">
+          <p class="eyebrow">Server</p>
+          <input id="guild-filter" type="search" placeholder="Server suchen..." />
+          <ul id="guild-list"></ul>
+        </section>
+      </aside>
+
+      <main class="content">
+        <div class="topbar">
+          <div class="title-block">
+            <p class="eyebrow">Dashboard</p>
+            <h1 id="guild-title">Server auswählen</h1>
+          </div>
+          <div id="system-control" class="system-control">
+            <p class="eyebrow">Bot-Service</p>
+            <div class="system-control-row">
+              <span id="bot-status" class="status-tag">Unbekannt</span>
+              <button id="bot-start" type="button">Start</button>
+              <button id="bot-stop" type="button">Stop</button>
+              <button id="bot-restart" type="button">Neustart</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="export-json" type="button">JSON Export</button>
+            <button id="save-all" type="button">Alle Änderungen speichern</button>
+          </div>
+        </div>
+
+        <section class="status-strip">
+          <div>
+            <span class="status-label">Verbindung</span>
+            <span id="connection-status" class="status-tag">Nicht verbunden</span>
+          </div>
+          <div>
+            <span class="status-label">Zugriff</span>
+            <span class="status-pill">Owner / Moderation</span>
+          </div>
+          <div>
+            <span class="status-label">Modus</span>
+            <span class="status-pill">Live-Konfiguration</span>
+          </div>
+        </section>
+
+        <nav class="view-tabs" aria-label="Dashboard Bereiche">
+          <button class="view-tab active" type="button" data-view="overview">Übersicht</button>
+          <button class="view-tab" type="button" data-view="modules">Module</button>
+          <button class="view-tab" type="button" data-view="embeds">Embed Studio</button>
+          <button class="view-tab" type="button" data-view="ai-memory">AI Memory</button>
+        </nav>
+
+
+        <section id="members-view" class="dashboard-view members-view">
+          <div class="members-topline">
+            <div class="members-title">
+              <p class="eyebrow">Nutzer / Nutzerliste</p>
+              <h2>Nutzerliste</h2>
+            </div>
+            <div class="members-searchbar">
+              <input id="member-search" type="search" placeholder="Suche" />
+              <button id="member-sync" type="button">Sync</button>
+            </div>
+          </div>
+          <div class="members-table-shell">
+            <div class="members-table-head">
+              <span>Nutzer</span>
+              <span>Beigetreten am</span>
+              <span>Rolle</span>
+              <span></span>
+            </div>
+            <div id="members-table" class="members-table"></div>
+            <div class="members-pagination">
+              <button id="members-prev" class="secondary-button" type="button">Zur?ck</button>
+              <span id="members-page-info">Seite 1/1</span>
+              <button id="members-next" class="secondary-button" type="button">Weiter</button>
+            </div>
+          </div>
+          <aside id="member-drawer" class="member-drawer hidden"></aside>
+        </section>
+        <section id="overview-view" class="dashboard-view overview-view active">
+          <div id="stat-grid" class="stat-grid"></div>
+          <div class="chart-grid">
+            <article class="chart-panel">
+              <header>
+                <p class="eyebrow">Kanäle</p>
+                <h3>Channel-Verteilung</h3>
+              </header>
+              <div id="channel-chart" class="bar-chart"></div>
+            </article>
+            <article class="chart-panel">
+              <header>
+                <p class="eyebrow">Module</p>
+                <h3>Aktive Systeme</h3>
+              </header>
+              <div id="module-chart" class="ring-chart"></div>
+            </article>
+            <article class="chart-panel">
+              <header>
+                <p class="eyebrow">Assets</p>
+                <h3>Server-Struktur</h3>
+              </header>
+              <div id="asset-chart" class="bar-chart compact"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="modules-view" class="dashboard-view modules-view">
+          <div class="search-row">
+            <input id="feature-search" type="search" placeholder="Feature suchen..." />
+          </div>
+
+          <section class="workspace">
+            <aside id="feature-nav" class="feature-nav"></aside>
+            <div id="feature-grid" class="feature-grid"></div>
+          </section>
+        </section>
+
+        <section id="embeds-view" class="dashboard-view embeds-view">
+          <aside id="embed-list" class="embed-list"></aside>
+          <section class="embed-builder">
+            <div class="embed-builder-header">
+              <div>
+                <p class="eyebrow">Embed Studio</p>
+                <h2 id="embed-title">Embed bearbeiten</h2>
+              </div>
+              <div class="embed-actions">
+                <button id="embed-new" class="secondary-button" type="button">Neu</button>
+                <button id="embed-duplicate" class="secondary-button" type="button">Duplizieren</button>
+                <button id="embed-save" type="button">Template speichern</button>
+              </div>
+            </div>
+            <div class="embed-studio-grid">
+              <form id="embed-form" class="embed-form"></form>
+              <aside class="discord-preview-shell">
+                <p class="eyebrow">Discord Vorschau</p>
+                <div id="discord-preview" class="discord-preview"></div>
+                <div class="send-panel">
+                  <label>
+                    <span>Kanal</span>
+                    <select id="embed-channel"></select>
+                  </label>
+                  <label>
+                    <span>Message-ID zum Bearbeiten</span>
+                    <input id="embed-message-id" type="text" placeholder="optional" />
+                  </label>
+                  <div class="send-actions">
+                    <button id="embed-send" type="button">Senden</button>
+                    <button id="embed-edit" class="secondary-button" type="button">Nachricht bearbeiten</button>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </section>
+
+        <section id="ai-memory-view" class="dashboard-view ai-memory-view">
+          <div class="memory-header">
+            <div>
+              <p class="eyebrow">Lokale Ollama Erinnerung</p>
+              <h2>Einzelne User-Daten</h2>
+              <p class="muted">Jeder User wird getrennt gespeichert. Du kannst Fakten und Chatverlauf ansehen oder eine Person komplett wipen.</p>
+            </div>
+            <button id="memory-refresh" type="button">Memory neu laden</button>
+          </div>
+          <div class="memory-layout">
+            <aside id="memory-list" class="memory-list"></aside>
+            <section id="memory-detail" class="memory-detail">
+              <div class="empty-state">Wähle links einen User aus.</div>
+            </section>
+          </div>
+        </section>      </main>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/app.js"></script>
+    <script src="/aaa-dashboard.js"></script>
+</body>
+</html>
+
+
+
+
+
