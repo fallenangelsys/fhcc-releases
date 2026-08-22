@@ -4,7 +4,7 @@ Date: 2026-08-22
 
 ## Purpose
 
-Rebuild the complete Electron renderer as a distinctive, dense Discord administration client. The interaction model may learn from DiscordBotClient and Discord's spatial organization, but all implementation, components, styling, assets, and product language remain original to FALLEN HEAVEN.
+Rebuild the complete Electron renderer as a distinctive, dense Discord administration client. The shell follows the actual DiscordBotClient spatial model: guild rail, contextual channel-like navigation, primary content surface, and optional right detail pane. It does not use a conventional administration dashboard as its central metaphor. All implementation, components, styling, assets, and product language remain original to FALLEN HEAVEN.
 
 The redesign must solve three current failures together:
 
@@ -17,6 +17,10 @@ The redesign must solve three current failures together:
 ### Dense, not crowded
 
 The app is an operational Discord tool. It should expose relevant context without turning every value into a decorative card. Information is organized into persistent panes, compact rows, tables, channel trees, inspector areas, and focused editors.
+
+### Complete capability, reorganized
+
+The redesign preserves every currently supported user workflow. Features may move into clearer client-style locations, but they are not removed, hidden without a replacement, or reduced to read-only summaries. Where a feature is too large for one content surface, it receives channel-like subviews or a dedicated workspace while preserving shared server and module context.
 
 ### Context determines controls
 
@@ -46,11 +50,11 @@ The supplied key art at `E:\SSD NEW\Bilder\file_0000000050c871f4ae43434149bbd119
 
 ### Server rail
 
-A narrow first rail switches Discord servers and exposes account/help access. Server icons use real guild avatars. The active server uses a restrained halo-derived focus ring. This rail collapses to a compact mobile/window mode without replacing icons with text abbreviations.
+A narrow first rail switches Discord servers and exposes global FALLEN HEAVEN areas plus account/help access. Server icons use real guild avatars. The active server uses a restrained halo-derived focus ring. This rail collapses to a compact mobile/window mode without replacing icons with text abbreviations.
 
 ### Primary navigation
 
-The second pane contains full labels for Overview, Server Management, Modules, Embed Studio, Skin Studio, Live Diagnostics, and System. It also shows the selected server and compact live connection status. Sections may show meaningful counts only when actionable, such as unresolved diagnostics.
+The second pane behaves like Discord's channel list. It contains contextual categories and full labels for the selected product area. At the global level it exposes Overview, Server Management, Modules, Embed Studio, Skin Studio, Live Diagnostics, and System. Inside a module it changes to that module's actual capabilities. It also shows the selected server and compact live connection status. Sections may show meaningful counts only when actionable, such as unresolved diagnostics.
 
 ### Workspace
 
@@ -68,11 +72,11 @@ An optional right pane shows live events, selected-item properties, validation, 
 
 ### Overview
 
-The overview behaves as an operational home, not an analytics landing page. It shows connection health, interaction timing, last backup, recent actionable events, active systems, and common actions. Every displayed metric links to its source view. Non-actionable decorative totals are omitted.
+The overview behaves like a server home/activity surface, not an analytics dashboard. Its contextual navigation exposes useful feeds such as Server Home, Recent Activity, Attention Required, and Scheduled Operations. The main surface shows a chronological operational feed and pinned server status. The optional right pane shows bot connection, current server identity, and upcoming scheduled work. Metrics appear only inside the relevant feed/detail context and link to their source view.
 
 ### Module browser
 
-Modules are shown as a searchable, filterable operational list grouped by purpose. Each row shows icon, name, concise purpose, readiness, enabled state, and issues. Selecting a module opens its contextual workspace without discarding list scroll/filter state.
+Modules are grouped as channel-like entries in the contextual navigation, with search and filters available above the list. Each entry shows icon, full name, readiness/enabled state, and actionable issue count. Selecting a module opens its workspace without discarding list scroll/filter state. A main-surface directory remains available for bulk comparison and activation, but it is a dense list rather than a card dashboard.
 
 ### Module workspace
 
@@ -99,6 +103,8 @@ The free studio remains the place for composing and sending standalone Discord c
 
 Server management follows Discord's recognizable hierarchy: server context, channel/category tree, role hierarchy, member/content workspace, and a contextual inspector. Long lists use virtualization or pagination, stable keys, and preserved scroll position. Actions use menus and icon controls rather than rows of text buttons.
 
+Its contextual navigation exposes all existing areas, including channel content and ordering, categories, roles and hierarchy, members, forum posts and threads, timeline/history, backups, and supported server actions. Selecting a channel or member updates the main surface and detail pane in place, matching the directness of a Discord client.
+
 ### Live diagnostics
 
 Diagnostics prioritize current failures and timing over decorative health scores. Stream updates are batched before DOM rendering. Filtering, pause/resume, detail inspection, and copying diagnostic evidence are first-class controls.
@@ -106,6 +112,23 @@ Diagnostics prioritize current failures and timing over decorative health scores
 ### System and updates
 
 System settings use compact grouped rows and explicit restart/update consequences. Release state, data paths, signing status, runtime versions, and service controls remain visible without exposing implementation noise to ordinary workflows.
+
+## Capability Preservation Map
+
+The migration must preserve and verify at least these existing surfaces:
+
+- Authentication, session restore, server selection, window controls, theme, and startup/recovery states.
+- Overview/server home, operational events, scheduled work, bot state, and actionable notices.
+- Full module directory, enable/disable state, readiness blockers, every generated configuration field, and all module-specific actions.
+- Every module-specific embed/template workflow, including managed panel refresh behavior and placeholder support.
+- Free Embed Studio drafts, multi-embed editing, content, fields, images, outside attachments, target channels/threads/forums, tags, components, reactions, JSON tools, send, and existing-message editing.
+- Server management for channels, categories, positions, roles, hierarchy, members, permissions, content history, forum threads/tags, pinned items, pagination, and timeline data.
+- Skin Studio tools, palettes, file handling, direct painting, AI/layer functions currently exposed, and lazy-loaded 3D preview.
+- Live diagnostics, filtering, access controls, timing/watchdog evidence, event streams, copy/export actions, and failure details.
+- Backups, restore preview/confirmation, updates, release/runtime information, service controls, and local data paths.
+- Toasts, dialogs, loading, empty, offline, permission, partial-data, dirty/saving/saved, and retry states across all routes.
+
+Before an old route is removed, its controls and backend calls are mapped to the new route and covered by a parity test. A route is not complete merely because its primary happy path is visible.
 
 ### Login and startup
 
@@ -202,7 +225,7 @@ Capability flags are explicit and validated. DOM visibility is not used as the s
 
 The redesign is delivered as a controlled replacement rather than another CSS layer:
 
-1. Establish tokens, shell, navigation, icon system, routing boundaries, and performance instrumentation.
+1. Establish tokens, Discord-client-style four-pane shell, navigation, icon system, routing boundaries, and performance instrumentation.
 2. Build the headless embed model and separate free/module editor shells; migrate Public Call first as the reference module.
 3. Migrate remaining module-specific editors and module browser/workspaces.
 4. Rebuild Server Management and Diagnostics around list performance and contextual inspectors.
@@ -210,6 +233,8 @@ The redesign is delivered as a controlled replacement rather than another CSS la
 6. Remove superseded CSS/JS paths after each route reaches parity and passes visual/behavioral tests.
 
 No phase may leave duplicate controls active or route two implementations to the same save/send action.
+
+Each phase maintains a checked capability matrix generated from current navigation items, module metadata, fixed UI controls, and route-specific smoke tests. The final migration gate requires zero unmapped existing controls unless the user explicitly approves their removal.
 
 ## Licensing Boundary
 
