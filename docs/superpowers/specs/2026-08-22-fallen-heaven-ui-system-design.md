@@ -4,7 +4,7 @@ Date: 2026-08-22
 
 ## Purpose
 
-Rebuild the complete Electron renderer as a distinctive, dense Discord administration client. The shell follows the actual DiscordBotClient spatial model: guild rail, contextual channel-like navigation, primary content surface, and optional right detail pane. It does not use a conventional administration dashboard as its central metaphor. All implementation, components, styling, assets, and product language remain original to FALLEN HEAVEN.
+Rebuild the complete Electron renderer as a distinctive, dense Discord bot client and administration control center. The shell follows the actual DiscordBotClient spatial model: guild rail, contextual channel-like navigation, primary content surface, and optional right detail pane. It does not use a conventional administration dashboard as its central metaphor. All implementation, components, styling, assets, and product language remain original to FALLEN HEAVEN.
 
 The redesign must solve three current failures together:
 
@@ -21,6 +21,8 @@ The app is an operational Discord tool. It should expose relevant context withou
 ### Complete capability, reorganized
 
 The redesign preserves every currently supported user workflow. Features may move into clearer client-style locations, but they are not removed, hidden without a replacement, or reduced to read-only summaries. Where a feature is too large for one content surface, it receives channel-like subviews or a dedicated workspace while preserving shared server and module context.
+
+The product additionally exposes Discord-client workflows that are valid for the connected bot account and its granted permissions. This expansion uses the official Discord bot API and Gateway only; it does not automate or impersonate a normal user account.
 
 ### Context determines controls
 
@@ -128,7 +130,27 @@ The migration must preserve and verify at least these existing surfaces:
 - Backups, restore preview/confirmation, updates, release/runtime information, service controls, and local data paths.
 - Toasts, dialogs, loading, empty, offline, permission, partial-data, dirty/saving/saved, and retry states across all routes.
 
+The bot-client expansion additionally covers, where the bot has permission:
+
+- Guild, category, text, announcement, forum, thread, and voice channel navigation.
+- Paginated/keyset message history with replies, mentions, embeds, attachments, stickers, reactions, and supported components.
+- Sending messages, embeds, attachments, replies, supported polls/components, and forum posts as the bot.
+- Editing and deleting messages authored by the bot; moderation actions remain permission-gated and separately confirmed.
+- Adding/removing the bot's reactions, creating/managing supported threads, and viewing forum tags and pinned content.
+- Member profiles available to the bot, roles, permissions, timeouts, kicks, bans, and existing moderation evidence.
+- Bot-created DM channels and bot conversations where the API provides access; no arbitrary user inbox browsing.
+- Voice channel membership/state and supported bot voice connections; user-only calls, video, screen sharing, and Nitro media features are excluded.
+- Real-time Gateway updates for messages, reactions, members, channels, threads, voice state, and guild changes.
+
 Before an old route is removed, its controls and backend calls are mapped to the new route and covered by a parity test. A route is not complete merely because its primary happy path is visible.
+
+## Official API Boundary
+
+The application authenticates and operates as a Discord bot account through the official bot token/API and Gateway paths already used by the runtime. It must never request, store, import, or automate a normal Discord user token.
+
+The following Discord user-client features are explicitly outside scope: friends, group DMs, arbitrary user DMs, user account settings, user presence impersonation, Nitro, Shop, Quests, billing, personal inventory, user-only calls, video, screen sharing, and other endpoints unavailable to bots.
+
+The UI may resemble a client spatially, but every visible action is capability-checked against bot API support, guild permissions, channel permissions, and message ownership. Unsupported user-client controls are not rendered as disabled decoration.
 
 ### Login and startup
 
@@ -173,6 +195,8 @@ Capability flags are explicit and validated. DOM visibility is not used as the s
 5. Save validates locally, persists through the existing API, then runs optional live refresh.
 6. Persistence and refresh results are displayed separately and recorded in diagnostics.
 7. Successful saves update the cache and clear dirty state without reconstructing unrelated panes.
+
+Bot-client data continues to flow through the local authenticated backend rather than exposing the bot token to renderer JavaScript. The backend owns Discord REST/Gateway access, permission checks, rate-limit handling, and audit diagnostics. The renderer receives normalized, least-privilege view models.
 
 ## Performance Contract
 
@@ -238,4 +262,4 @@ Each phase maintains a checked capability matrix generated from current navigati
 
 ## Licensing Boundary
 
-DiscordBotClient is used only as a behavioral and spatial reference. Its GPL-3.0 code, bundled Discord client code, Vencord code, trademarks, and visual assets are not copied. FALLEN HEAVEN keeps an independent implementation and identity. The app remains a bot administration control center and does not become a third-party Discord user/bot client.
+DiscordBotClient is used only as a behavioral and spatial reference. Its GPL-3.0 code, bundled Discord client code, Vencord code, trademarks, and visual assets are not copied. FALLEN HEAVEN keeps an independent implementation and identity. The app is an original bot client and administration control center built on official bot API capabilities, not a patched Discord user client or self-bot.
