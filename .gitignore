@@ -8,8 +8,16 @@ node_modules/
 /data/member-activity/
 /data/server-context/
 /data/server-backups/
+/data/ai-memory/
+/data/studio-images/
 /dist/
 /runtime/
+/.worktrees/
+/.check-installed/
+/FHCC-Setup-*-x64.exe
+/FHCC-Setup-*-x64.exe.blockmap
+/latest.yml
+/bot-changelog.json
 tmp-*
 .freebuff/
 npm-debug.log*
