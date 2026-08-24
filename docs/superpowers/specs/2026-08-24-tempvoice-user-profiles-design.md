@@ -44,6 +44,7 @@ Damit sieht ein neuer Kanal wieder so aus, wie das Mitglied ihn bevorzugt, start
 5. Mitglieder koennen in einem gesperrten Kanal gezielt zugelassen und wieder entfernt werden.
 6. Die App zeigt aktive Kanaele und gespeicherte Profile verstaendlich an und kann Profile kontrolliert zuruecksetzen.
 7. Bestehende State-Dateien und aktive Kanaele funktionieren nach dem Update weiter.
+8. Das TempVoice-Interface-Embed ist im bestehenden Embed Studio vollstaendig gestaltbar, waehrend die echten TempVoice-Buttons funktional und vom Design getrennt bleiben.
 
 ## Nicht-Ziele
 
@@ -174,6 +175,46 @@ Nach Rename, Limit, Region, Sperren/Oeffnen, Zugangsaenderung, Claim und Transfe
 
 Die Zugangsaktionen werden in einem gemeinsamen, ephemeral geoeffneten Zugangsdialog gebuendelt. Dadurch bleibt das Hauptinterface trotz der zusaetzlichen Funktionen uebersichtlich. `Profil zuruecksetzen` erfordert vor der Ausfuehrung eine Bestaetigung.
 
+## Vollstaendig editierbares Interface-Embed
+
+Das TempVoice-Modul erhaelt einen echten Spezialmodus im vorhandenen Embed Studio. Es handelt sich nicht um eine kopierte Vorschau und nicht um eine normale frei versendete Studio-Nachricht:
+
+- Das Studio laedt und speichert `tempVoice.interfaceDesign`.
+- Nachrichtentext, Titel, Beschreibung, Autor, URL, Farbe, Thumbnail, Embed-Bild, Felder, Feldreihenfolge, Footer, Zeitstempel und Aussenbild sind frei editierbar.
+- Das Studio verwendet genau ein Interface-Embed. Eine Zielkanal-Auswahl ist nicht erforderlich, weil jedes aktive TempVoice-Interface in seinem eigenen Voice-Kanal liegt.
+- Studio-Komponenten und Reaction Roles sind fuer diesen Spezialmodus deaktiviert. Die echten TempVoice-Komponenten werden beim Senden und Aktualisieren immer separat durch `interfaceRows(...)` erzeugt.
+- Ein im Studio gespeichertes Design aktualisiert alle aktuell aktiven TempVoice-Interfaces und wird fuer jeden kuenftig erzeugten Kanal verwendet.
+- Kann ein einzelnes aktives Interface nicht aktualisiert werden, bleibt das Design trotzdem gespeichert; der Save liefert einen nachvollziehbaren Refresh-Status statt einen falschen Gesamterfolg.
+
+Es gibt bewusst keinen grossen Paket-Platzhalter wie `{tempVoiceBlock}`, der ganze Textabschnitte, Felder oder sonstige frei editierbare Inhalte kontrolliert. Nur atomare Live-Werte werden ersetzt:
+
+- `{owner}`: echte Mention des aktuellen Besitzers,
+- `{ownerName}`: aktueller Anzeigename des Besitzers,
+- `{channelName}`: aktueller Kanalname,
+- `{createdAt}`: dynamischer Discord-Zeitstempel der Erstellung,
+- `{userLimit}`: Zahl oder `Unbegrenzt`,
+- `{region}`: lesbarer Regionsname oder `Automatisch`,
+- `{accessState}`: `Offen` oder `Gesperrt`,
+- `{memberCount}`: aktuell verbundene Mitglieder,
+- `{server}`: aktueller Servername.
+
+Die Platzhalter duerfen frei in Nachrichtentext, Titel, Beschreibung, Autor, Feldern und Footer stehen. Das Default-Design zeigt alle wichtigen Live-Werte, zwingt aber keinen geschuetzten Textblock auf. Entfernt der Benutzer einen Platzhalter bewusst, bleibt das Embed gueltig und lediglich dieser Live-Wert wird nicht mehr angezeigt.
+
+Discord rendert Mentions und relative Zeitstempel nicht in jedem Embed-Bereich gleich. Deshalb verwendet die Laufzeit in Content, Beschreibung und Feldwerten fuer `{owner}` die echte Mention und fuer `{createdAt}` den Discord-Zeitstempel. In reinen Textbereichen wie Autor und Footer werden stattdessen der lesbare Besitzername beziehungsweise ein lesbares Datum eingesetzt. Die Studio-Vorschau bildet diesen Unterschied ab, damit sie dem echten Discord-Ergebnis entspricht.
+
+Die Studio-Vorschau ersetzt alle TempVoice-Platzhalter durch klar erkennbare Beispieldaten. Dadurch entspricht die Vorschau der spaeteren Discord-Struktur. Bild- und Aussenbildspeicherung verwenden die bereits vorhandenen lokalen Bild- und Embed-Design-Helfer; es entsteht kein zweiter Bildspeicherpfad.
+
+Der Save-Pfad laeuft ueber die bestehende zentrale Embed-Design-Pipeline:
+
+1. Template validieren und TempVoice-Design normalisieren,
+2. Config unter `tempVoice.interfaceDesign` persistieren,
+3. alle aktiven TempVoice-Interfaces mit dem gespeicherten Design aktualisieren,
+4. erst danach einen einheitlichen Save-/Refresh-Status an die App geben.
+
+Vorgesehene API-Aktion:
+
+- `PUT /api/guild/:guildId/temp-voice/design`
+
 ## App-Konfiguration und Live-Ansicht
 
 Neue Konfiguration:
@@ -198,6 +239,7 @@ Die TempVoice-Live-Ansicht der App erhaelt:
 - eine Liste gespeicherter Profile mit Mitglied, gespeichertem Namen, Limit, Region und Aktualisierungszeit,
 - Aktion zum Zuruecksetzen eines einzelnen Profils,
 - Aktion zum Zuruecksetzen aller Profile mit expliziter Bestaetigung.
+- Aktion `TempVoice-Embed bearbeiten`, die den TempVoice-Spezialmodus des vorhandenen Embed Studios oeffnet.
 
 Die Status-API wird entsprechend erweitert. Fuer Live-Kanaldaten wird der Discord-Guild-Cache verwendet; Profilseiten werden begrenzt und nach `updatedAt` sortiert, damit grosse Server die App nicht ausbremsen.
 
@@ -237,10 +279,16 @@ Die Umsetzung erfolgt testgetrieben. Mindestens folgende Regressionen werden abg
 14. Profil-Reset loescht nur das angeforderte Profil und stellt Live-Standardwerte her.
 15. App-Status und Reset-Routen sind authentifiziert, Guild-begrenzt und liefern normalisierte Daten.
 16. Das Discord-Interface zeigt nach Aenderungen den neuen Live-Zustand.
+17. Das gespeicherte Studio-Design wird fuer neue Interfaces und beim Refresh bestehender Interfaces verwendet.
+18. Alle neun atomaren TempVoice-Platzhalter funktionieren in Content, Embed-Text und Feldern.
+19. Das Studio erzeugt keine Fake-Buttons; die vom Modul gebauten Komponenten bleiben nach jedem Design-Save funktionsfaehig.
+20. Es existiert kein Paket-Platzhalter, der frei editierbare TempVoice-Texte oder Felder ersetzt.
+21. Ein Design-Save aktualisiert alle erreichbaren aktiven Interfaces und meldet einzelne Refresh-Fehler, ohne das gespeicherte Design zu verlieren.
 
 Fokusverifikation:
 
 - `node scripts/temp-voice-smoke.mjs`
+- neuer TempVoice-Embed-Studio-Smoke
 - `node scripts/state-restore-smoke.mjs`
 - neue beziehungsweise erweiterte TempVoice-App-UI-Smokes
 - `npm run test:community`
