@@ -120,7 +120,7 @@ const paginationParent = {
 const allArchived = await collectForumThreads(paginationParent, { includeArchived: true });
 assert(allArchived.length === 230, 'Der Tiefenscan lädt nicht alle Archivseiten vollständig.');
 
-const rendererSource = fs.readFileSync(path.join(rootDir, 'desktop', 'renderer', 'app.js'), 'utf8');
+const rendererSource = fs.readFileSync(path.join(rootDir, 'desktop', 'renderer', 'module-config-inputs.js'), 'utf8');
 const managementSource = fs.readFileSync(path.join(rootDir, 'desktop', 'renderer', 'server-management.js'), 'utf8');
 const botSource = fs.readFileSync(path.join(rootDir, 'src', 'index.js'), 'utf8');
 assert(rendererSource.includes('channelsForField'), 'Modul-Ressourcen müssen feldspezifisch gefiltert werden.');

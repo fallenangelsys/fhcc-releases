@@ -71,6 +71,20 @@ assert.deepEqual(protectedPins.bulk.map((message) => message.id), ['young']);
 assert.deepEqual(protectedPins.individual.map((message) => message.id), ['old']);
 assert.deepEqual(protectedPins.skippedPinned.map((message) => message.id), ['pinned']);
 
+// Geschützte Nachrichten (Public-Call-Moderations-Panels) werden nie gelöscht.
+const { _publicCallVoteInternals } = await import('../src/features/publicCallVote.js');
+const protectedMessage = { id: 'panel', createdTimestamp: now - 60_000, pinned: false };
+_publicCallVoteInternals.registerProtectedMessage('guild', '123', 'panel');
+try {
+  const withProtected = partitionMessagesForDeletion([young, protectedMessage, old], now, true, 'guild', '123');
+  assert.deepEqual(withProtected.bulk.map((message) => message.id), ['young']);
+  assert.deepEqual(withProtected.individual.map((message) => message.id), ['old']);
+  assert.deepEqual(withProtected.skippedProtected.map((message) => message.id), ['panel'], 'Panel-Embed wird verschont');
+} finally {
+  _publicCallVoteInternals.unregisterProtectedMessage('guild', '123', 'panel');
+}
+assert.equal(partitionMessagesForDeletion([protectedMessage], now, true, 'guild', '123').skippedProtected.length, 0, 'nach Freigabe löschbar');
+
 const calls = { bulk: [], individual: [] };
 const deletionChannel = {
   ...voiceChannel,
@@ -165,6 +179,7 @@ assert.match(indexSource, /Events\.VoiceStateUpdate/);
 assert.match(indexSource, /voiceChatCleanerFeature/);
 assert.match(dashboardSource, /\/api\/guild\/:guildId\/voice-chat-cleaner/);
 assert.match(rendererSource, /voiceChatCleanerOverview/);
-assert.match(rendererSource, /voice:\s*2/);
+const moduleConfigSource = fs.readFileSync(path.join(root, 'desktop', 'renderer', 'module-config-inputs.js'), 'utf8');
+assert.match(moduleConfigSource, /voice:\s*2/);
 
 console.log('Voice-Chat-Cleaner-Smoke: Löschlogik, Sicherheitsfrist, Konfiguration, Voice-Event, API und UI geprüft.');
