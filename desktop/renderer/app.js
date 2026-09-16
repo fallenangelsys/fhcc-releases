@@ -1640,7 +1640,7 @@ async function refreshRichPresenceHealth() {
   const retryRow = card.querySelector('[data-rp-retry-row]');
   const retryEl = card.querySelector('[data-rp-retry]');
   const reconnectBtn = card.querySelector('#rp-reconnect-btn');
-  if (botEl) botEl.textContent = state.statusOnline ? 'online' : 'offline';
+  if (botEl) botEl.textContent = state.botOnline ? 'online' : 'offline';
   if (rpEl) rpEl.textContent = RP_STATE_LABELS[status.state] || status.state;
   if (retryRow && status.retryAt) {
     retryRow.hidden = false;
@@ -1653,7 +1653,7 @@ async function refreshRichPresenceHealth() {
     reconnectBtn.onclick = async () => {
       reconnectBtn.disabled = true;
       reconnectBtn.textContent = 'Verbinde …';
-      await api.apiRequest({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/custom-rich-presence/reconnect', method: 'POST', timeoutMs: 10000 });
+      await api.apiRequest({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/custom-rich-presence/reconnect', method: 'POST', timeoutMs: 30000 });
       reconnectBtn.disabled = false;
       reconnectBtn.textContent = 'Neu verbinden';
       void refreshRichPresenceHealth();
@@ -6794,7 +6794,7 @@ async function loadUpdateCenter() {
     if (folderInput && folderInput.value !== updateFolderState) folderInput.value = updateFolderState;
     if (!updateFolderState) {
       if (state) { state.textContent = 'Nicht konfiguriert'; state.dataset.state = 'neutral'; }
-      if (status) status.textContent = 'Kein Update-Ordner gesetzt. Trage den Ordner ein (z. B. C:\FHCC-Updates oder eine Netzwerkfreigabe) und speichere ihn – dort muss FHCC-Setup-<version>-x64.exe + latest.yml liegen.';
+      if (status) status.textContent = 'Kein Update-Ordner gesetzt. Trage den Ordner ein (z. B. C:\\FHCC-Updates oder eine Netzwerkfreigabe) und speichere ihn – dort muss FHCC-Setup-<version>-x64.exe + latest.yml liegen.';
       if (installButton) installButton.disabled = true;
       return;
     }

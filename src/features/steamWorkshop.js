@@ -12,8 +12,9 @@ import {
 
 import { atomicWriteJson, readJsonWithRecovery } from '../runtime/atomicJsonStore.js';
 import { recordDiagnosticError } from '../runtime/liveDiagnostics.js';
+import { DATA_DIR } from '../shared/paths.js';
 
-const DATA_ROOT = process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_ROOT = DATA_DIR;
 const DATA_FILE = path.join(DATA_ROOT, 'steam-workshop.json');
 const ASSET_ROOT = path.join(DATA_ROOT, 'steam-workshop-assets');
 const DATA_VERSION = 1;
@@ -357,7 +358,7 @@ export const cleanSteamDescription = (description, maximum = 2_400) => {
 export const parseSteamCommunityRating = (html = '') => {
   const source = String(html || '');
   const ratingBlock = source.match(/<div[^>]+class=["'][^"']*ratingSection[^"']*["'][^>]*>([\s\S]*?)<\/div>\s*<\/div>/i)?.[1] || source;
-  const starMatch = ratingBlock.match(/sharedfiles\/([0-5](?:[.,_-]\d+)?)\-star_large\.png/i)
+  const starMatch = ratingBlock.match(/sharedfiles\/([0-5](?:[.,_-]\d+)?)-star_large\.png/i)
     || ratingBlock.match(/([0-5](?:[.,]\d+)?)\s*(?:von|out of)\s*5/i);
   const ratingValue = starMatch ? Number(String(starMatch[1]).replace(/[_-]/g, '.').replace(',', '.')) : NaN;
   const countText = ratingBlock.match(/class=["'][^"']*numRatings[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1] || '';

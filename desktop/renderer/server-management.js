@@ -19,6 +19,10 @@
   let memberSort = 'inactivity';
   let systemEventPageSize = 25;
   let systemEventPage = 0;
+  let systemEventCursor = null;
+  let systemEventCursorStack = [];
+  let systemEventHasMore = false;
+  let systemEventNextCursor = null;
   let systemEventFilter = 'all';
   let systemEventRequestId = 0;
 let selectedMember = null;
@@ -42,7 +46,6 @@ let pendingMemberAction = null;
   let channelLoadRequestId = 0;
   let roleLoadRequestId = 0;
   let memberIndexStatus = null;
-  let memberAnalysisPollTimer = null;
   let memberRequestId = 0;
   let memberDetailRequestId = 0;
   let managementLoadInFlight = false;
@@ -103,7 +106,7 @@ let pendingMemberAction = null;
       return compact(plain);
     }
   };
-  const mediaLinkTokenPattern = /(?:<|&lt;)?https?:\/\/[^\s<>"\]'\)}]+(?:\?[^\s<>"\]'\)}]+)?(?:>|&gt;)?/g;
+  const mediaLinkTokenPattern = /(?:<|&lt;)?https?:\/\/[^\s<>"\]')\}]+(?:\?[^\s<>"\]')\}]+)?(?:>|&gt;)?/g;
   const decodeHtmlEntitiesInRenderedUrl = (value) => String(value || '')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -220,6 +223,151 @@ let pendingMemberAction = null;
   const firstImageAttachmentUrl = (items = []) => (Array.isArray(items)
     ? items.find((item) => isImageAttachment(item))
     : null)?.url || '';
+  const normalizeRoleButtonText = (value) => String(value || '')
+    .toLocaleLowerCase('de')
+    .replace(/<a?:[a-z0-9_~]+:\d{15,25}>/gi, ' ')
+    .replace(/[^a-z0-9äöüß]+/g, '');
+  const availableRoleButtonRoles = () => {
+    const rows = [
+      ...(Array.isArray(currentManagement?.roles) ? currentManagement.roles : []),
+      ...(Array.isArray(window.state?.moduleRoles) ? window.state.moduleRoles : []),
+      ...(Array.isArray(state?.moduleRoles) ? state.moduleRoles : [])
+    ];
+    return Array.from(new Map(rows.map((role) => [String(role?.id || ''), role]).filter(([id]) => id)).values());
+  };
+  const findRoleByButtonLabel = (label, allowPartial = false) => {
+    const normalizedLabel = normalizeRoleButtonText(label);
+    if (!normalizedLabel) return null;
+    const roles = availableRoleButtonRoles();
+    return roles.find((role) => normalizeRoleButtonText(role?.name) === normalizedLabel)
+      || (allowPartial ? roles.find((role) => {
+        const normalizedRoleName = normalizeRoleButtonText(role?.name);
+        return normalizedRoleName && normalizedLabel.length >= 4 && (
+          normalizedRoleName.includes(normalizedLabel) || normalizedLabel.includes(normalizedRoleName)
+        );
+      }) : null)
+      || null;
+  };
+  const resolveRoleButtonRoleId = (component = {}) => {
+    if (Number(component.type || 2) !== 2 || Number(component.style || 2) === 5 || String(component.url || '').trim()) return '';
+    const customId = String(component.customId || component.custom_id || '');
+    const fhMatch = customId.match(/^fh_rr:(\d{17,20}):\d+$/);
+    if (fhMatch) return fhMatch[1];
+    const roleIds = new Set(availableRoleButtonRoles().map((role) => String(role?.id || '')).filter(Boolean));
+    const embeddedRoleId = customId.match(/\d{17,20}/)?.[0] || '';
+    if (embeddedRoleId && roleIds.has(embeddedRoleId)) return embeddedRoleId;
+    const exactLabelRole = findRoleByButtonLabel(component.label);
+    if (exactLabelRole) return exactLabelRole.id;
+    const roleOrientedCustomId = /(?:^|[_:-])(?:role|rr|reaction|boost|color|colour|farbe)(?:[_:-]|$)/i.test(customId);
+    return roleOrientedCustomId ? findRoleByButtonLabel(component.label, true)?.id || '' : '';
+  };
+  const extractRoleButtonsFromMessage = (message = {}) => {
+    const group = `copied-message-${message.id || Date.now()}`;
+    return (message.components || [])
+      .flatMap((row) => row.components || [])
+      .map((component) => {
+        const roleId = resolveRoleButtonRoleId(component);
+        if (!roleId) return null;
+        const emoji = component.emoji || {};
+        const emojiId = String(emoji.id || '');
+        const emojiName = String(emoji.name || component.label || '');
+        return {
+          emoji: emojiId || emojiName,
+          emojiId,
+          emojiName,
+          animated: Boolean(emoji.animated),
+          url: emojiId ? `https://cdn.discordapp.com/emojis/${emojiId}.${emoji.animated ? 'gif' : 'png'}?size=64` : '',
+          count: 0,
+          roleId,
+          exclusive: true,
+          group
+        };
+      })
+      .filter(Boolean);
+  };
+  const normalizeMessageComponentsForStudio = (rows = []) => (Array.isArray(rows) ? rows : [])
+    .map((row = {}) => {
+      const components = (Array.isArray(row.components) ? row.components : [])
+        .map((component = {}) => ({
+          type: Number(component.type || 2),
+          customId: String(component.customId || component.custom_id || ''),
+          label: String(component.label || ''),
+          style: Number(component.style || 2),
+          emoji: component.emoji ? {
+            id: String(component.emoji.id || ''),
+            name: String(component.emoji.name || ''),
+            animated: Boolean(component.emoji.animated)
+          } : null,
+          disabled: Boolean(component.disabled),
+          url: String(component.url || ''),
+          placeholder: String(component.placeholder || ''),
+          minValues: Number(component.minValues ?? component.min_values ?? 0),
+          maxValues: Number(component.maxValues ?? component.max_values ?? 1),
+          options: Array.isArray(component.options)
+            ? component.options.map((option = {}) => ({
+              label: String(option.label || ''),
+              value: String(option.value || ''),
+              description: String(option.description || ''),
+              emoji: option.emoji ? {
+                id: String(option.emoji.id || ''),
+                name: String(option.emoji.name || ''),
+                animated: Boolean(option.emoji.animated)
+              } : null,
+              default: Boolean(option.default)
+            }))
+            : []
+        }))
+        .filter((component) => component.customId || component.url || component.label || component.placeholder || component.options.length)
+        .slice(0, 5);
+      return components.length ? { type: Number(row.type || 1), components } : null;
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+  // Rollen-Buttons (fh_rr oder per Custom-ID/Label auflösbar) werden beim
+  // Kopieren ausschließlich als Studio-Rollen-Buttons übernommen. Würden sie
+  // zusätzlich als importierte Komponenten durchgereicht, erschienen sie im
+  // Studio doppelt und beim Senden/Bearbeiten erneut auf der Discord-Nachricht
+  // (Original-Custom-ID + neu angehängte fh_rr-Buttons).
+  const importedStudioComponents = (message = {}) => {
+    const rows = Array.isArray(message.components) ? message.components : [];
+    return normalizeMessageComponentsForStudio(rows.map((row = {}) => ({
+      ...row,
+      components: (Array.isArray(row.components) ? row.components : [])
+        .filter((component) => !resolveRoleButtonRoleId(component))
+    })));
+  };
+  const renderMessageComponents = (message = {}) => {
+    const rows = Array.isArray(message.components) ? message.components : [];
+    const html = rows.map((row = {}) => {
+      const buttons = (row.components || []).map((component = {}) => {
+        const label = String(component.label || component.customId || component.custom_id || 'Button').trim();
+        const emoji = component.emoji || {};
+        const emojiHtml = emoji.id
+          ? `<img src="https://cdn.discordapp.com/emojis/${safe(emoji.id)}.${emoji.animated ? 'gif' : 'png'}?size=32" alt="${safe(emoji.name || '')}" loading="lazy">`
+          : (emoji.name ? `<span>${safe(emoji.name)}</span>` : '');
+        const style = Number(component.style || 2);
+        const styleClass = style === 1 ? 'primary' : style === 3 ? 'success' : style === 4 ? 'danger' : style === 5 ? 'link' : 'secondary';
+        return `<span class="message-component-button ${safe(styleClass)}${component.disabled ? ' disabled' : ''}">${emojiHtml}<b>${safe(label)}</b></span>`;
+      }).join('');
+      return buttons ? `<div class="message-component-row">${buttons}</div>` : '';
+    }).join('');
+    return html ? `<div class="message-components">${html}</div>` : '';
+  };
+  const hydrateMessageComponents = async (message = {}) => {
+    if (!message?.id || (Array.isArray(message.components) && message.components.length)) return message;
+    const id = guildId();
+    if (!id || !selectedChannelId) return message;
+    const query = new URLSearchParams({ limit: '10', messageId: String(message.id) });
+    const data = await request(`/api/guild/${encodeURIComponent(id)}/channel/${encodeURIComponent(selectedChannelId)}/messages?${query}`);
+    const live = Array.isArray(data.messages) ? data.messages.find((item) => String(item.id) === String(message.id)) : null;
+    if (!live) return message;
+    const index = channelRows.findIndex((item) => String(item.id) === String(message.id));
+    if (index >= 0) {
+      channelRows[index] = { ...channelRows[index], ...live };
+      renderChannelMessages();
+    }
+    return { ...message, ...live };
+  };
   const embedHasVisualBody = (embed = {}) => {
     const title = String(embed.title || '').trim();
     const description = String(embed.description || '').trim();
@@ -484,10 +632,7 @@ let pendingMemberAction = null;
     if (name === 'members') {
       hasRenderedMembers = false;
       void loadMembers($('#member-search')?.value || '');
-      if (selectedMember) scheduleMemberAnalysisPoll(selectedMember.id, selectedMember.intelligence?.analysis || {});
     } else {
-      clearTimeout(memberAnalysisPollTimer);
-      memberAnalysisPollTimer = null;
       if (currentManagement) scheduleActivePanelRender(currentManagement);
       if (name === 'system-events') void loadSystemEvents();
       if (name === 'backups') void loadServerBackups();
@@ -496,6 +641,14 @@ let pendingMemberAction = null;
   }
 
   const coinNumber = (value) => Number(value || 0).toLocaleString('de-DE');
+
+  const coinHtml = (value) => {
+    const raw = String(value ?? '🪙');
+    if (/<(a?):[A-Za-z0-9_~]+:\d+>/.test(raw)) {
+      return raw.replace(/<(a?):([A-Za-z0-9_~]+):(\d+)>/g, (_, animated, name, id) => `<img class="discord-custom-emoji" src="https://cdn.discordapp.com/emojis/${safe(id)}.${animated === 'a' ? 'gif' : 'webp'}?size=64&quality=lossless" alt=":${safe(name)}:" title=":${safe(name)}:" loading="lazy">`);
+    }
+    return safe(raw);
+  };
 
   function renderVipEconomy(data) {
     vipEconomy = data || {};
@@ -509,12 +662,12 @@ let pendingMemberAction = null;
     $('#vip-count').textContent = String(summary.vipMembers || 0);
     $('#vip-account-count').textContent = String(vipEconomy.pagination?.total ?? rows.length);
     $('#vip-summary').innerHTML = [
-      ['VIP-MITGLIEDER', summary.vipMembers || 0, `${summary.members || 0} Mitglieder`],
-      ['COINS IM UMLAUF', `${coin} ${coinNumber(summary.totalBalance)}`, `${summary.accounts || 0} Konten`],
-      ['AKTIVE BOOSTER', summary.activeBoosters || 0, `${summary.discordBoostCount || 0} Discord-Boosts`],
-      ['BOOST-ABGLEICH', consistencyLabel, `${summary.pendingBoostMilestones || 0} offene Meilensteine`],
-      ['TRANSAKTIONEN', summary.transactions || 0, 'Audit aktueller Mitglieder']
-    ].map(([label, value, detail]) => `<article><span>${safe(label)}</span><strong>${safe(value)}</strong><small>${safe(detail)}</small></article>`).join('');
+      ['VIP-MITGLIEDER', safe(summary.vipMembers || 0), `${summary.members || 0} Mitglieder`],
+      ['COINS IM UMLAUF', `${coinHtml(coin)} ${safe(coinNumber(summary.totalBalance))}`, `${summary.accounts || 0} Konten`],
+      ['AKTIVE BOOSTER', safe(summary.activeBoosters || 0), `${summary.discordBoostCount || 0} Discord-Boosts`],
+      ['BOOST-ABGLEICH', safe(consistencyLabel), `${summary.pendingBoostMilestones || 0} offene Meilensteine`],
+      ['TRANSAKTIONEN', safe(summary.transactions || 0), 'Audit aktueller Mitglieder']
+    ].map(([label, value, detail]) => `<article><span>${safe(label)}</span><strong>${value}</strong><small>${safe(detail)}</small></article>`).join('');
     const reconcileButton = $('#vip-reconcile');
     if (reconcileButton && !reconcileButton.disabled) {
       reconcileButton.title = reconciliation.finishedAt
@@ -530,11 +683,17 @@ let pendingMemberAction = null;
     }
 
     const list = $('#vip-account-list');
-    if (list) list.innerHTML = rows.length ? rows.map((row) => `<button type="button" class="vip-account-row${selectedVipAccountId === row.id ? ' active' : ''}" data-vip-account="${safe(row.id)}"><img src="${safe(avatarSource(row))}" alt=""><span><b>${safe(row.displayName)}</b><small>@${safe(row.username || row.id)}${row.onServer ? '' : ' · nicht mehr auf dem Server'}</small></span><em>${safe(coin)} ${safe(coinNumber(row.account?.balance))}</em><strong>${safe(row.vip?.name || 'Kein VIP')}</strong></button>`).join('') : '<p class="community-empty">Keine passenden Konten gefunden.</p>';
+    if (list) list.innerHTML = rows.length ? rows.map((row) => `<button type="button" class="vip-account-row${selectedVipAccountId === row.id ? ' active' : ''}" data-vip-account="${safe(row.id)}"><img src="${safe(avatarSource(row))}" alt=""><span><b>${safe(row.displayName)}</b><small>@${safe(row.username || row.id)}${row.onServer ? '' : ' · nicht mehr auf dem Server'}</small></span><em>${coinHtml(coin)} ${safe(coinNumber(row.account?.balance))}</em><strong>${safe(row.vip?.name || 'Kein VIP')}</strong></button>`).join('') : '<p class="community-empty">Keine passenden Konten gefunden.</p>';
 
     const transactions = Array.isArray(vipEconomy.transactions) ? vipEconomy.transactions : [];
     const ledger = $('#vip-ledger-list');
-    if (ledger) ledger.innerHTML = transactions.length ? transactions.map((entry) => `<article><span><b>${safe(entry.subject?.displayName || entry.userId || 'Unbekannt')}</b><small>${safe(entry.type || 'Änderung')} · ${safe(date(entry.createdAt))}</small></span><strong class="${Number(entry.amount || 0) < 0 ? 'negative' : ''}">${Number(entry.amount || 0) > 0 ? '+' : ''}${safe(coinNumber(entry.amount || 0))}</strong><p>${safe(entry.reason || entry.note || 'Systemtransaktion')}</p></article>`).join('') : '<p class="community-empty">Noch keine Transaktionen vorhanden.</p>';
+    if (ledger) ledger.innerHTML = transactions.length ? transactions.map((entry) => {
+      const coinGift = entry.type === 'coin-gift';
+      const title = coinGift ? `${entry.actor?.displayName || entry.senderId || 'Unbekannt'} → ${entry.subject?.displayName || entry.recipientId || 'Unbekannt'}` : entry.subject?.displayName || entry.userId || 'Unbekannt';
+      const label = coinGift ? 'Coin-Geschenk' : entry.type || 'Änderung';
+      const detail = coinGift ? `Transaktion ${entry.id || 'ohne ID'} · beide Konten atomar gebucht` : entry.reason || entry.note || 'Systemtransaktion';
+      return `<article><span><b>${safe(title)}</b><small>${safe(label)} · ${safe(date(entry.createdAt))}</small></span><strong class="${Number(entry.amount || 0) < 0 ? 'negative' : ''}">${Number(entry.amount || 0) > 0 ? '+' : ''}${safe(coinNumber(entry.amount || 0))}</strong><p>${safe(detail)}</p></article>`;
+    }).join('') : '<p class="community-empty">Noch keine Transaktionen vorhanden.</p>';
 
     if (selectedVipAccountId) {
       const selected = rows.find((row) => row.id === selectedVipAccountId);
@@ -553,7 +712,8 @@ let pendingMemberAction = null;
       : pendingLevels.length
         ? `<div class="vip-boost-health pending"><b>${safe(pendingLevels.length)} bestätigte Meilenstein${pendingLevels.length === 1 ? '' : 'e'} offen</b><span>Stufen ${safe(pendingLevels.join(', '))} · ${safe(coinNumber(row.boostMilestones.pendingCoins || 0))} Coins werden beim Abgleich nachgetragen.</span></div>`
         : '<div class="vip-boost-health healthy"><b>Boost-Konto vollständig</b><span>Alle aktuell belegten Meilensteine sind bereits einmalig vergütet.</span></div>';
-    $('#vip-account-detail').innerHTML = `<div class="vip-detail-head"><img src="${safe(avatarSource(row))}" alt=""><span><p class="eyebrow">VIP-KONTO</p><h3>${safe(row.displayName)}</h3><small>@${safe(row.username || row.id)} · ${row.onServer ? 'auf dem Server' : 'nicht mehr auf dem Server'}</small></span></div>${boostHealth}<form id="vip-account-form" data-vip-user="${safe(row.id)}" data-vip-revision="${safe(account.revision || 0)}"><label>Heaven Coins<input name="balance" type="number" min="0" max="10000000" value="${safe(account.balance || 0)}"></label><label>Persönlicher Boost-Rekord<input name="boostRecord" type="number" min="0" max="99" value="${safe(account.boostRecord || 0)}"></label><label>Bereits vergütete Boost-Stufen<input name="rewardedBoostLevels" value="${safe(rewarded)}" placeholder="1, 2, 3"></label><label>Aktive VIP-Rolle<select name="vipRoleId" ${row.onServer ? '' : 'disabled'}><option value="">Keine VIP-Rolle</option>${tiers.map((tier) => `<option value="${safe(tier.roleId)}" ${row.vip?.roleId === tier.roleId ? 'selected' : ''}>${safe(tier.name)} · ${safe(coinNumber(tier.price))} Coins</option>`).join('')}</select></label><label class="vip-reason">Nachvollziehbarer Änderungsgrund<textarea name="reason" minlength="3" maxlength="300" required placeholder="Warum wird dieses Konto geändert?"></textarea></label><div class="vip-account-facts"><span>Verdient <b>${safe(coin)} ${safe(coinNumber(account.earned))}</b></span><span>Ausgegeben <b>${safe(coin)} ${safe(coinNumber(account.spent))}</b></span><span>Aktiv <b>${safe(row.activeBoostCount || 0)} Boosts</b></span><span>Vergütet <b>${safe((account.rewardedBoostLevels || []).length)} Stufen</b></span></div><button class="button primary" type="submit">Änderung prüfen</button></form>`;
+    $('#vip-account-detail').innerHTML = `<div class="vip-detail-head"><img src="${safe(avatarSource(row))}" alt=""><span><p class="eyebrow">VIP-KONTO</p><h3>${safe(row.displayName)}</h3><small>@${safe(row.username || row.id)} · ${row.onServer ? 'auf dem Server' : 'nicht mehr auf dem Server'}</small></span></div>${boostHealth}<form id="vip-account-form" data-vip-user="${safe(row.id)}" data-vip-revision="${safe(account.revision || 0)}"><label>Heaven Coins<input name="balance" type="number" min="0" max="10000000" value="${safe(account.balance || 0)}"></label><label>Persönlicher Boost-Rekord<input name="boostRecord" type="number" min="0" max="99" value="${safe(account.boostRecord || 0)}"></label><label>Bereits vergütete Boost-Stufen<input name="rewardedBoostLevels" value="${safe(rewarded)}" placeholder="1, 2, 3"></label><label>Aktive VIP-Rolle<select name="vipRoleId" ${row.onServer ? '' : 'disabled'}><option value="">Keine VIP-Rolle</option>${tiers.map((tier) => `<option value="${safe(tier.roleId)}" ${row.vip?.roleId === tier.roleId ? 'selected' : ''}>${safe(tier.name)} · ${safe(coinNumber(tier.price))} Coins</option>`).join('')}</select></label><label class="vip-reason">Nachvollziehbarer Änderungsgrund<textarea name="reason" minlength="3" maxlength="300" required placeholder="Warum wird dieses Konto geändert?"></textarea></label><div class="vip-account-facts"><span>Verdient <b>${coinHtml(coin)} ${safe(coinNumber(account.earned))}</b></span><span>Ausgegeben <b>${coinHtml(coin)} ${safe(coinNumber(account.spent))}</b></span><span>Aktiv <b>${safe(row.activeBoostCount || 0)} Boosts</b></span><span>Vergütet <b>${safe((account.rewardedBoostLevels || []).length)} Stufen</b></span></div><button class="button primary" type="submit">Änderung prüfen</button></form>`;
+    $('#vip-account-detail .vip-account-facts')?.insertAdjacentHTML('beforeend', `<span>Verschenkt <b>${coinHtml(coin)} ${safe(coinNumber(account.giftedCoins))}</b></span><span>Geschenkt erhalten <b>${coinHtml(coin)} ${safe(coinNumber(account.receivedGiftCoins))}</b></span>`);
     $$('#vip-account-list [data-vip-account]').forEach((button) => button.classList.toggle('active', button.dataset.vipAccount === row.id));
   }
 
@@ -773,7 +933,7 @@ let pendingMemberAction = null;
     const scan = feed.scan || {};
     const eventWindow = feed.window || {};
     const pagination = feed.pagination || {};
-    const serverPaged = Number.isFinite(Number(pagination.page)) && Number.isFinite(Number(pagination.pageSize));
+    const serverPaged = Number.isFinite(Number(pagination.pageSize));
     const summaryTarget = $('#system-event-summary');
     const categories = summary.categories || {};
     if (summaryTarget) summaryTarget.innerHTML = [
@@ -820,12 +980,15 @@ let pendingMemberAction = null;
           : events.filter((entry) => String(entry.metadata?.category || 'other') === systemEventFilter);
       const selectedTotal = serverPaged ? Math.max(0, Number(pagination.total || 0)) : selected.length;
       const pageCount = serverPaged
-        ? Math.max(1, Number(pagination.pageCount || 1))
+        ? 1
         : Math.max(1, Math.ceil(selected.length / systemEventPageSize));
-      systemEventPage = serverPaged
-        ? Math.min(pageCount - 1, Math.max(0, Number(pagination.page || 0)))
-        : Math.min(pageCount - 1, Math.max(0, systemEventPage));
-      if (serverPaged) systemEventPageSize = Math.min(100, Math.max(10, Number(pagination.pageSize || 25)));
+      if (serverPaged) {
+        systemEventPageSize = Math.min(100, Math.max(10, Number(pagination.pageSize || 25)));
+        systemEventHasMore = Boolean(pagination.hasMore);
+        systemEventNextCursor = pagination.next || null;
+      } else {
+        systemEventPage = Math.min(pageCount - 1, Math.max(0, systemEventPage));
+      }
       const pageStart = serverPaged ? 0 : systemEventPage * systemEventPageSize;
       const visible = serverPaged ? selected : selected.slice(pageStart, pageStart + systemEventPageSize);
       const labels = { boost_started: 'Boost aktiv', boost_ended: 'Boost beendet', member_joined: 'Beigetreten', member_left: 'Verlassen' };
@@ -839,21 +1002,34 @@ let pendingMemberAction = null;
           : `<span class="system-event-avatar-fallback">${safe(String(displayName).slice(0, 1).toUpperCase() || '?')}</span>`;
         const boostCount = entry.type === 'boost_started' ? Math.max(1, Number(entry.metadata?.boostCount || 1)) : 0;
         const eventText = entry.nativeText || entry.displayText || entry.text || 'Systemereignis';
-        return `<article class="system-event-row ${safe(entry.metadata?.category || 'other')} ${safe(entry.type)}"><div class="system-event-identity">${avatar}<span><strong>${safe(displayName)}</strong><small>${safe(secondaryName)} · ${safe(entry.userId || 'System')}</small></span></div><div class="system-event-description"><b>${safe(eventText)}</b><small>${safe(entry.metadata?.label || labels[entry.type] || 'Discord-Systemnachricht')}</small></div><span class="system-event-channel">#${safe(entry.channelName || entry.channelId || 'Server')}</span><time>${safe(date(entry.ts || entry.createdAt))}</time>${entry.userId ? `<button type="button" class="system-event-open" data-system-member="${safe(entry.userId)}">Details ›</button>` : '<span></span>'}</article>`;
-      }).join('')}</div><footer class="system-events-pager" aria-label="Seitennavigation der Systemereignisse"><span class="system-events-page-summary">Seite ${systemEventPage + 1} von ${pageCount} · ${selectedTotal.toLocaleString('de-DE')} Ereignisse</span><div class="system-events-page-controls"><label>Pro Seite<select data-system-event-page-size><option value="25" ${systemEventPageSize === 25 ? 'selected' : ''}>25</option><option value="50" ${systemEventPageSize === 50 ? 'selected' : ''}>50</option><option value="100" ${systemEventPageSize === 100 ? 'selected' : ''}>100</option></select></label><div class="system-events-page-actions"><button type="button" data-system-event-page="first" aria-label="Erste Seite" ${systemEventPage <= 0 ? 'disabled' : ''}>«</button><button type="button" data-system-event-page="previous" aria-label="Vorherige Seite" ${systemEventPage <= 0 ? 'disabled' : ''}>‹</button><span class="system-events-page-number">${systemEventPage + 1} / ${pageCount}</span><button type="button" data-system-event-page="next" aria-label="Nächste Seite" ${systemEventPage >= pageCount - 1 ? 'disabled' : ''}>›</button><button type="button" data-system-event-page="last" aria-label="Letzte Seite" ${systemEventPage >= pageCount - 1 ? 'disabled' : ''}>»</button></div></div></footer>` : '<p class="community-empty">Für diesen Filter wurden keine Systemereignisse erfasst.</p>';
+        return `<article class="system-event-row ${safe(entry.metadata?.category || 'other')} ${safe(entry.type)}"><div class="system-event-identity">${avatar}<span><strong>${safe(displayName)}</strong><small>${safe(secondaryName)} · ${safe(entry.userId || 'System')}</small></span></div><div class="system-event-description"><b>${renderDiscordText(eventText, entry)}</b><small>${safe(entry.metadata?.label || labels[entry.type] || 'Discord-Systemnachricht')}</small></div><span class="system-event-channel">#${renderDiscordText(entry.channelName || entry.channelId || 'Server', entry)}</span><time>${safe(date(entry.ts || entry.createdAt))}</time>${entry.userId ? `<button type="button" class="system-event-open" data-system-member="${safe(entry.userId)}">Details ›</button>` : '<span></span>'}</article>`;
+      }).join('')}</div><footer class="system-events-pager" aria-label="Seitennavigation der Systemereignisse"><span class="system-events-page-summary">${selectedTotal.toLocaleString('de-DE')} Ereignisse${serverPaged ? ' · neueste zuerst' : ` · Seite ${systemEventPage + 1} von ${pageCount}`}</span><div class="system-events-page-controls"><label>Pro Seite<select data-system-event-page-size><option value="25" ${systemEventPageSize === 25 ? 'selected' : ''}>25</option><option value="50" ${systemEventPageSize === 50 ? 'selected' : ''}>50</option><option value="100" ${systemEventPageSize === 100 ? 'selected' : ''}>100</option></select></label><div class="system-events-page-actions"><button type="button" data-system-event-nav="newest" aria-label="Neueste Seite" ${serverPaged ? (systemEventCursor ? '' : 'disabled') : (systemEventPage <= 0 ? 'disabled' : '')}>« Neueste</button><button type="button" data-system-event-nav="newer" aria-label="Neuere Seite" ${serverPaged ? (systemEventCursorStack.length ? '' : 'disabled') : (systemEventPage <= 0 ? 'disabled' : '')}>‹ Neuere</button><button type="button" data-system-event-nav="older" aria-label="Ältere Seite" ${serverPaged ? (systemEventHasMore ? '' : 'disabled') : (systemEventPage >= pageCount - 1 ? 'disabled' : '')}>Ältere ›</button></div></div></footer>` : '<p class="community-empty">Für diesen Filter wurden keine Systemereignisse erfasst.</p>';
 
-      target.querySelectorAll('[data-system-event-page]').forEach((button) => button.addEventListener('click', () => {
-        const action = button.dataset.systemEventPage;
-        if (action === 'first') systemEventPage = 0;
-        if (action === 'previous') systemEventPage = Math.max(0, systemEventPage - 1);
-        if (action === 'next') systemEventPage = Math.min(pageCount - 1, systemEventPage + 1);
-        if (action === 'last') systemEventPage = pageCount - 1;
-        if (serverPaged) void loadSystemEvents();
-        else renderFiltered();
+      target.querySelectorAll('[data-system-event-nav]').forEach((button) => button.addEventListener('click', () => {
+        const action = button.dataset.systemEventNav;
+        if (!serverPaged) {
+          if (action === 'newest') systemEventPage = 0;
+          if (action === 'newer') systemEventPage = Math.max(0, systemEventPage - 1);
+          if (action === 'older') systemEventPage = Math.min(pageCount - 1, systemEventPage + 1);
+          renderFiltered();
+          return;
+        }
+        if (action === 'newest') {
+          systemEventCursor = null;
+          systemEventCursorStack = [];
+        }
+        if (action === 'newer') systemEventCursor = systemEventCursorStack.pop() || null;
+        if (action === 'older' && systemEventNextCursor) {
+          systemEventCursorStack.push(systemEventCursor);
+          systemEventCursor = systemEventNextCursor;
+        }
+        void loadSystemEvents();
       }));
       target.querySelector('[data-system-event-page-size]')?.addEventListener('change', (event) => {
         systemEventPageSize = Math.min(100, Math.max(10, Number(event.target.value || 25)));
         systemEventPage = 0;
+        systemEventCursor = null;
+        systemEventCursorStack = [];
         if (serverPaged) void loadSystemEvents();
         else renderFiltered();
       });
@@ -869,6 +1045,8 @@ let pendingMemberAction = null;
       button.onclick = () => {
         systemEventFilter = button.dataset.systemEventFilter || 'all';
         systemEventPage = 0;
+        systemEventCursor = null;
+        systemEventCursorStack = [];
         $$('#system-event-filters [data-system-event-filter]').forEach((item) => item.classList.toggle('active', item === button));
         if (serverPaged) void loadSystemEvents();
         else renderFiltered();
@@ -958,7 +1136,7 @@ let pendingMemberAction = null;
             : currentChannel.canRead
               ? 'Lesbar'
               : 'Gesperrt';
-      return `<button class="channel-row${currentChannel.canRead ? '' : ' locked'}${currentChannel.isForumLike ? ' forum' : ''}" data-channel-id="${safe(currentChannel.id)}" ${canOpen ? '' : 'disabled'}><i>${channelSymbol(currentChannel)}</i><span>${safe(currentChannel.name)}</span><small>${safe(label)}</small></button>`;
+      return `<button class="channel-row${currentChannel.canRead ? '' : ' locked'}${currentChannel.isForumLike ? ' forum' : ''}" data-channel-id="${safe(currentChannel.id)}" ${canOpen ? '' : 'disabled'}><i>${channelSymbol(currentChannel)}</i><span>${renderDiscordText(currentChannel.name, currentChannel)}</span><small>${safe(label)}</small></button>`;
     };
     const visibleRootChannels = rootChannels.filter((channel) => !needle || channels.some((entry) => entry.id === channel.id));
     if (visibleRootChannels.length) {
@@ -1145,12 +1323,13 @@ let pendingMemberAction = null;
         return `<div class="message-embed" style="--embed:${embedColor(item.color)}"><div class="message-embed-tools"><span>EMBED ${embedIndex + 1}</span><button type="button" data-copy-embed="${safe(message.id)}" data-embed-index="${embedIndex}">Im Studio öffnen</button></div>${item.author ? `<small>${safe(item.author)}</small>` : ''}${item.title ? `<b>${safe(item.title)}</b>` : ''}${item.description ? `<p>${renderDiscordText(item.description, message)}</p>` : ''}${(item.fields || []).map((field) => `<dl><dt>${safe(field.name)}</dt><dd>${renderDiscordText(field.value, message)}</dd></dl>`).join('')}${item.image ? `<img src="${safe(item.image)}" alt="" loading="lazy">` : ''}</div>`;
       }).join('');
       const reactions = (message.reactions || []).map((item) => `<span class="message-reaction">${renderDiscordText(item.emoji, message)} ${safe(item.count)}</span>`).join('');
+      const components = renderMessageComponents(message);
       const stickers = (message.stickers || []).map((sticker = {}) => `<a class="message-sticker" href="#" data-open-url="${safe(sticker.url)}"><img src="${safe(sticker.url)}" data-fallback="${safe(sticker.previewUrl)}" alt="${safe(sticker.name)}" title="${safe(sticker.name)}" loading="lazy"></a>`).join('');
       const wholeEmbedAction = message?.embeds?.length ? `<button type="button" data-copy-all-embeds="${safe(message.id)}">Nachricht + Reaktionsrollen</button>` : '';
-      const actions = `<div class="message-actions"><button type="button" data-copy-message="${safe(message.id)}">Kopieren</button><button type="button" data-use-welcome-message="${safe(message.id)}">Als Willkommen</button>${wholeEmbedAction}${Boolean(message.canEdit) ? `<button type="button" data-edit-message="${safe(message.id)}">Bearbeiten</button>` : ''}${Boolean(message.canDelete) ? `<button type="button" class="danger" data-delete-message="${safe(message.id)}">Löschen</button>` : ''}</div>`;
-      const editor = Boolean(message.canEdit) ? `<form class="message-inline-editor" data-message-edit-form="${safe(message.id)}" hidden><textarea name="content" maxlength="2000">${safe(message.content || '')}</textarea><div><button type="button" data-cancel-message-edit="${safe(message.id)}">Abbrechen</button><button class="button primary" type="submit">Speichern</button></div></form>` : '';
+      const actions = `<div class="message-actions"><button type="button" data-copy-message="${safe(message.id)}">Kopieren</button><button type="button" data-use-welcome-message="${safe(message.id)}">Als Willkommen</button>${wholeEmbedAction}${message.canEdit ? `<button type="button" data-edit-message="${safe(message.id)}">Bearbeiten</button>` : ''}${message.canDelete ? `<button type="button" class="danger" data-delete-message="${safe(message.id)}">Löschen</button>` : ''}</div>`;
+      const editor = message.canEdit ? `<form class="message-inline-editor" data-message-edit-form="${safe(message.id)}" hidden><textarea name="content" maxlength="2000">${safe(message.content || '')}</textarea><div><button type="button" data-cancel-message-edit="${safe(message.id)}">Abbrechen</button><button class="button primary" type="submit">Speichern</button></div></form>` : '';
       const authorDisplayName = String(author?.displayName || author?.username || author?.id || '').trim() || 'Discord-Mitglied';
-      return `<article class="message-row" data-message-row="${safe(message.id)}"><img class="message-avatar" src="${safe(avatarSource(author))}" data-fallback="${safe(author?.fallbackAvatar || avatarSource(author))}" alt=""><div class="message-body"><div class="message-author"><b>${safe(authorDisplayName)}</b>${Boolean(author?.bot) ? '<span>BOT</span>' : ''}</div>${message.content ? `<p>${renderDiscordText(message.content, message)}</p>` : ''}${embeds}${attachments ? `<div class="message-attachments">${attachments}</div>` : ''}${stickers ? `<div class="message-stickers">${stickers}</div>` : ''}${reactions ? `<div class="message-reactions">${reactions}</div>` : ''}${editor}</div><div class="message-side"><time>${safe(date(message.createdAt))}</time>${actions}</div></article>`;
+      return `<article class="message-row" data-message-row="${safe(message.id)}"><img class="message-avatar" src="${safe(avatarSource(author))}" data-fallback="${safe(author?.fallbackAvatar || avatarSource(author))}" alt=""><div class="message-body"><div class="message-author"><b>${safe(authorDisplayName)}</b>${author?.bot ? '<span>BOT</span>' : ''}</div>${message.content ? `<p>${renderDiscordText(message.content, message)}</p>` : ''}${embeds}${components}${attachments ? `<div class="message-attachments">${attachments}</div>` : ''}${stickers ? `<div class="message-stickers">${stickers}</div>` : ''}${reactions ? `<div class="message-reactions">${reactions}</div>` : ''}${editor}</div><div class="message-side"><time>${safe(date(message.createdAt))}</time>${actions}</div></article>`;
       }).join('');
     const backToForum = selectedChannelMeta?.isThread && selectedForumParentId
       ? `<button type="button" class="forum-thread-back" data-forum-back="${safe(selectedForumParentId)}">Zurück zu den Forum-Posts</button>`
@@ -1541,15 +1720,6 @@ let pendingMemberAction = null;
     return `<button type="button" class="button ${extraClass || 'secondary'}" data-member-action="${safe(action)}" ${enabled ? '' : 'disabled'}>${safe(label)}</button>`;
   }
 
-  function confidenceMeta(score = 0) {
-    const numeric = Number(score || 0);
-    const value = Math.max(0, Math.min(100, Math.round(numeric > 0 && numeric <= 1 ? numeric * 100 : numeric)));
-    if (value >= 95) return { label: 'Direkt belegt', tone: 'high', value };
-    if (value >= 75) return { label: 'Gut belegt', tone: 'medium', value };
-    if (value > 0) return { label: 'Unvollständig', tone: 'low', value };
-    return { label: 'Noch keine Belege', tone: 'empty', value: 0 };
-  }
-
   function memberTimelineIcon(type) {
     const icons = {
       account_created: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M5 21v-2a7 7 0 0 1 14 0v2"></path></svg>',
@@ -1570,7 +1740,6 @@ let pendingMemberAction = null;
 
   function renderMemberIntelligence(member) {
     const intelligence = member.intelligence || {};
-    const analysis = intelligence.analysis || {};
     const recordedSystemTimeline = Array.isArray(intelligence.systemTimeline) ? intelligence.systemTimeline : [];
     const currentJoinTime = Date.parse(member.joinedAt || '');
     const hasCurrentJoinEvent = Number.isFinite(currentJoinTime) && recordedSystemTimeline.some((event) => event.type === 'member_joined' && Math.abs(Date.parse(event.createdAt || '') - currentJoinTime) < 60_000);
@@ -1605,44 +1774,27 @@ let pendingMemberAction = null;
         presentation.text = String(event.displayText || event.text || event.metadata?.text || presentation.text || '').trim();
         const reason = String(event.metadata?.reason || '').trim();
         const executor = String(event.metadata?.executorName || '').trim();
-        return `<article class="intel-timeline-row system-only ${safe(event.type)} tone-${safe(presentation.tone)}" style="--intel-event-index:${index}"><span class="intel-timeline-marker">${memberTimelineIcon(event.type)}</span><div class="intel-timeline-card"><header><span class="intel-timeline-kind">${safe(presentation.category)}</span><time>${safe(date(event.createdAt))}</time></header><strong>${safe(presentation.title)}</strong><p>${safe(presentation.text)}</p>${executor || reason || sourceLabel ? `<footer>${executor ? `<span>Ausgeführt von <b>${safe(executor)}</b></span>` : ''}${reason ? `<span>Grund: <b>${safe(reason)}</b></span>` : ''}${sourceLabel ? `<span class="verified">${safe(sourceLabel)}</span>` : ''}</footer>` : ''}</div></article>`;
+        return `<article class="intel-timeline-row system-only ${safe(event.type)} tone-${safe(presentation.tone)}" style="--intel-event-index:${index}"><span class="intel-timeline-marker">${memberTimelineIcon(event.type)}</span><div class="intel-timeline-card"><header><span class="intel-timeline-kind">${safe(presentation.category)}</span><time>${safe(date(event.createdAt))}</time></header><strong>${renderDiscordText(presentation.title, event)}</strong><p>${renderDiscordText(presentation.text, event)}</p>${executor || reason || sourceLabel ? `<footer>${executor ? `<span>Ausgeführt von <b>${safe(executor)}</b></span>` : ''}${reason ? `<span>Grund: <b>${renderDiscordText(reason, event)}</b></span>` : ''}${sourceLabel ? `<span class="verified">${safe(sourceLabel)}</span>` : ''}</footer>` : ''}</div></article>`;
       }).join('') : '<p class="intel-empty">Noch keine System- oder Moderationsereignisse für dieses Mitglied erfasst.</p>';
-    const introduction = intelligence.introduction || null;
-    const insights = Array.isArray(intelligence.insights) ? intelligence.insights : [];
-    const unclear = Array.isArray(intelligence.unclear) ? intelligence.unclear : [];
     const channels = Array.isArray(intelligence.channels) ? intelligence.channels : [];
-    const evidence = Array.isArray(intelligence.evidence) ? intelligence.evidence : [];
     const links = Array.isArray(intelligence.links) ? intelligence.links : [];
     const media = Array.isArray(intelligence.media) ? intelligence.media : [];
-    const overall = confidenceMeta(intelligence.overallConfidence);
-    const analysisProgress = Math.max(0, Math.min(100, Number(analysis.progress ?? (intelligence.partial ? 85 : 100))));
+    const linkMediaCount = Number(intelligence.linkCount ?? (links.length + media.length));
     const maxChannelCount = Math.max(1, ...channels.map((channel) => Number(channel.count || 0)));
-    const insightCards = insights.length ? insights.map((insight) => {
-      const confidence = confidenceMeta(insight.confidence);
-      const firstEvidence = insight.evidence?.[0];
-      const contextRows = [...(firstEvidence?.contextBefore || []).map((item) => ({ ...item, position: 'Vorher' })), ...(firstEvidence?.contextAfter || []).map((item) => ({ ...item, position: 'Nachher' }))];
-      const contextHtml = contextRows.length ? `<details class="intel-context"><summary>Gesprächskontext (${contextRows.length})</summary><div>${contextRows.map((item) => `<article><span>${safe(item.position)} · ${safe(date(item.createdAt))}</span><strong>${String(item.authorId) === String(member.id) ? 'Dieses Mitglied' : `Mitglied ${safe(String(item.authorId || '').slice(-6))}`}</strong><p>${safe(item.content || 'Nachricht ohne Text')}</p></article>`).join('')}</div></details>` : '';
-      return `<article class="intel-insight verified"><div class="intel-insight-head"><span class="intel-kind">${safe(insight.category || 'Aussage')}</span><span class="intel-confidence ${confidence.tone}">${safe(confidence.label)} · ${confidence.value}%</span></div><strong>${safe(insight.value || 'Belegtes Signal')}</strong><p>${safe(insight.summary || firstEvidence?.content || '')}</p><div class="intel-evidence-actions">${firstEvidence?.jumpUrl ? `<a href="${safe(firstEvidence.jumpUrl)}" target="_blank" rel="noreferrer">Originalnachricht öffnen</a>` : ''}<span>Kontext vor & nach dem Beleg geprüft</span></div>${contextHtml}</article>`;
-    }).join('') : '<div class="intel-empty">Noch keine eindeutigen persönlichen Aussagen gefunden. Es werden keine Interessen geraten.</div>';
-    const introductionFields = Array.isArray(introduction?.fields) ? introduction.fields : [];
-    const introductionCard = introductionFields.length ? `<section class="intel-introduction"><div class="intel-block-head"><div><span class="eyebrow">SELBSTAUSKUNFT</span><h4>Vorstellung des Mitglieds</h4></div><span>${introductionFields.length} direkt übernommene Felder</span></div><div class="intel-introduction-grid">${introductionFields.map((field) => `<div><span>${safe(field.label)}</span><strong>${safe(field.value)}</strong></div>`).join('')}</div>${introduction?.evidence?.jumpUrl ? `<a href="${safe(introduction.evidence.jumpUrl)}" target="_blank" rel="noreferrer">Originale Vorstellung öffnen</a>` : ''}<p>Diese Angaben stammen aus einer eigenen Vorstellung und werden nicht von der AI ergänzt oder interpretiert.</p></section>` : '';
-    const unclearCards = unclear.length ? `<details class="intel-unclear"><summary><span>Unklare Signale</span><b>${unclear.length} nicht übernommen</b></summary><p>Diese Texte waren negiert, zeitbezogen oder sprachlich mehrdeutig. Sie sind ausdrücklich kein Bestandteil des Nutzerprofils.</p><div>${unclear.map((item) => `<article><span>NICHT ÜBERNOMMEN</span><strong>${safe(item.statement || 'Unklare Aussage')}</strong><small>${safe(item.reason || 'Nicht eindeutig belegbar.')}</small>${item.jumpUrl ? `<a href="${safe(item.jumpUrl)}" target="_blank" rel="noreferrer">Original prüfen</a>` : ''}</article>`).join('')}</div></details>` : '';
     const channelRows = channels.length ? channels.slice(0, 8).map((channel) => {
       const width = Math.max(6, Math.round((Number(channel.count || 0) / maxChannelCount) * 100));
-      return `<div class="intel-channel"><div><span># ${safe(channel.channelName || channel.name || channel.channelId || channel.id || 'Kanal')}</span><b>${Number(channel.count || 0).toLocaleString('de-DE')}</b></div><i><span style="width:${width}%"></span></i></div>`;
+      return `<div class="intel-channel"><div><span># ${renderDiscordText(channel.channelName || channel.name || channel.channelId || channel.id || 'Kanal', channel)}</span><b>${Number(channel.count || 0).toLocaleString('de-DE')}</b></div><i><span style="width:${width}%"></span></i></div>`;
     }).join('') : '<div class="intel-empty compact">Keine Kanalaktivität im verfügbaren Zeitraum.</div>';
-    const evidenceRows = evidence.length ? evidence.slice(0, 12).map((item) => `<article class="intel-evidence"><div><strong># ${safe(item.channelName || item.channelId || 'Kanal')}</strong><time>${safe(date(item.createdAt))}</time></div><p>${safe(item.content || 'Nachricht ohne Textinhalt')}</p>${item.jumpUrl ? `<a href="${safe(item.jumpUrl)}" target="_blank" rel="noreferrer">In Discord ansehen</a>` : ''}</article>`).join('') : '<div class="intel-empty compact">Keine zitierbaren Belege vorhanden.</div>';
-    const analysisStatus = `<section class="intel-analysis-status ${intelligence.partial ? 'partial' : 'complete'}" data-analysis-status><div class="intel-analysis-head"><div><span class="eyebrow">GESAMTFORTSCHRITT</span><strong>Gesamtanalyse des Nutzerindex</strong></div><b data-analysis-percent>${Math.round(analysisProgress)}%</b></div><i><span data-analysis-bar style="width:${analysisProgress}%"></span></i><div class="intel-analysis-metrics"><span><b data-analysis-processed>${Number(analysis.processedMessages ?? intelligence.analyzedMessages ?? 0).toLocaleString('de-DE')}</b> von <i data-analysis-total>${Number(analysis.totalMessages || 0).toLocaleString('de-DE')}</i> Nachrichten</span><span><b data-analysis-statements>${Number(analysis.verifiedStatements ?? insights.length).toLocaleString('de-DE')}</b> belegte Aussagen</span><span><b data-analysis-introduction>${Number(analysis.introductionFields ?? introductionFields.length).toLocaleString('de-DE')}</b> Vorstellungsfelder</span><span><b data-analysis-unclear>${Number(analysis.unclearSignals ?? unclear.length).toLocaleString('de-DE')}</b> unklare Signale</span><span><b data-analysis-context>${Number(analysis.contextualizedStatements ?? 0).toLocaleString('de-DE')}</b> Kontextfenster geprüft</span></div><p data-analysis-copy>Die Analyse läuft dauerhaft im Hintergrund. Das Profil bleibt dabei stabil und wird nicht neu aufgebaut.</p></section>`;
-    const profileBadge = overall.value ? `<span class="intel-confidence ${overall.tone}">${safe(overall.label)} · ${overall.value}%</span>` : '<span class="intel-confidence empty">Keine Vermutungen</span>';
-    return `<section class="member-intelligence"><div class="intel-title"><div><span class="eyebrow">USER INTELLIGENCE</span><h3>Belegtes Serverprofil</h3></div>${profileBadge}</div><nav class="intel-tabs" aria-label="Profilbereiche"><button type="button" class="active" data-intel-tab="overview">Übersicht</button><button type="button" data-intel-tab="interests">Aussagen</button><button type="button" data-intel-tab="activity">Aktivität</button><button type="button" data-intel-tab="timeline">Timeline</button><button type="button" data-intel-tab="data">Belege</button></nav><div class="intel-panel active" data-intel-panel="overview"><p class="intel-privacy">Nur öffentliche Servernachrichten und freiwillige Discord-Profildaten. Keine Direktnachrichten, keine sensiblen Ableitungen und keine erfundenen Ergänzungen.</p>${analysisStatus}<div class="intel-metrics"><div><strong>${Number(intelligence.analyzedMessages || 0).toLocaleString('de-DE')}</strong><span>Nachrichten analysiert</span></div><div><strong>${Number(intelligence.activeChannels || channels.length || 0).toLocaleString('de-DE')}</strong><span>aktive Kanäle</span></div><div><strong>${insights.length.toLocaleString('de-DE')}</strong><span>belegte Aussagen</span></div><div><strong>${(links.length + media.length).toLocaleString('de-DE')}</strong><span>Links & Medien</span></div></div>${intelligence.lastMessageAt ? `<p class="intel-last">Letzte erfasste Nachricht: <strong>${safe(date(intelligence.lastMessageAt))}</strong></p>` : ''}</div><div class="intel-panel" data-intel-panel="interests">${introductionCard}<div class="intel-block"><div class="intel-block-head"><h4>Verifizierte Interessen & Aussagen</h4><span>nur mit Originalnachweis</span></div><div class="intel-insights">${insightCards}</div></div>${unclearCards}</div><div class="intel-panel" data-intel-panel="activity"><div class="intel-block"><div class="intel-block-head"><h4>Aktivität nach Kanal</h4><span>indexierter Zeitraum</span></div><div class="intel-channels">${channelRows}</div></div></div><div class="intel-panel" data-intel-panel="timeline"><section class="intel-timeline-shell"><header class="intel-timeline-head"><div><span>MITGLIEDS-CHRONIK</span><h4>Verifizierte Ereignisse</h4><p>Profil-, Mitgliedschafts-, Boost- und Moderationsereignisse in zeitlicher Reihenfolge.</p></div><strong>${systemTimelineEvents.length}</strong></header><div class="intel-timeline">${systemTimelineRows}</div></section></div><div class="intel-panel" data-intel-panel="data"><div class="intel-data-actions"><button type="button" class="button secondary" data-intel-refresh>Neu analysieren</button><button type="button" class="button secondary" data-intel-export>Profil exportieren</button></div><p class="intel-privacy">Der Export enthält ausschließlich sichtbare öffentliche Serverdaten. Eine Neuanalyse liest den persistenten Index erneut und ersetzt keine Originalnachricht.</p><details class="intel-evidence-list" open><summary>Originalbelege (${evidence.length})</summary><div>${evidenceRows}</div></details></div>${intelligence.partial ? '<p class="intel-partial">Der Langzeitindex wird noch ergänzt. Bereits angezeigte Aussagen besitzen trotzdem einen direkten Originalbeleg.</p>' : ''}${intelligence.error ? `<p class="intel-error">${safe(intelligence.error)}</p>` : ''}</section>`;
+    return `<section class="member-intelligence"><div class="intel-title"><div><span class="eyebrow">PROFIL-AKTIVITÄT</span><h3>Aktivität & Chronik</h3></div></div><nav class="intel-tabs" aria-label="Profilbereiche"><button type="button" class="active" data-intel-tab="overview">Übersicht</button><button type="button" data-intel-tab="activity">Aktivität</button><button type="button" data-intel-tab="timeline">Timeline</button></nav><div class="intel-panel active" data-intel-panel="overview"><div class="intel-metrics"><div><strong>${Number(intelligence.analyzedMessages || 0).toLocaleString('de-DE')}</strong><span>Nachrichten im Index</span></div><div><strong>${Number(intelligence.activeChannels || channels.length || 0).toLocaleString('de-DE')}</strong><span>aktive Kanäle</span></div><div><strong>${linkMediaCount.toLocaleString('de-DE')}</strong><span>Links & Medien</span></div></div>${intelligence.lastMessageAt ? `<p class="intel-last">Letzte erfasste Nachricht: <strong>${safe(date(intelligence.lastMessageAt))}</strong></p>` : ''}</div><div class="intel-panel" data-intel-panel="activity"><div class="intel-block"><div class="intel-block-head"><h4>Aktivität nach Kanal</h4><span>indexierter Zeitraum</span></div><div class="intel-channels">${channelRows}</div></div></div><div class="intel-panel" data-intel-panel="timeline"><section class="intel-timeline-shell"><header class="intel-timeline-head"><div><span>MITGLIEDS-CHRONIK</span><h4>Verifizierte Ereignisse</h4><p>Profil-, Mitgliedschafts-, Boost- und Moderationsereignisse in zeitlicher Reihenfolge.</p></div><strong>${systemTimelineEvents.length}</strong></header><div class="intel-timeline">${systemTimelineRows}</div></section></div></section>`;
   }
 
   function bindMemberIntelligence(member) {
     const scope = $('#member-detail');
     if (!scope) return;
     const memberKey = String(member.id || '');
+    const validTabs = ['overview', 'activity', 'timeline'];
     const activateTab = (tabName) => {
-      const selectedTab = String(tabName || 'overview');
+      const selectedTab = validTabs.includes(String(tabName || '')) ? String(tabName) : 'overview';
       scope.querySelectorAll('[data-intel-tab]').forEach((item) => item.classList.toggle('active', item.dataset.intelTab === selectedTab));
       scope.querySelectorAll('[data-intel-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.intelPanel === selectedTab));
     };
@@ -1652,16 +1804,6 @@ let pendingMemberAction = null;
         memberIntelligenceTabs.set(memberKey, button.dataset.intelTab || 'overview');
         activateTab(button.dataset.intelTab);
       };
-    });
-    scope.querySelector('[data-intel-refresh]')?.addEventListener('click', () => loadMemberDetails(member.id, true));
-    scope.querySelector('[data-intel-export]')?.addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), member: { id: member.id, username: member.username, displayName: member.displayName, joinedAt: member.joinedAt, createdAt: member.createdAt, premiumSince: member.premiumSince }, intelligence: member.intelligence || {} }, null, 2)], { type: 'application/json;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `fallen-heaven-user-${member.id}.json`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
   }
 
@@ -1678,46 +1820,9 @@ let pendingMemberAction = null;
     try {
       $('#member-detail').innerHTML = `<div class="member-profile-head"><img src="${safe(avatarSource(safeMember))}" alt=""><div><p class="eyebrow">MITGLIED-PROFIL</p><h3>${safe(safeMember.displayName || 'Mitglied')}</h3><span>@${safe(safeMember.username || 'unbekannt')} · ${safe(safeMember.id || '---')}</span></div>${memberStatus(safeMember)}</div><div class="member-facts"><span><small>Beigetreten</small><b>${safe(date(safeMember.joinedAt))}</b></span><span><small>Account erstellt</small><b>${safe(date(safeMember.createdAt))}</b></span><span><small>Server-Boost</small><b>${safeMember.premiumSince ? safe(date(safeMember.premiumSince, false)) : 'Nein'}</b></span><span><small>Timeout</small><b>${safeMember.timedOutUntil ? safe(date(safeMember.timedOutUntil)) : 'Nicht aktiv'}</b></span></div>${renderMemberIntelligence(safeMember)}<section class="member-role-manager"><div class="member-section-title"><h4>Rollen</h4><span>${safe(roles.length)}</span></div><div class="member-role-chips">${roles.length ? roles.map((role = {}) => `<span style="${safeRoleStyle(role)}"><i></i>${safe(role.name || 'Unbekannte Rolle')}${role.removable ? `<button type="button" data-remove-role="${safe(role.id)}" aria-label="Rolle entfernen">×</button>` : ''}</span>`).join('') : '<small>Keine zusätzlichen Rollen</small>'}</div>${capabilities.roles ? `<div class="member-role-add"><select id="member-role-select"><option value="">Rolle auswählen ...</option>${assignable.map((role = {}) => `<option value="${safe(role?.id)}">${safe(role?.name || 'Unbekannte Rolle')}</option>`).join('')}</select><button type="button" class="button secondary" data-member-action="addRole">Hinzufügen</button></div>` : '<p class="member-safety-note">Rollenänderungen sind durch Discord-Berechtigungen oder die Rollenhierarchie geschützt.</p>'}</section><section class="member-moderation"><div class="member-section-title"><h4>Moderation</h4><span>SICHER</span></div><label>Interner Grund<textarea id="member-action-reason" maxlength="400" placeholder="Grund für Audit-Log und Moderationsnachweis ..."></textarea></label><div class="member-timeout-row"><select id="member-timeout-duration"><option value="10">10 Minuten</option><option value="60">1 Stunde</option><option value="1440">1 Tag</option><option value="10080">7 Tage</option><option value="40320">28 Tage</option></select>${capabilityButton('timeout', 'Timeout setzen', capabilities.timeout)}</div><div class="member-action-grid">${capabilityButton('removeTimeout', 'Timeout entfernen', capabilities.timeout)}${capabilityButton('kick', 'Vom Server kicken', capabilities.kick, 'danger subtle')}${capabilityButton('ban', 'Mitglied bannen', capabilities.ban, 'danger')}</div><p class="member-safety-note">Owner, gleich- oder höhergestellte Rollen, verwaltete Rollen und Administrator-Rollen sind automatisch geschützt.</p></section>`;
       bindMemberIntelligence(safeMember);
-      scheduleMemberAnalysisPoll(safeMember.id, safeMember.intelligence?.analysis);
     } catch (error) {
       $('#member-detail').innerHTML = `<p class="community-empty">Mitgliedsprofil konnte nicht geladen werden: ${safe(error?.message || 'Unbekannter Fehler')}</p>`;
     }
-  }
-
-  function updateMemberAnalysisProgress(intelligence = {}) {
-    const analysis = intelligence.analysis || {};
-    const scope = $('#member-detail [data-analysis-status]');
-    if (!scope) return;
-    const progress = Math.max(0, Math.min(100, Number(analysis.progress || 0)));
-    scope.classList.toggle('partial', intelligence.partial !== false);
-    scope.classList.toggle('complete', intelligence.partial === false);
-    const setText = (selector, value) => { const node = scope.querySelector(selector); if (node) node.textContent = value; };
-    setText('[data-analysis-percent]', `${Math.round(progress)}%`);
-    setText('[data-analysis-processed]', Number(analysis.processedMessages || intelligence.analyzedMessages || 0).toLocaleString('de-DE'));
-    setText('[data-analysis-total]', Number(analysis.totalMessages || 0).toLocaleString('de-DE'));
-    setText('[data-analysis-statements]', Number(analysis.verifiedStatements || 0).toLocaleString('de-DE'));
-    setText('[data-analysis-introduction]', Number(analysis.introductionFields || 0).toLocaleString('de-DE'));
-    setText('[data-analysis-unclear]', Number(analysis.unclearSignals || 0).toLocaleString('de-DE'));
-    setText('[data-analysis-context]', Number(analysis.contextualizedStatements || 0).toLocaleString('de-DE'));
-    const bar = scope.querySelector('[data-analysis-bar]');
-    if (bar) bar.style.width = `${progress}%`;
-    const analyzedMetric = $('#member-detail .intel-metrics strong');
-    if (analyzedMetric) analyzedMetric.textContent = Number(intelligence.analyzedMessages || analysis.processedMessages || 0).toLocaleString('de-DE');
-  }
-
-  function scheduleMemberAnalysisPoll(userId, analysis = {}) {
-    clearTimeout(memberAnalysisPollTimer);
-    memberAnalysisPollTimer = null;
-    if (!['queued', 'running', 'stale'].includes(String(analysis.status || ''))) return;
-    memberAnalysisPollTimer = window.setTimeout(async () => {
-      if (!isCommunityVisible() || activeTab !== 'members' || String(selectedMember?.id || '') !== String(userId || '')) return;
-      try {
-        const data = await request(`/api/guild/${encodeURIComponent(guildId())}/member/${encodeURIComponent(userId)}/intelligence-status`, { timeoutMs: 8000 });
-        if (String(selectedMember?.id || '') !== String(userId || '')) return;
-        updateMemberAnalysisProgress(data.intelligence || {});
-        scheduleMemberAnalysisPoll(userId, data.intelligence?.analysis || {});
-      } catch { scheduleMemberAnalysisPoll(userId, analysis); }
-    }, 2500);
   }
 
   async function loadMemberDetails(userId, refresh = false) {
@@ -1726,8 +1831,6 @@ let pendingMemberAction = null;
     const requestId = ++memberDetailRequestId;
     const switchesMember = String(selectedMember?.id || '') !== String(userId || '');
     if (switchesMember) {
-      clearTimeout(memberAnalysisPollTimer);
-      memberAnalysisPollTimer = null;
       $('#member-detail').innerHTML = '<p class="community-empty">Mitgliedsprofil wird geladen ...</p>';
     }
     try {
@@ -1738,10 +1841,9 @@ let pendingMemberAction = null;
     } catch (error) {
       if (requestId !== memberDetailRequestId || id !== guildId() || activeTab !== 'members') return;
       const transient = /zeitüberschreitung|zu langsam|econnreset|nicht erreichbar/i.test(String(error.message || ''));
-      $('#member-detail').innerHTML = `<p class="community-empty">${safe(transient ? 'Das Profil wird im Hintergrund vorbereitet. Der Bot bleibt aktiv; die Ansicht lädt gleich erneut.' : error.message)}</p>`;
+      $('#member-detail').innerHTML = `<p class="community-empty">${safe(transient ? 'Das Profil konnte nicht geladen werden. Versuche es erneut.' : error.message)}</p>`;
       if (transient && switchesMember) {
-        clearTimeout(memberAnalysisPollTimer);
-        memberAnalysisPollTimer = window.setTimeout(() => loadMemberDetails(userId, false), 3500);
+        window.setTimeout(() => loadMemberDetails(userId, false), 3500);
       }
     }
   }
@@ -2071,14 +2173,23 @@ let pendingMemberAction = null;
     const target = $('#system-event-feed');
     if (target) target.setAttribute('aria-busy', 'true');
     const params = new URLSearchParams({
-      page: String(systemEventPage),
       pageSize: String(systemEventPageSize),
       filter: systemEventFilter,
       refresh: force ? '1' : '0'
     });
+    if (systemEventCursor?.beforeCreatedAt) params.set('beforeCreatedAt', systemEventCursor.beforeCreatedAt);
+    if (systemEventCursor?.beforeMessageId) params.set('beforeMessageId', systemEventCursor.beforeMessageId);
     try {
       const response = await request(`/api/guild/${encodeURIComponent(id)}/system-events?${params}`, { timeoutMs: 30_000 });
       if (requestId !== systemEventRequestId || id !== guildId() || activeTab !== 'system-events') return;
+      // Über das Ende der Historie hinaus navigiert? Dann einen Schritt zurück und neu laden.
+      const responseEvents = Array.isArray(response.systemEvents?.events) ? response.systemEvents.events : [];
+      const responseTotal = Number(response.systemEvents?.pagination?.total || 0);
+      if (!responseEvents.length && responseTotal > 0 && systemEventCursor) {
+        systemEventCursor = systemEventCursorStack.pop() || null;
+        void loadSystemEvents();
+        return;
+      }
       if (currentManagement) currentManagement.systemEvents = response.systemEvents;
       renderSystemEvents(response.systemEvents || {});
       const total = Number(response.systemEvents?.summary?.total || 0);
@@ -2401,12 +2512,14 @@ let pendingMemberAction = null;
     }
     const copyEmbed = event.target.closest('[data-copy-embed]');
     if (copyEmbed) {
-      const message = channelRows.find((item) => item.id === copyEmbed.dataset.copyEmbed);
+      const originalMessage = channelRows.find((item) => item.id === copyEmbed.dataset.copyEmbed);
+      const message = await hydrateMessageComponents(originalMessage);
       const embed = message?.embeds?.[Number(copyEmbed.dataset.embedIndex || 0)];
       if (!message || !embed) return;
-      state.activeStudioMessageId = message.canEdit && (message.embeds?.length || 0) === 1 ? message.id : '';
+      state.activeStudioMessageId = message.canEdit ? message.id : '';
+      state.studioSourceMessage = message.canEdit ? message : null;
       const outsideImageUrl = firstImageAttachmentUrl(message?.attachments || []) || '';
-      loadStudioTemplate({ channelId: selectedChannelId, content: message.content || '', embed: { title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#5865f2', authorName: embed.author || '', authorIconUrl: embed.authorIcon || '', thumbnailUrl: embed.thumbnail || '', imageUrl: embed.image || '', outsideImageUrl, footerText: embed.footer || '', footerIconUrl: embed.footerIcon || '', timestamp: Boolean(embed.timestamp), timestampValue: embed.timestamp || '', fields: embed.fields || [] } });
+      loadStudioTemplate({ channelId: selectedChannelId, content: message.content || '', embed: { title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#5865f2', authorName: embed.author || '', authorIconUrl: embed.authorIcon || '', thumbnailUrl: embed.thumbnail || '', imageUrl: embed.image || '', outsideImageUrl, footerText: embed.footer || '', footerIconUrl: embed.footerIcon || '', timestamp: Boolean(embed.timestamp), timestampValue: embed.timestamp || '', fields: embed.fields || [] }, reactionRoles: extractRoleButtonsFromMessage(message), studioComponents: importedStudioComponents(message) });
       renderDrafts();
       setView('studio');
       toast(message.canEdit ? 'Bot-Embed wurde zum Bearbeiten ins Studio geladen.' : 'Embed wurde als neuer Studio-Entwurf übernommen.', 'success');
@@ -2414,8 +2527,10 @@ let pendingMemberAction = null;
     }
     const copyAllEmbeds = event.target.closest('[data-copy-all-embeds]');
     if (copyAllEmbeds) {
-      const message = channelRows.find((item) => item.id === copyAllEmbeds.dataset.copyAllEmbeds);
+      const originalMessage = channelRows.find((item) => item.id === copyAllEmbeds.dataset.copyAllEmbeds);
+      const message = await hydrateMessageComponents(originalMessage);
       if (!message?.embeds?.length) return;
+      state.studioSourceMessage = message.canEdit ? message : null;
       const outsideImage = firstImageAttachmentUrl(message?.attachments || []);
       const embeds = message.embeds.map((embed, index) => ({
         title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#5865f2',
@@ -2429,6 +2544,7 @@ let pendingMemberAction = null;
         if (!roleMentions.includes(match[1])) roleMentions.push(match[1]);
       }
       const group = `copied-message-${message.id}`;
+      const componentReactionRoles = extractRoleButtonsFromMessage(message);
       const reactionRoles = (message.reactions || []).map((reaction, index) => {
         const normalizedEmojiName = String(reaction.name || '').toLocaleLowerCase('de').replace(/[^a-z0-9äöüß]+/g, '');
         const matchingRole = state.moduleRoles.find((role) => {
@@ -2442,12 +2558,14 @@ let pendingMemberAction = null;
         };
       });
       state.activeStudioMessageId = message.canEdit ? message.id : '';
-      loadStudioTemplate({ channelId: selectedChannelId, content: message.content || '', embed: embeds[0], embeds, reactionRoles });
+      const copiedRoleButtons = componentReactionRoles.length ? componentReactionRoles : reactionRoles;
+      loadStudioTemplate({ channelId: selectedChannelId, content: message.content || '', embed: embeds[0], embeds, reactionRoles: copiedRoleButtons, studioComponents: importedStudioComponents(message) });
+      state.studioSourceMessage = message.canEdit ? message : null;
       renderDrafts();
       setView('studio');
       const fieldCount = embeds.reduce((sum, embed) => sum + embed.fields.length, 0);
-      const mapped = reactionRoles.filter((entry) => entry.roleId).length;
-      toast(`${embeds.length} Embeds, alle Bilder und ${reactionRoles.length} Reaktionen wurden übernommen. ${mapped} Rollen konnten automatisch zugeordnet werden.`, 'success');
+      const mapped = copiedRoleButtons.filter((entry) => entry.roleId).length;
+      toast(`${embeds.length} Embeds, alle Bilder und ${copiedRoleButtons.length} Rollen-Buttons wurden übernommen. ${mapped} Rollen konnten automatisch zugeordnet werden.`, 'success');
       return;
     }
     const edit = event.target.closest('[data-edit-message]');

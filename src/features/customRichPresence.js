@@ -1,18 +1,8 @@
 import RPC from 'discord-rpc';
 
-let rpcClient = null;
-let updateTimer = null;
-let lastSignature = '';
-let lastUpdateAt = 0;
-let connecting = false;
-let activeGuildId = '';
-let presenceStartAt = Date.now();
-let nextConnectAttemptAt = 0;
-let updateInFlight = null;
-
-const MIN_UPDATE_GAP_MS = 12_000;
+const RPC_CALL_TIMEOUT_MS = 8_000;
 const RPC_RETRY_MS = 2 * 60_000;
-const RPC_LOGIN_TIMEOUT_MS = 8_000;
+const MIN_UPDATE_GAP_MS = 12_000;
 
 const clampNumber = (value, fallback, min, max) => {
   const parsed = Number(value);
@@ -37,7 +27,7 @@ export const getRpcPartyCounts = (onlineCount, memberCount) => {
 
 const getConfig = (cfg = {}) => ({
   enabled: cfg.customRichPresence?.enabled === true,
-  applicationId: String(cfg.customRichPresence?.applicationId || process.env.DISCORD_CLIENT_ID || '1486457987072528575').trim(),
+  applicationId: String(cfg.customRichPresence?.applicationId || process.env.DISCORD_CLIENT_ID || '').trim(),
   details: String(cfg.customRichPresence?.details || '{guild} - {online} online').replaceAll('{voice}', '{online}').trim(),
   state: String(cfg.customRichPresence?.state || 'Aktive Gefallene').replaceAll('{voice}', '{online}').trim(),
   largeImageKey: String(cfg.customRichPresence?.largeImageKey || 'pfp').trim(),
@@ -70,13 +60,6 @@ const getStats = async (guild) => {
   };
 };
 
-const destroyRpcClient = async (client = rpcClient) => {
-  if (!client) return;
-  if (rpcClient === client) rpcClient = null;
-  await client.clearActivity().catch(() => {});
-  await client.destroy().catch(() => {});
-};
-
 const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
   timer.unref?.();
@@ -86,136 +69,229 @@ const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, rejec
   );
 });
 
-const ensureRpc = async (applicationId) => {
-  if (rpcClient?.applicationId === applicationId) return rpcClient;
-  if (connecting || Date.now() < nextConnectAttemptAt) return null;
+export const createCustomRichPresenceController = (deps = {}) => {
+  const now = deps.now || (() => Date.now());
+  const Rpc = deps.RPC || RPC;
+  const setIntervalFn = deps.setIntervalFn || setInterval;
+  const clearIntervalFn = deps.clearIntervalFn || clearInterval;
+  const callTimeoutMs = deps.callTimeoutMs || RPC_CALL_TIMEOUT_MS;
 
-  connecting = true;
-  let client = null;
-  try {
-    await destroyRpcClient();
-    RPC.register(applicationId);
-    client = new RPC.Client({ transport: 'ipc' });
-    await withTimeout(
-      client.login({ clientId: applicationId }),
-      RPC_LOGIN_TIMEOUT_MS,
-      'Discord Desktop antwortet nicht auf RPC.'
-    );
-    presenceStartAt = Date.now();
-    client.applicationId = applicationId;
-    client.on('disconnected', () => {
-      if (rpcClient === client) rpcClient = null;
-      lastSignature = '';
-    });
-    rpcClient = client;
-    nextConnectAttemptAt = 0;
-    return client;
-  } catch (error) {
-    nextConnectAttemptAt = Date.now() + RPC_RETRY_MS;
-    await destroyRpcClient(client);
-    console.warn(`[customRichPresence] RPC ist momentan nicht verfügbar; neuer Versuch in 2 Minuten: ${error?.message || error}`);
-    return null;
-  } finally {
-    connecting = false;
-  }
-};
+  let rpcClient = null;
+  let updateTimer = null;
+  let lastSignature = '';
+  let activeGuildId = '';
+  let updateInFlight = null;
+  let connecting = false;
+  let nextConnectAttemptAt = 0;
+  let presenceStartAt = now();
 
-const clearRpc = async () => {
-  lastSignature = '';
-  activeGuildId = '';
-  nextConnectAttemptAt = 0;
-  await destroyRpcClient();
-};
-
-const performRichPresenceUpdate = async ({ cfg, guild }) => {
-  const rp = getConfig(cfg);
-  if (!rp.enabled || !rp.applicationId || !guild) {
-    if (!activeGuildId || activeGuildId === guild?.id) await clearRpc();
-    return;
-  }
-
-  const now = Date.now();
-  if (now - lastUpdateAt < MIN_UPDATE_GAP_MS) return;
-
-  const stats = await getStats(guild);
-  const party = getRpcPartyCounts(stats.onlineCount, stats.memberCount);
-  const payload = {
-    details: formatTemplate(rp.details, stats).slice(0, 128),
-    state: formatTemplate(rp.state, stats).slice(0, 128),
-    largeImageKey: rp.largeImageKey || undefined,
-    largeImageText: formatTemplate(rp.largeImageText, stats).slice(0, 128) || undefined,
-    smallImageKey: rp.smallImageKey || undefined,
-    smallImageText: formatTemplate(rp.smallImageText, stats).slice(0, 128) || undefined,
-    instance: false,
-    startTimestamp: presenceStartAt,
-    ...party,
-    buttons: [
-      rp.button1Label && /^https?:\/\//i.test(rp.button1Url) ? { label: rp.button1Label.slice(0, 32), url: rp.button1Url } : null,
-      rp.button2Label && /^https?:\/\//i.test(rp.button2Url) ? { label: rp.button2Label.slice(0, 32), url: rp.button2Url } : null
-    ].filter(Boolean)
+  const status = {
+    enabled: false,
+    state: 'disabled',
+    connected: false,
+    activeGuildId: '',
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    retryAt: null,
+    lastError: null,
+    lastUpdateDurationMs: 0
   };
 
-  const signature = JSON.stringify(payload);
-  if (signature === lastSignature) return;
+  const runRpcCall = async (label, operation) => {
+    const startedAt = now();
+    try {
+      return await withTimeout(Promise.resolve().then(operation), callTimeoutMs, `Discord RPC ${label} reagiert nicht.`);
+    } finally {
+      status.lastUpdateDurationMs = Math.max(0, now() - startedAt);
+    }
+  };
 
-  const client = await ensureRpc(rp.applicationId);
-  if (!client) return;
+  const destroyRpcClient = async (client = rpcClient) => {
+    if (!client) return;
+    if (rpcClient === client) rpcClient = null;
+    await Promise.allSettled([
+      runRpcCall('clearActivity', () => client.clearActivity()),
+      runRpcCall('destroy', () => client.destroy())
+    ]).catch(() => {});
+  };
 
-  try {
-    await client.setActivity(payload);
-    lastSignature = signature;
-    lastUpdateAt = now;
-    activeGuildId = guild.id;
-  } catch (error) {
+  const ensureRpc = async (applicationId) => {
+    if (rpcClient?.applicationId === applicationId) return rpcClient;
+    if (connecting || now() < nextConnectAttemptAt) return null;
+
+    connecting = true;
+    status.state = 'connecting';
+    status.lastAttemptAt = new Date(now()).toISOString();
+    let client = null;
+    try {
+      await destroyRpcClient();
+      Rpc.register(applicationId);
+      client = new Rpc.Client({ transport: 'ipc' });
+      await runRpcCall('login', () => client.login({ clientId: applicationId }));
+      presenceStartAt = now();
+      client.applicationId = applicationId;
+      client.on('disconnected', () => {
+        if (rpcClient === client) {
+          rpcClient = null;
+          lastSignature = '';
+          if (status.enabled) {
+            status.state = 'degraded';
+            status.connected = false;
+            status.retryAt = new Date(now() + RPC_RETRY_MS).toISOString();
+            status.lastError = 'RPC-Verbindung getrennt';
+          }
+        }
+      });
+      rpcClient = client;
+      nextConnectAttemptAt = 0;
+      return client;
+    } catch (error) {
+      nextConnectAttemptAt = now() + RPC_RETRY_MS;
+      status.state = status.connected ? 'degraded' : 'failed';
+      status.connected = false;
+      status.retryAt = new Date(now() + RPC_RETRY_MS).toISOString();
+      status.lastError = String(error?.message || error).slice(0, 240);
+      await destroyRpcClient(client);
+      return null;
+    } finally {
+      connecting = false;
+    }
+  };
+
+  const clearRpc = async () => {
     lastSignature = '';
-    nextConnectAttemptAt = Date.now() + RPC_RETRY_MS;
-    await destroyRpcClient(client);
-    console.warn(`[customRichPresence] RPC-Update fehlgeschlagen; neuer Versuch in 2 Minuten: ${error?.message || error}`);
-  }
+    activeGuildId = '';
+    nextConnectAttemptAt = 0;
+    await destroyRpcClient();
+    status.state = 'disabled';
+    status.connected = false;
+    status.activeGuildId = '';
+    status.retryAt = null;
+    status.lastError = null;
+  };
+
+  const performRichPresenceUpdate = async ({ cfg, guild }) => {
+    const rp = getConfig(cfg);
+    status.enabled = rp.enabled;
+    if (!rp.enabled || !rp.applicationId || !guild) {
+      if (!activeGuildId || activeGuildId === guild?.id) await clearRpc();
+      return;
+    }
+
+    const currentNow = now();
+    if (currentNow - (status.lastAttemptAt ? new Date(status.lastAttemptAt).getTime() : 0) < MIN_UPDATE_GAP_MS && updateInFlight) return;
+
+    const stats = await getStats(guild);
+    const party = getRpcPartyCounts(stats.onlineCount, stats.memberCount);
+    const payload = {
+      details: formatTemplate(rp.details, stats).slice(0, 128),
+      state: formatTemplate(rp.state, stats).slice(0, 128),
+      largeImageKey: rp.largeImageKey || undefined,
+      largeImageText: formatTemplate(rp.largeImageText, stats).slice(0, 128) || undefined,
+      smallImageKey: rp.smallImageKey || undefined,
+      smallImageText: formatTemplate(rp.smallImageText, stats).slice(0, 128) || undefined,
+      instance: false,
+      startTimestamp: presenceStartAt,
+      ...party,
+      buttons: [
+        rp.button1Label && /^https?:\/\//i.test(rp.button1Url) ? { label: rp.button1Label.slice(0, 32), url: rp.button1Url } : null,
+        rp.button2Label && /^https?:\/\//i.test(rp.button2Url) ? { label: rp.button2Label.slice(0, 32), url: rp.button2Url } : null
+      ].filter(Boolean)
+    };
+
+    const signature = JSON.stringify(payload);
+    if (signature === lastSignature) return;
+
+    const client = await ensureRpc(rp.applicationId);
+    if (!client) return;
+
+    status.lastAttemptAt = new Date(currentNow).toISOString();
+    try {
+      await runRpcCall('setActivity', () => client.setActivity(payload));
+      lastSignature = signature;
+      activeGuildId = guild.id;
+      status.state = 'connected';
+      status.connected = true;
+      status.activeGuildId = guild.id;
+      status.lastSuccessAt = new Date(currentNow).toISOString();
+      status.lastError = null;
+      status.retryAt = null;
+    } catch (error) {
+      lastSignature = '';
+      nextConnectAttemptAt = now() + RPC_RETRY_MS;
+      status.state = 'degraded';
+      status.connected = false;
+      status.retryAt = new Date(now() + RPC_RETRY_MS).toISOString();
+      status.lastError = String(error?.message || error).slice(0, 240);
+      await destroyRpcClient(client);
+    }
+  };
+
+  const updateRichPresence = ({ cfg, guild }) => {
+    if (updateInFlight) return updateInFlight;
+    updateInFlight = performRichPresenceUpdate({ cfg, guild })
+      .finally(() => { updateInFlight = null; });
+    return updateInFlight;
+  };
+
+  const schedule = ({ cfg, guild }) => {
+    const rp = getConfig(cfg);
+    status.enabled = rp.enabled;
+    if (updateTimer) {
+      clearIntervalFn(updateTimer);
+      updateTimer = null;
+    }
+
+    if (!rp.enabled) {
+      if (!activeGuildId || activeGuildId === guild?.id) void clearRpc();
+      return;
+    }
+
+    updateTimer = setIntervalFn(() => {
+      void updateRichPresence({ cfg, guild }).catch(() => {});
+    }, rp.updateIntervalSeconds * 1000);
+    if (updateTimer?.unref) updateTimer.unref();
+    void updateRichPresence({ cfg, guild });
+  };
+
+  const reconnect = async ({ cfg, guild }) => {
+    nextConnectAttemptAt = 0;
+    lastSignature = '';
+    await destroyRpcClient();
+    status.state = 'connecting';
+    status.lastError = null;
+    status.retryAt = null;
+    await updateRichPresence({ cfg, guild });
+    return getStatus();
+  };
+
+  const getStatus = () => ({ ...status });
+
+  return { schedule, update: updateRichPresence, getStatus, clear: clearRpc, reconnect };
 };
 
-const updateRichPresence = ({ cfg, guild }) => {
-  if (updateInFlight) return updateInFlight;
-  updateInFlight = performRichPresenceUpdate({ cfg, guild })
-    .finally(() => { updateInFlight = null; });
-  return updateInFlight;
-};
-
-const schedule = ({ cfg, guild }) => {
-  const rp = getConfig(cfg);
-  if (updateTimer) {
-    clearInterval(updateTimer);
-    updateTimer = null;
-  }
-
-  if (!rp.enabled) {
-    if (!activeGuildId || activeGuildId === guild?.id) void clearRpc();
-    return;
-  }
-
-  updateTimer = setInterval(() => {
-    void updateRichPresence({ cfg, guild }).catch(() => {});
-  }, rp.updateIntervalSeconds * 1000);
-  updateTimer.unref?.();
-  void updateRichPresence({ cfg, guild });
-};
+const controller = createCustomRichPresenceController();
+export const getCustomRichPresenceStatus = () => controller.getStatus();
+export const reconnectCustomRichPresence = (context) => controller.reconnect(context);
 
 export const feature = {
   id: 'customRichPresence',
   commands: [],
   async onClientReady({ cfg, guild }) {
-    schedule({ cfg, guild });
+    controller.schedule({ cfg, guild });
   },
   async onConfigUpdate({ cfg, guild }) {
-    schedule({ cfg, guild });
+    controller.schedule({ cfg, guild });
   },
   async onGuildMemberAdd(context) {
-    await updateRichPresence(context);
+    await controller.update(context);
   },
   async onGuildMemberRemove(context) {
-    await updateRichPresence(context);
+    await controller.update(context);
   },
   async onPresenceUpdate(context) {
-    await updateRichPresence(context);
+    await controller.update(context);
   }
 };
+
+export const _controllerInternals = controller;
