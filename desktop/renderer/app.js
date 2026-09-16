@@ -194,6 +194,7 @@ let timelineRenderSignature = '';
 const WORKSPACE_RECOVERABLE_STATUSES = [0, 429, 502, 503, 504];
 const WORKSPACE_RESTORE_TIMEOUT_MS = 18000;
 const WORKSPACE_NORMAL_TIMEOUT_MS = 30000;
+const STARTUP_STAGE_TIMEOUT_MS = 12_000;
 let workspaceRetryTimer = null;
 let workspaceRetryStartedAt = 0;
 let workspaceRetryCount = 0;
@@ -218,6 +219,18 @@ function isRecoverableWorkspaceStatus(status) {
 function setPrebootStatus(message) {
   const node = document.querySelector('.fh-preboot-state span');
   if (node) node.textContent = message;
+}
+
+function withStartupStageTimeout(promise, stage) {
+  let timer = null;
+  const timeout = new Promise(function (_resolve, reject) {
+    timer = setTimeout(function () {
+      reject(new Error(`${stage} hat zu lange gedauert.`));
+    }, STARTUP_STAGE_TIMEOUT_MS);
+  });
+  return Promise.race([Promise.resolve(promise), timeout]).finally(function () {
+    clearTimeout(timer);
+  });
 }
 
 function resetWorkspaceRetryState() {
@@ -834,7 +847,7 @@ async function controlBot(action) {
 async function refreshAuth(options = {}) {
   const startupRestore = options.startup === true;
   try {
-    const response = await api.apiRequest({ path: '/api/auth/me' });
+    const response = await api.apiRequest({ path: '/api/auth/me', timeoutMs: 8000 });
     if (response.ok && response.data && response.data.user) {
       applyAuth(response.data.user, {
         restoring: startupRestore,
@@ -1030,7 +1043,7 @@ async function loadWorkspaceData(options = {}) {
   if (!workspaceRetryStartedAt) workspaceRetryStartedAt = Date.now();
   const results = await Promise.all([
     apiRequestWithRetry({ path: '/api/guilds', timeoutMs: 10000 }, 6),
-    api.apiRequest({ path: '/api/dashboard/schema' })
+    api.apiRequest({ path: '/api/dashboard/schema', timeoutMs: 8000 })
   ]);
   const guildResult = results[0];
   const schemaResult = results[1];
@@ -7526,12 +7539,12 @@ bindId('close', 'click', function () { api?.close?.(); });
     document.body.dataset.theme = localStorage.getItem('fh-native-theme') || 'dark';
     FHCCAppEditor.applyAppEditorSettings(appEditorSettings);
     updateShellMode();
-    const info = await api.getInfo();
+    const info = await withStartupStageTimeout(api.getInfo(), 'App-Informationen');
     setText('app-version', 'v' + (info?.version || ''));
     setText('modern-login-version', 'v' + (info?.version || ''));
     loadStudioTemplate(studioTemplates.welcome);
     renderModules();
-    const restoredSession = await refreshAuth({ startup: true });
+    const restoredSession = await withStartupStageTimeout(refreshAuth({ startup: true }), 'Sitzungsprüfung');
     await refreshStatus(true);
     if (restoredSession === true) setView('center');
     else if (restoredSession === 'pending') setPrebootStatus('Discord-Daten werden nach dem Neustart geprüft …');
