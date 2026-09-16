@@ -1,4 +1,4 @@
-﻿const api = window.fallenHeaven;
+const api = window.fallenHeaven;
 function readLocalJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -38,20 +38,27 @@ const state = {
   studioFields: [],
   studioEmbeds: [],
   studioReactionRoles: [],
+  studioComponents: [],
   studioComponentSet: 'none',
   studioSpecialTemplate: '',
+  studioPcvSection: 'panel',
+  studioCountingDmSection: 'strikeLock',
+  studioVipDmSection: 'giftReceived',
   studioActivityUsesPeriodColor: false,
+  studioActivityRaceSection: 'daily',
   studioWorkshopItemId: '',
   studioWorkshopItemTitle: '',
   studioWorkshopItemTokens: null,
   studioWorkshopAssetMode: 'global',
   activeStudioEmbedIndex: 0,
   activeStudioMessageId: '',
+  studioSourceMessage: null,
   messageEmojis: [],
   messageEmojiGuildId: '',
   messageEmojiFilter: 'all',
   messageEmojiTarget: null,
-  messageEmojiLoading: false
+  messageEmojiLoading: false,
+  messageEmojiFetchedAt: 0
 };
 window.FallenHeavenRuntime?.bindState(state);
 
@@ -63,10 +70,10 @@ const moduleIdAliases = {
 
 const fallbackModules = [
   ['moderation', 'Moderation', 'Filter, Warnungen und sichere Aktionen', 'MOD'],
+  ['instantBanWords', 'Instant Wort-Ban', 'Sofort-Bann bei verbotenen Begriffen', 'BAN'],
   ['welcomeFarewell', 'Welcome', 'Begrüßt neue Mitglieder mit Stil', 'HEL'],
   ['levels', 'Leveling', 'Aktivität, Level und Belohnungen', 'XP'],
   ['tickets', 'Tickets', 'Strukturierter Support für deine Community', 'TKT'],
-  ['aiChat', 'AI Chat', 'Lokale Ollama-AI mit Memory', 'AI'],
   ['logging', 'Logging', 'Audit-Trails für wichtige Ereignisse', 'LOG'],
   ['autoresponder', 'Auto Responder', 'Gezielte automatische Antworten', 'AUTO'],
   ['autoRole', 'AutoRole', 'Rollen beim Beitritt vergeben', 'ROLE'],
@@ -75,6 +82,7 @@ const fallbackModules = [
   ['steamWorkshop', 'Steam Workshop', 'Workshop-Mods als detaillierten Forum-Katalog pflegen', 'STEAM'],
   ['emojiManager', 'Emoji-Verwaltung', 'Statische und animierte Server-Emojis kontrolliert umbenennen', 'EMOJI'],
   ['voiceChatCleaner', 'Voice-Chat-Cleaner', 'Voice-Chats nach dem Verlassen vollständig leeren', 'VC'],
+  ['tempVoice', 'TempVoice', 'Eigener temporärer Sprachkanal beim Joinen', 'TV'],
   ['activityRace', 'Aktivitäts-Liga', 'Top 1–3 für Chat und Sprachchat', 'RACE'],
   ['serverBackup', 'Server-Backup', 'Tägliche Struktur-Sicherung und Restore', 'BAK'],
   ['antiraid', 'Anti-Raid', 'Schutz bei auffälligen Beitritten', 'SAFE'],
@@ -191,6 +199,8 @@ let workspaceRetryStartedAt = 0;
 let workspaceRetryCount = 0;
 let serverTagRefreshTimer = null;
 let voiceCleanerRefreshTimer = null;
+let voiceLogEventsCursor = null;
+let voiceLogEventsLoading = false;
 let forumCleanerRefreshTimer = null;
 let steamWorkshopRefreshTimer = null;
 let steamWorkshopStatusSnapshot = null;
@@ -270,27 +280,13 @@ const appEditorDefaults = {
   }
 };
 
-function normalizeAppEditorSettings(raw) {
-  const basePages = appEditorDefaults.pages;
-  const incoming = raw && typeof raw === 'object' ? raw : {};
-  const pages = { ...basePages, ...(incoming.pages || {}) };
-  const pageIds = Object.keys(basePages);
-  const uniqueTitles = new Set(pageIds.map(function (id) { return String(pages[id]?.title || '').trim(); }).filter(Boolean));
-  if (uniqueTitles.size <= 1) {
-    pageIds.forEach(function (id) {
-      pages[id] = { ...basePages[id] };
-    });
-  }
-  return {
-    ...appEditorDefaults,
-    ...incoming,
-    pages,
-    selectedPage: pageIds.includes(incoming.selectedPage) ? incoming.selectedPage : 'home'
-  };
-}
-
-let appEditorSettings = normalizeAppEditorSettings(appEditorDefaults);
+// Gespeicherte App-Editor-Einstellungen beim Start laden (wurde vorher nie
+// geladen – die Effekte-Einstellung ging damit bei jedem Neustart verloren).
+let appEditorSettings = FHCCAppEditor.normalizeAppEditorSettings(readLocalJson('fh-app-editor-settings', null));
 let appEditorActivePage = appEditorSettings.selectedPage || 'home';
+globalThis.appEditorDefaults = appEditorDefaults;
+globalThis.appEditorSettings = appEditorSettings;
+globalThis.appEditorActivePage = appEditorActivePage;
 
 const studioTemplates = {
   welcome: {
@@ -305,17 +301,6 @@ const studioTemplates = {
         { name: 'Start', value: 'Regeln lesen und Rollen auswählen.', inline: true },
         { name: 'Support', value: 'Bei Fragen einfach im Team melden.', inline: true }
       ]
-    }
-  },
-  'ai-chat-welcome': {
-    content: '',
-    embed: {
-      title: 'Willkommen im AI Chat',
-      description: 'Frag mich einfach – hier ein paar Beispiele:\n\n• „Wie viele Mitglieder hat der Server gerade?“\n• „Wer führt die Aktivitäts-Liga diese Woche an?“\n• „Suche im Internet nach …“\n\nDer Kanal wird nach längerer Inaktivität automatisch aufgeräumt – diese Nachricht bleibt immer stehen.',
-      color: '#9b59b6',
-      footerText: 'Diese Nachricht bleibt beim automatischen Aufräumen erhalten.',
-      timestamp: true,
-      fields: []
     }
   },
   level: {
@@ -421,6 +406,44 @@ function escapeHtml(value) {
   });
 }
 
+// escapeHtml escaped bereits Anführungszeichen – daher ist es auch für
+// Attribute sicher. Als eigener Name, damit Attribut-Kontexte klar sind.
+function escapeAttr(value) {
+  return escapeHtml(value);
+}
+
+// Konvertiert bekannte Discord-Emoji-Mentions (<:name:id> / <a:name:id>) in Vorschau-
+// Bilder; alles andere wird sicher escaped. So zeigt die Studio-Vorschau Emojis
+// genauso an, wie Discord sie später im Embed rendert (statt roher Mentions).
+function studioEmojiHtml(value) {
+  const byId = new Map(state.messageEmojis.map(function (emoji) { return [String(emoji.id), emoji]; }));
+  return String(value || '').split(/(<a?:[A-Za-z0-9_~]+:\d+>)/g).map(function (part) {
+    const match = /^<a?:([A-Za-z0-9_~]+):(\d+)>$/.exec(part);
+    if (match && byId.has(match[2])) {
+      const emoji = byId.get(match[2]);
+      return '<img class="message-inline-emoji" src="' + escapeHtml(emoji.url) + '" alt=":' + escapeHtml(emoji.name) + ':" title=":' + escapeHtml(emoji.name) + ':">';
+    }
+    return escapeHtml(part);
+  }).join('');
+}
+
+// Wie studioEmojiHtml, aber zusätzlich werden http(s)-URLs als klickbare Links
+// gerendert - exakt so, wie Discord URLs im Embed-Text (auch im Footer) anzeigt.
+// Nur http/https-Schemata werden verlinkt, alles andere bleibt sicher escaped.
+function studioRichText(value) {
+  const byId = new Map(state.messageEmojis.map(function (emoji) { return [String(emoji.id), emoji]; }));
+  return String(value || '').split(/(<a?:[A-Za-z0-9_~]+:\d+>)/g).map(function (part) {
+    const match = /^<a?:([A-Za-z0-9_~]+):(\d+)>$/.exec(part);
+    if (match && byId.has(match[2])) {
+      const emoji = byId.get(match[2]);
+      return '<img class="message-inline-emoji" src="' + escapeHtml(emoji.url) + '" alt=":' + escapeHtml(emoji.name) + ':" title=":' + escapeHtml(emoji.name) + ':">';
+    }
+    return escapeHtml(part).replace(/(https?:\/\/[^\s<>"']+)/g, function (url) {
+      return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>';
+    });
+  }).join('');
+}
+
 let appConfirmQueue = Promise.resolve();
 function showAppConfirm(options) {
   const settings = options || {};
@@ -478,8 +501,22 @@ function bindId(id, eventName, handler, options) {
   return node;
 }
 
+// Aktuelle Config vom Server holen und state.config aktualisieren.
+// Wird vor jedem Studio-Open aufgerufen, damit das Studio immer das
+// aktuelle Embed zeigt und nicht eine veraltete gecachte Version.
+async function refreshConfig(guildId) {
+  if (!guildId) return;
+  try {
+    const response = await apiRequestWithRetry({ path: '/api/config/' + encodeURIComponent(guildId), timeoutMs: 8000 }, 3);
+    if (response.ok && response.data?.config) {
+      state.config = normalizeModuleConfigIds(response.data.config);
+    }
+  } catch { /* Stille Fehlerbehandlung – alten Cache beibehalten */ }
+}
+
 async function setView(view) {
   if (state.activeView === 'modules' && view !== 'modules' && !(await confirmDiscardModuleChanges())) return false;
+  if (state.activeView === 'studio' && view !== 'studio' && !(await tempVoiceUi.confirmLeaveStudio())) return false;
   const restricted = ['center', 'community', 'modules', 'studio', 'skin', 'system'].includes(view);
   if (restricted && !state.authenticated) {
     document.body.classList.add('access-open');
@@ -500,6 +537,7 @@ async function setView(view) {
   document.querySelectorAll('[data-view]').forEach(function (button) {
     button.classList.toggle('active', button.dataset.view === view);
   });
+  if (view === 'skin') window.FallenHeavenSkinStudio?.loadViewerLibraries?.();
   if (view === 'system') void loadSystemCenter();
   if (view === 'modules' && !state.moduleDirty) {
     renderModules();
@@ -835,6 +873,46 @@ function handleExpiredSession(response) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Zentraler Save-Pfad für ALLE Studio-Embeds, die über die Design-Routen
+// gespeichert werden. Jede Modul-Save-Funktion ruft nur noch diesen einen
+// Pfad: einheitliche Button-Sperre, Session-Handling, Timeout (mit Bild
+// länger), state.config-Refresh über onSaved und Toast. „Gespeichert, aber
+// nicht aktualisiert“ hat damit keinen Platz mehr: Nach erfolgreichem PUT wird
+// über onSaved immer der gespeicherte Stand in die App zurückgeschrieben und
+// das Studio neu geladen.
+// ---------------------------------------------------------------------------
+async function saveStudioDesign(settings) {
+  const options = settings || {};
+  const buttons = [
+    document.getElementById('save-draft'),
+    document.getElementById('send-studio-message'),
+    document.getElementById('send-studio-message-secondary')
+  ].filter(Boolean);
+  buttons.forEach(function (button) { button.disabled = true; });
+  try {
+    const response = await api.apiRequest({
+      path: options.path,
+      method: 'PUT',
+      body: options.body || {},
+      timeoutMs: options.timeoutMs || ((options.body?.template?.outsideImageUrl || options.body?.template?.outsideImageAttachment) ? 120000 : 45000)
+    });
+    if (handleExpiredSession(response)) return false;
+    if (!response.ok) throw new Error(response.data?.error || options.errorMessage || 'Das Embed konnte nicht gespeichert werden.');
+    const result = response.data?.result || {};
+    if (typeof options.onSaved === 'function') options.onSaved(result);
+    const message = typeof options.okMessage === 'function' ? options.okMessage(result) : options.okMessage;
+    const tone = typeof options.okType === 'function' ? options.okType(result) : (options.okType || 'success');
+    toast(message || 'Design gespeichert. Live-Nachrichten werden automatisch aktualisiert.', tone);
+    return true;
+  } catch (error) {
+    toast(String(error?.message || error), 'error');
+    return false;
+  } finally {
+    buttons.forEach(function (button) { button.disabled = false; });
+  }
+}
+
 const waitForApiRetry = (milliseconds) => new Promise(function (resolve) { setTimeout(resolve, milliseconds); });
 
 async function apiRequestWithRetry(options, attempts) {
@@ -1150,18 +1228,20 @@ const nativeMessageEmojis = [
 });
 
 async function loadMessageEmojis(guildId) {
-  if (!guildId || !state.authenticated) return;
-  const targetGuildId = String(guildId);
-  if (state.messageEmojiGuildId !== targetGuildId) state.messageEmojis = [];
-  state.messageEmojiLoading = true;
-  renderMessageEmojiPicker();
-  const response = await api.apiRequest({ path: '/api/guild/' + encodeURIComponent(targetGuildId) + '/message-emojis' });
-  state.messageEmojiLoading = false;
-  const remoteEmojis = response.ok && Array.isArray(response.data && response.data.emojis) ? response.data.emojis : [];
-  state.messageEmojis = nativeMessageEmojis.concat(remoteEmojis);
-  state.messageEmojiGuildId = response.ok ? targetGuildId : '';
-  renderMessageEmojiPicker();
+  return messageEmojiLoader.load(guildId);
 }
+
+const messageEmojiLoader = window.FHCCMessageEmojiLoader.create({
+  state, apiRequest: (options) => api.apiRequest(options), nativeEmojis: nativeMessageEmojis,
+  render: renderMessageEmojiPicker, selectedGuildId: () => state.selectedGuildId
+});
+
+// Emoji-Cache pro Server kurzlebig: Beim Öffnen wird nach Ablauf neu gefetcht.
+const MESSAGE_EMOJI_REFRESH_TTL_MS = 30000;
+const messageEmojiCacheFresh = (targetGuildId) => state.messageEmojiGuildId === targetGuildId
+  && Array.isArray(state.messageEmojis) && state.messageEmojis.length > 0
+  && Number(state.messageEmojiFetchedAt || 0) > 0
+  && Date.now() - Number(state.messageEmojiFetchedAt) < MESSAGE_EMOJI_REFRESH_TTL_MS;
 
 function filteredMessageEmojis() {
   const search = String(document.getElementById('studio-emoji-search')?.value || '').trim().toLocaleLowerCase('de');
@@ -1225,10 +1305,10 @@ function openMessageEmojiPicker(target) {
     : '<i></i> Ein Klick fügt das Emoji an der Cursorposition ein.';  picker.hidden = false;
   document.body.classList.add('message-emoji-open');
   renderMessageEmojiPicker();
-  if (state.messageEmojiGuildId !== String(state.selectedGuildId)) {
+  if (!messageEmojiCacheFresh(String(state.selectedGuildId)) && !state.messageEmojiLoading) {
     state.messageEmojis = [];
     void loadMessageEmojis(state.selectedGuildId);
-  } else if (!state.messageEmojis.length && !state.messageEmojiLoading) void loadMessageEmojiCatalog();
+  }
   window.setTimeout(function () { document.getElementById('studio-emoji-search')?.focus(); }, 40);
 }
 
@@ -1341,7 +1421,18 @@ function renderModules(options) {
   const catalog = activeCatalog();
   const visibleCatalog = catalog.filter(moduleMatchesFilters);
   const enabledCount = state.authenticated ? catalog.filter(function (item) { return moduleEnabled(item[0]); }).length : 0;
+  const allEnabled = state.authenticated && catalog.length > 0 && enabledCount === catalog.length;
   setText('module-page-enabled', enabledCount);
+  setText('module-page-total', catalog.length);
+  const modulePageStat = document.querySelector('.module-page-stat');
+  if (modulePageStat) modulePageStat.classList.toggle('is-complete', allEnabled);
+  const enableAll = document.getElementById('enable-all');
+  if (enableAll) {
+    enableAll.disabled = allEnabled || !state.authenticated || catalog.length === 0;
+    enableAll.textContent = allEnabled ? 'Alle aktiv' : 'Alle aktivieren';
+    enableAll.classList.toggle('is-complete', allEnabled);
+    enableAll.setAttribute('aria-label', allEnabled ? 'Alle Module sind aktiv' : 'Alle Module aktivieren');
+  }
   setText('module-result-count', visibleCatalog.length + (visibleCatalog.length === 1 ? ' Modul' : ' Module'));
   document.querySelectorAll('[data-module-filter]').forEach(function (button) {
     button.classList.toggle('active', button.dataset.moduleFilter === state.moduleFilter);
@@ -1409,6 +1500,9 @@ function patchModuleCardStates(catalog) {
     const label = enabled ? 'Aktiv' : 'Inaktiv';
     const stateLabel = toggle.querySelector('[data-module-state]');
     if (stateLabel && stateLabel.textContent !== label) stateLabel.textContent = label;
+    toggle.classList.toggle('is-active', enabled);
+    toggle.setAttribute('aria-pressed', String(enabled));
+    toggle.dataset.state = enabled ? 'active' : 'inactive';
     toggle.setAttribute('aria-label', (item?.[1] || id) + ' ' + (enabled ? 'deaktivieren' : 'aktivieren'));
   });
 }
@@ -1525,231 +1619,177 @@ async function refreshBoostProgress() {
   if (response.ok) renderBoostProgress(response.data?.status || {});
 }
 
-function settingLines(value) {
-  const source = Array.isArray(value) ? value : String(value || '').split(/[\r\n,]+/);
-  return source.map(function (entry) { return String(entry || '').trim(); }).filter(Boolean);
-}
-
-const channelTypeAliases = {
-  text: 0,
-  voice: 2,
-  category: 4,
-  announcement: 5,
-  stage: 13,
-  forum: 15,
-  media: 16
+const RP_STATE_LABELS = {
+  disabled: 'deaktiviert',
+  connecting: 'Verbindung wird aufgebaut …',
+  connected: 'verbunden',
+  degraded: 'gestört – Bot online, RPC fehlgeschlagen',
+  failed: 'fehlgeschlagen'
 };
 
-function channelTypeAllowed(field, channel) {
-  const filters = Array.isArray(field.channelTypes) ? field.channelTypes : [];
-  const type = Number(channel && channel.type);
-  if (!filters.length) {
-    if (type === 4) return String(field.type || '').toLowerCase() === 'multichannelselect';
-    return [0, 2, 5, 13, 15, 16].includes(type);
+async function refreshRichPresenceHealth() {
+  if (!state.authenticated || !state.selectedGuildId || state.activeFeatureId !== 'customRichPresence') return;
+  const response = await api.apiRequest({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/custom-rich-presence/status', timeoutMs: 8000 });
+  if (handleExpiredSession(response)) return;
+  const status = response.data?.status || { state: 'disabled', enabled: false };
+  const card = document.getElementById('rp-health-card');
+  if (!card) return;
+  card.dataset.rpState = status.state || 'disabled';
+  const botEl = card.querySelector('[data-rp-bot-status]');
+  const rpEl = card.querySelector('[data-rp-status]');
+  const retryRow = card.querySelector('[data-rp-retry-row]');
+  const retryEl = card.querySelector('[data-rp-retry]');
+  const reconnectBtn = card.querySelector('#rp-reconnect-btn');
+  if (botEl) botEl.textContent = state.statusOnline ? 'online' : 'offline';
+  if (rpEl) rpEl.textContent = RP_STATE_LABELS[status.state] || status.state;
+  if (retryRow && status.retryAt) {
+    retryRow.hidden = false;
+    if (retryEl) retryEl.textContent = new Date(status.retryAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  } else if (retryRow) {
+    retryRow.hidden = true;
   }
-  return filters.some(function (filter) {
-    if (typeof filter === 'number') return type === filter;
-    const normalized = String(filter || '').toLowerCase();
-    if (/^\d+$/.test(normalized)) return type === Number(normalized);
-    return channelTypeAliases[normalized] === type;
-  });
+  if (reconnectBtn) {
+    reconnectBtn.hidden = status.state === 'disabled' || status.state === 'connected';
+    reconnectBtn.onclick = async () => {
+      reconnectBtn.disabled = true;
+      reconnectBtn.textContent = 'Verbinde …';
+      await api.apiRequest({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/custom-rich-presence/reconnect', method: 'POST', timeoutMs: 10000 });
+      reconnectBtn.disabled = false;
+      reconnectBtn.textContent = 'Neu verbinden';
+      void refreshRichPresenceHealth();
+    };
+  }
 }
 
-function channelsForField(field) {
-  return state.moduleChannels.filter(function (channel) { return channelTypeAllowed(field, channel); });
+async function refreshBoostTopStatus() {
+  if (!state.authenticated || !state.selectedGuildId || state.activeFeatureId !== 'boostRoles') return;
+  const response = await apiRequestWithRetry({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/boost-top', timeoutMs: 8000 }, 2);
+  if (handleExpiredSession(response)) return;
+  if (!response.ok) return;
+  const status = response.data?.status || {};
+  const container = document.querySelector('[data-boost-top-status]');
+  if (!container) return;
+  const top = Array.isArray(status.snapshot?.top) ? status.snapshot.top : [];
+  const totalBoosts = Number(status.snapshot?.boostCount || 0);
+  const holders = Array.isArray(status.panel?.holders) ? status.panel.holders : [];
+  const live = Boolean(status.panel?.messageId);
+  container.innerHTML = '<div class="boost-top-status-line"><span>' + (live ? 'Live-Nachricht aktiv · aktualisiert ' + escapeHtml(status.panel?.updatedAt ? new Date(status.panel.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '') : 'Noch kein Embed gesendet – der Abgleich erstellt es automatisch.') + '</span><span>' + totalBoosts + ' Boosts gesamt · ' + (status.snapshot?.activeBoosterCount || 0) + ' Booster</span></div>' +
+
+    (status.lastError ? '<p class="boost-top-status-error">' + escapeHtml(status.lastError) + '</p>' : '') +
+    '<ol class="boost-top-status-list">' + (top.length
+      ? top.map(function (entry, index) {
+        const holder = holders.find(function (candidate) { return String(candidate.userId) === String(entry.userId); });
+        const current = Number(holder?.count ?? (entry.boostCount || 0));
+        return '<li><b>' + (index + 1) + '</b><span>' + escapeHtml(entry.displayName || entry.userId) + '</span><em>' + current + '×</em></li>';
+      }).join('')
+      : '<li class="boost-top-empty">Noch keine aktiven Booster erfasst.</li>') + '</ol>';
 }
 
-function channelIcon(channel) {
-  const type = Number(channel && channel.type);
-  if (type === 4) return 'C';
-  if (type === 2) return 'V';
-  if (type === 13) return 'S';
-  if (type === 15) return 'F';
-  if (type === 16) return 'M';
-  return '#';
+async function refreshBoostTopPanel() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  const button = document.querySelector('[data-boost-top-refresh]');
+  if (button) { button.disabled = true; button.textContent = 'Wird aktualisiert …'; }
+  try {
+    const response = await api.apiRequest({
+      path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/boost-top/refresh',
+      method: 'POST',
+      timeoutMs: 45000
+    });
+    if (handleExpiredSession(response)) return;
+    if (!response.ok) throw new Error(response.data?.error || 'Das Top-Booster-Panel konnte nicht aktualisiert werden.');
+    toast('Top-Booster-Panel wurde aktualisiert.', 'success');
+    void refreshBoostTopStatus();
+  } catch (error) {
+    toast(String(error?.message || error), 'error');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = 'Embed jetzt aktualisieren'; }
+  }
 }
 
-function channelKindLabel(channel) {
-  const type = Number(channel && channel.type);
-  if (type === 4) return 'Kategorie';
-  if (type === 2) return 'Voice';
-  if (type === 13) return 'Stage';
-  if (type === 15) return 'Forum';
-  if (type === 16) return 'Media';
-  if (type === 5) return 'Ankündigung';
-  return 'Text';
+async function refreshVipPanelsStatus() {
+  if (!state.authenticated || !state.selectedGuildId || state.activeFeatureId !== 'heavenEconomy') return;
+  const response = await apiRequestWithRetry({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/vip-panels', timeoutMs: 8000 }, 2);
+  if (handleExpiredSession(response)) return;
+  if (!response.ok) return;
+  const status = response.data?.status || {};
+  const container = document.querySelector('[data-vip-panels-status]');
+  if (!container) return;
+  const tiers = Array.isArray(status.tiers) ? status.tiers : [];
+  const live = Boolean(status.messageId);
+  container.innerHTML = '<div class="boost-top-status-line"><span>' + (live
+    ? 'Live-Nachricht aktiv' + (status.channelName ? ' · #' + escapeHtml(status.channelName) : '')
+    : 'Noch kein Embed gesendet – der Abgleich erstellt es automatisch.') + '</span><span>' + Number(status.memberCount || 0) + ' VIP-Mitglieder · ' + Number(status.tierCount || 0) + ' Stufen</span></div>' +
+    (status.lastError ? '<p class="boost-top-status-error">' + escapeHtml(status.lastError) + '</p>' : '') +
+    '<div class="vip-panels-grid">' + (tiers.length
+      ? tiers.map(function (tier) {
+        const count = Number(tier.memberCount || 0);
+        const emojiPreview = tier.emojiId
+          ? '<img class="vip-panel-tier-emoji" src="https://cdn.discordapp.com/emojis/' + encodeURIComponent(String(tier.emojiId)) + '.' + (tier.emojiAnimated ? 'gif' : 'webp') + '?size=48" alt="' + escapeHtml(String(tier.emojiName || '')) + '">'
+          : escapeHtml(tier.emoji || '👑');
+        return '<article><span>' + emojiPreview + ' ' + escapeHtml(tier.name || 'VIP') + '</span><b>' + count + ' Mitglieder</b><em class="' + (count > 0 ? 'live' : 'muted') + '">' + (count > 0 ? 'AKTIV' : 'LEER') + '</em></article>';
+      }).join('')
+      : '<p class="boost-top-empty">Noch keine VIP-Stufen konfiguriert – verbinde zuerst VIP-Rollen.</p>') + '</div>';
 }
 
-function groupedDiscordChannels(channels) {
-  const groups = [];
-  const byKey = new Map();
-  (channels || []).forEach(function (channel) {
-    const isCategory = Number(channel?.type) === 4 || channel?.isCategory === true;
-    const key = isCategory ? String(channel.id || 'category') : String(channel?.categoryId || 'root');
-    const label = isCategory
-      ? String(channel.name || 'KATEGORIE').toUpperCase()
-      : channel?.categoryId
-        ? String(channel.categoryName || 'KATEGORIE').toUpperCase()
-        : 'OHNE KATEGORIE';
-    if (!byKey.has(key)) {
-      const group = { key, label, channels: [] };
-      byKey.set(key, group);
-      groups.push(group);
+async function refreshVipPanels() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  const button = document.querySelector('[data-vip-panels-refresh]');
+  if (button) { button.disabled = true; button.textContent = 'Wird aktualisiert …'; }
+  try {
+    const response = await api.apiRequest({
+      path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/vip-panels/refresh',
+      method: 'POST',
+      timeoutMs: 45000
+    });
+    if (handleExpiredSession(response)) return;
+    if (!response.ok) throw new Error(response.data?.error || 'Die VIP-Panels konnten nicht aktualisiert werden.');
+    toast('VIP-Panels wurden aktualisiert.', 'success');
+    void refreshVipPanelsStatus();
+  } catch (error) {
+    toast(String(error?.message || error), 'error');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = 'Panels jetzt aktualisieren'; }
+  }
+}
+
+async function runVipSeparatorSync(button) {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  const status = document.getElementById('vip-separator-status');
+  const previous = button?.textContent || '';
+  if (button) { button.disabled = true; button.textContent = 'Läuft …'; }
+  if (status) status.textContent = '';
+  try {
+    const response = await api.apiRequest({
+      path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/heaven-economy/separator-sync',
+      method: 'POST',
+      timeoutMs: 45000
+    });
+    if (handleExpiredSession(response)) return;
+    if (!response.ok) throw new Error(response.data?.error || 'Die VIP-Trennerrolle konnte nicht abgeglichen werden.');
+    const result = response.data?.result || {};
+    if (result.ok === false && result.reason === 'not-configured') {
+      if (status) status.textContent = 'Trennerrolle ist nicht konfiguriert – wähle unten die VIP-Trennerrolle aus.';
+      toast('VIP-Trennerrolle ist nicht konfiguriert.', 'error');
+      return;
     }
-    byKey.get(key).channels.push(channel);
-  });
-  return groups;
-}
-
-function channelOptionMarkup(channel, selected) {
-  const id = String(channel.id || '');
-  return '<option value="' + escapeHtml(id) + '" ' + (id === selected ? 'selected' : '') + '>' + escapeHtml(channelKindLabel(channel)) + ' · ' + escapeHtml(channel.name || id) + '</option>';
-}
-
-function channelSelectInput(field, current) {
-  const selected = String(current || '');
-  const channels = channelsForField(field);
-  const known = channels.some(function (channel) { return String(channel.id) === selected; });
-  const retained = selected && !known ? '<option value="' + escapeHtml(selected) + '" selected>Gespeicherter Kanal · ' + escapeHtml(selected) + '</option>' : '';
-  const channelGroups = channels.length && channels.every(function (channel) { return Number(channel?.type) === 4 || channel?.isCategory === true; })
-    ? [{ key: 'categories', label: 'KATEGORIEN', channels }]
-    : groupedDiscordChannels(channels);
-  const options = channelGroups.map(function (group) {
-    return '<optgroup label="' + escapeHtml(group.label) + '">' + group.channels.map(function (channel) {
-      return channelOptionMarkup(channel, selected);
-    }).join('') + '</optgroup>';
-  }).join('');
-  return '<select class="module-resource-select" data-setting-key="' + escapeHtml(field.key) + '" data-setting-type="channel-select"><option value="">Kanal auswählen ...</option>' + retained + options + '</select>';
-}
-
-function roleOptions(selectedRoleId) {
-  const selected = String(selectedRoleId || '');
-  const known = state.moduleRoles.some(function (role) { return String(role.id) === selected; });
-  const retained = selected && !known ? '<option value="' + escapeHtml(selected) + '" selected>Gespeicherte Rolle · ' + escapeHtml(selected) + '</option>' : '';
-  return '<option value="">Rolle auswählen ...</option>' + retained + state.moduleRoles.map(function (role) {
-    const id = String(role.id || '');
-    const blocked = role.assignable === false;
-    return '<option value="' + escapeHtml(id) + '" ' + (id === selected ? 'selected' : '') + ' ' + (blocked ? 'disabled' : '') + '>@' + escapeHtml(role.name || id) + (blocked ? ' · nicht verwaltbar' : '') + '</option>';
-  }).join('');
-}
-
-function singleRoleInput(field, current) {
-  return '<select class="module-resource-select" data-setting-key="' + escapeHtml(field.key) + '" data-setting-type="role-select">' + roleOptions(current) + '</select>';
-}
-
-function multiChannelInput(field, current) {
-  const selected = new Set(settingLines(current));
-  const channels = channelsForField(field);
-  const knownIds = new Set(channels.map(function (channel) { return String(channel.id || ''); }));
-  const choices = groupedDiscordChannels(channels).map(function (group) {
-    return '<section class="module-channel-choice-group" data-channel-choice-group><h5>' + escapeHtml(group.label) + '</h5>' + group.channels.map(function (channel) {
-      const id = String(channel.id || '');
-      const isSelected = selected.has(id);
-      return '<label class="module-channel-choice" data-channel-search-text="' + escapeHtml((channel.name || '') + ' ' + group.label + ' ' + channelKindLabel(channel) + ' ' + id) + '"><input type="checkbox" data-channel-choice value="' + escapeHtml(id) + '" ' + (isSelected ? 'checked' : '') + '><i>' + escapeHtml(channelIcon(channel)) + '</i><span>' + escapeHtml(channel.name || id) + '</span><em>' + escapeHtml(channelKindLabel(channel).toUpperCase()) + '</em></label>';
-    }).join('') + '</section>';
-  }).join('') + [...selected].filter(function (id) { return !knownIds.has(id); }).map(function (id) {
-    return '<label class="module-channel-choice retained" data-channel-search-text="' + escapeHtml(id) + ' gespeicherter kanal"><input type="checkbox" data-channel-choice value="' + escapeHtml(id) + '" checked><i>!</i><span>Gespeicherter Kanal · ' + escapeHtml(id) + '</span><em>PRÜFEN</em></label>';
-  }).join('');
-  return '<div class="module-channel-multi" data-setting-key="' + escapeHtml(field.key) + '" data-setting-type="channel-multi">' +
-    '<div class="module-role-map-head"><strong>Kanäle auswählen</strong><span data-channel-selected-count>' + selected.size + ' ausgewählt</span></div>' +
-    '<div class="module-role-tools"><input type="search" data-channel-search autocomplete="off" placeholder="Kanal suchen ..."><button type="button" data-clear-channel-selection>Auswahl leeren</button></div>' +
-    '<div class="module-channel-choice-grid">' + (choices || '<p class="module-resource-empty">Keine auswählbaren Kanäle gefunden.</p>') + '</div></div>';
-}
-
-function emojiPreviewHtml(value) {
-  const raw = value === undefined || value === null ? '' : String(value);
-  if (!raw) return '🙂';
-  const mention = /^<a?:([A-Za-z0-9_~]+):(\d+)>$/.exec(raw);
-  if (mention) {
-    const animated = raw.charAt(1) === 'a';
-    const url = 'https://cdn.discordapp.com/emojis/' + mention[2] + '.' + (animated ? 'gif' : 'png') + '?size=64&quality=lossless';
-    return '<img class="module-emoji-preview-img" src="' + url + '" alt="' + escapeHtml(raw) + '" title="' + escapeHtml(raw) + '" loading="lazy" decoding="async">';
+    const granted = Number(result.granted || 0);
+    const removed = Number(result.removed || 0);
+    if (status) status.textContent = '✅ ' + granted + ' vergeben · ' + removed + ' entzogen' + ((result.errors || []).length ? ' · ' + result.errors.length + ' Fehler' : '');
+    toast('VIP-Trennerrolle abgeglichen: ' + granted + ' vergeben, ' + removed + ' entzogen.', 'success');
+  } catch (error) {
+    toast(String(error?.message || error), 'error');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = previous || 'Jetzt abgleichen'; }
   }
-  return escapeHtml(raw);
-}
-
-function emojiInput(field, current) {
-  const value = current === undefined || current === null ? '' : String(current);
-  const preview = emojiPreviewHtml(value);
-  return '<div class="module-emoji-control"><span class="module-emoji-preview" data-emoji-preview>' + preview + '</span>' +
-    '<input type="text" data-setting-key="' + escapeHtml(field.key) + '" data-setting-type="emoji" data-emoji-input value="' + escapeHtml(value) + '" placeholder="' + escapeHtml(field.placeholder || 'Emoji auswählen ...') + '">' +
-    '<button type="button" class="module-emoji-picker-button" data-open-emoji-picker aria-label="Emoji-Bibliothek öffnen">Emoji auswählen</button></div>';
-}
-
-function parseRoleMappings(value) {
-  return settingLines(value).map(function (entry, index) {
-    const match = /^(\d+)\s*=\s*(\d+)$/.exec(entry);
-    if (match) return { count: Number(match[1]), roleId: match[2] };
-    return /^\d+$/.test(entry) ? { count: index + 1, roleId: entry } : null;
-  }).filter(Boolean);
-}
-
-function roleMappingRow(mapping, kind) {
-  const entry = mapping || {};
-  const count = Math.max(1, Number(entry.count || 1));
-  const economy = kind === 'economy';
-  const levels = kind === 'levels';
-  return '<div class="module-role-map-row">' +
-    '<label><span>' + (economy ? 'Coin-Preis' : levels ? 'Benötigtes Level' : 'Boost-Anzahl') + '</span><input type="number" min="1" max="' + (economy ? '10000000' : levels ? '999' : '99') + '" data-role-count value="' + count + '"></label>' +
-    '<label><span>Discord-Rolle</span><select class="module-resource-select" data-role-id>' + roleOptions(entry.roleId) + '</select></label>' +
-    '<button type="button" class="module-role-remove" data-remove-role-mapping>Entfernen</button></div>';
-}
-
-function roleMappingInput(field, current) {
-  const mappings = parseRoleMappings(current);
-  const economy = String(field.key || '').includes('heavenEconomy');
-  const levels = String(field.key || '').includes('levelRoleMappings');
-  const kind = economy ? 'economy' : levels ? 'levels' : 'boost';
-  const defaults = economy ? [500, 1000, 2500, 4000, 5000].map(function (price) { return { count: price, roleId: '' }; }) : [{ count: 1, roleId: '' }];
-  const rows = (mappings.length ? mappings : defaults).map(function (mapping) { return roleMappingRow(mapping, kind); }).join('');
-  return '<div class="module-role-mapping" data-mapping-kind="' + kind + '" data-setting-key="' + escapeHtml(field.key) + '" data-setting-type="role-mapping">' +
-    '<div class="module-role-map-head"><strong>' + (economy ? 'VIP-Preise' : levels ? 'Level-Belohnungen' : 'Boost-Staffeln') + '</strong><span>' + (economy ? 'Eine eindeutige VIP-Rolle je Coin-Preis' : levels ? 'Eine Discord-Rolle je erreichtem Level' : 'Eine eindeutige Rolle je Boost-Anzahl') + '</span></div>' +
-    '<div class="module-role-map-rows">' + rows + '</div><button type="button" class="module-role-add" data-add-role-mapping>+ ' + (levels ? 'Level-Belohnung' : 'Staffel') + ' hinzufügen</button></div>';
-}
-
-function multiRoleInput(field, current) {
-  const selected = new Set(settingLines(current));
-  const knownIds = new Set(state.moduleRoles.map(function (role) { return String(role.id || ''); }));
-  const choices = state.moduleRoles.map(function (role) {
-    const id = String(role.id || '');
-    const color = Number(role.color || 0) ? '#' + Number(role.color).toString(16).padStart(6, '0') : '#aeb4c5';
-    const blocked = role.assignable === false;
-    const isSelected = selected.has(id);
-    return '<label class="module-role-choice ' + (blocked ? 'blocked' : '') + '" data-role-search-text="' + escapeHtml((role.name || '') + ' ' + id) + '" title="' + escapeHtml(blocked ? (role.blockedReason || 'Rolle kann vom Bot nicht verwaltet werden.') : '') + '"><input type="checkbox" data-role-choice value="' + escapeHtml(id) + '" ' + (isSelected ? 'checked' : '') + ' ' + (blocked && !isSelected ? 'disabled' : '') + '><i style="--role-color:' + escapeHtml(color) + '"></i><span>@' + escapeHtml(role.name || id) + '</span>' + (blocked ? '<em>BLOCKIERT</em>' : '') + '</label>';
-  }).join('') + [...selected].filter(function (id) { return !knownIds.has(id); }).map(function (id) {
-    return '<label class="module-role-choice blocked retained" data-role-search-text="' + escapeHtml(id) + ' gespeicherte rolle"><input type="checkbox" data-role-choice value="' + escapeHtml(id) + '" checked><i style="--role-color:#ffbd59"></i><span>Gespeicherte Rolle · ' + escapeHtml(id) + '</span><em>PRÜFEN</em></label>';
-  }).join('');
-  return '<div class="module-role-multi" data-setting-key="' + escapeHtml(field.key) + '" data-setting-type="role-multi">' +
-    '<div class="module-role-map-head"><strong>Rollen auswählen</strong><span data-role-selected-count>' + selected.size + ' ausgewählt</span></div><div class="module-role-tools"><input type="search" data-role-search autocomplete="off" placeholder="Rolle suchen ..."><button type="button" data-clear-role-selection>Auswahl leeren</button></div><div class="module-role-choice-grid">' +
-    (choices || '<p class="module-resource-empty">Keine auswählbaren Rollen gefunden.</p>') + '</div></div>';
-}
-
-function inputForField(field, current) {
-  const type = String(field.type || 'text').toLowerCase();
-  if (type === 'channelselect') return channelSelectInput(field, current);
-  if (type === 'multichannelselect') return multiChannelInput(field, current);
-  if (type === 'roleselect') return singleRoleInput(field, current);
-  if (type === 'rolemappingselect') return roleMappingInput(field, current);
-  if (type === 'multiroleselect') return multiRoleInput(field, current);
-  if (type === 'emoji') return emojiInput(field, current);
-  if (type === 'textarea' || type === 'arraylines' || type === 'json') {
-    const textValue = type === 'json' && current && typeof current === 'object' ? JSON.stringify(current, null, 2) : (current || '');
-    return '<textarea data-setting-key="' + escapeHtml(field.key) + '" rows="' + (type === 'arraylines' || type === 'json' ? '6' : '4') + '" placeholder="' + escapeHtml(field.placeholder || '') + '" ' + (type === 'json' ? 'spellcheck="false" data-setting-format="json"' : '') + '>' + escapeHtml(textValue) + '</textarea>';
-  }
-  if (type === 'checkbox') return '<input type="checkbox" data-setting-key="' + escapeHtml(field.key) + '" data-setting-type="checkbox" ' + (current ? 'checked' : '') + '>';
-  if (type === 'select' && Array.isArray(field.options)) {
-    return '<select data-setting-key="' + escapeHtml(field.key) + '">' + field.options.map(function (option) {
-      const value = typeof option === 'object' ? option.value : option;
-      const label = typeof option === 'object' ? option.label : option;
-      return '<option value="' + escapeHtml(value) + '" ' + (String(value) === String(current) ? 'selected' : '') + '>' + escapeHtml(label) + '</option>';
-    }).join('') + '</select>';
-  }
-  const inputType = type === 'number' || type === 'integer' ? 'number' : type === 'password' ? 'password' : 'text';
-  const numeric = inputType === 'number';
-  const constraints = (numeric && field.min !== undefined ? ' min="' + escapeHtml(field.min) + '"' : '') +
-    (numeric && field.max !== undefined ? ' max="' + escapeHtml(field.max) + '"' : '') +
-    (numeric && field.step !== undefined ? ' step="' + escapeHtml(field.step) + '"' : '');
-  return '<input type="' + inputType + '" data-setting-key="' + escapeHtml(field.key) + '" value="' + escapeHtml(current === undefined || current === null ? '' : current) + '" placeholder="' + escapeHtml(field.placeholder || '') + '"' + (inputType === 'password' ? ' autocomplete="off" spellcheck="false"' : '') + constraints + '>';
 }
 
 async function confirmDiscardModuleChanges() {
@@ -1792,7 +1832,13 @@ function collectModuleConfig(host, feature) {
     if (field.dataset.settingType === 'checkbox') {
       value = field.checked;
     } else if (field.dataset.settingType === 'role-mapping') {
+      const swap = String(field.dataset.mappingKind || '') === 'swap';
       value = Array.from(field.querySelectorAll('.module-role-map-row')).map(function (row) {
+        if (swap) {
+          const triggerId = String(row.querySelector('[data-role-trigger]').value || '').trim();
+          const swapId = String(row.querySelector('[data-role-swap]').value || '').trim();
+          return triggerId && swapId ? triggerId + '>' + swapId : '';
+        }
         const count = Math.max(1, Number(row.querySelector('[data-role-count]').value || 1));
         const roleId = String(row.querySelector('[data-role-id]').value || '').trim();
         return roleId ? count + '=' + roleId : '';
@@ -1826,8 +1872,8 @@ function validateModuleConfig(host, feature, moduleConfig) {
     return { ok: false, message: 'Bitte prüfe das markierte Feld.' };
   }
   if (feature.id === 'serverTagTracker') {
-    const roleIds = settingLines(moduleConfig.roleIds?.length ? moduleConfig.roleIds : moduleConfig.roleId);
-    const excludedIds = settingLines(moduleConfig.excludedRoleIds);
+    const roleIds = FHCCModuleConfigInputs.settingLines(moduleConfig.roleIds?.length ? moduleConfig.roleIds : moduleConfig.roleId);
+    const excludedIds = FHCCModuleConfigInputs.settingLines(moduleConfig.excludedRoleIds);
     if (moduleConfig.enabled && !roleIds.length) return { ok: false, message: 'Wähle zuerst mindestens eine Server-Tag-Rolle aus.' };
     if (roleIds.some(function (roleId) { return excludedIds.includes(roleId); })) return { ok: false, message: 'Eine Server-Tag-Rolle darf nicht gleichzeitig als ausgeschlossene Rolle gewählt sein.' };
     const selectedRoles = roleIds.map(function (roleId) { return state.moduleRoles.find(function (role) { return String(role.id) === roleId; }); });
@@ -1836,16 +1882,16 @@ function validateModuleConfig(host, feature, moduleConfig) {
     return { ok: true };
   }
   if (feature.id === 'forumCleaner') {
-    const channelIds = settingLines(moduleConfig.channelIds);
+    const channelIds = FHCCModuleConfigInputs.settingLines(moduleConfig.channelIds);
     if (moduleConfig.enabled && !channelIds.length) return { ok: false, message: 'Wähle mindestens einen Forum- oder Media-Kanal für den Tiefenscan aus.' };
     return { ok: true };
   }
   if (feature.id === 'steamWorkshop') {
-    const ids = settingLines(moduleConfig.workshopIds).filter(function (id) { return /^\d{6,20}$/.test(id); });
+    const ids = FHCCModuleConfigInputs.settingLines(moduleConfig.workshopIds).filter(function (id) { return /^\d{6,20}$/.test(id); });
     if (moduleConfig.enabled && !String(moduleConfig.forumChannelId || '').trim()) return { ok: false, message: 'Wähle das Forum für den Workshop-Katalog aus.' };
     if (moduleConfig.enabled && !ids.length) return { ok: false, message: 'Füge mindestens eine gültige Steam-Workshop-ID hinzu.' };
     if (moduleConfig.enabled && moduleConfig.notifyOnUpdate && !String(moduleConfig.updateChannelId || '').trim()) return { ok: false, message: 'Wähle für aktive Update-Meldungen einen Textkanal aus.' };
-    if (settingLines(moduleConfig.appliedTagNames).length > 5) return { ok: false, message: 'Discord erlaubt pro Forum-Post höchstens fünf Tags.' };
+    if (FHCCModuleConfigInputs.settingLines(moduleConfig.appliedTagNames).length > 5) return { ok: false, message: 'Discord erlaubt pro Forum-Post höchstens fünf Tags.' };
     return { ok: true };
   }
   if (feature.id === 'emojiManager') {
@@ -1884,12 +1930,12 @@ function validateModuleConfig(host, feature, moduleConfig) {
     return { ok: true };
   }
   if (feature.id !== 'boostRoles') return { ok: true };
-  const mappings = parseRoleMappings(moduleConfig.tierRoleMappings);
+  const mappings = FHCCModuleConfigInputs.parseRoleMappings(moduleConfig.tierRoleMappings);
   const counts = mappings.map(function (mapping) { return mapping.count; });
   if (new Set(counts).size !== counts.length) return { ok: false, message: 'Jede Boost-Anzahl darf nur einmal als Staffel vorkommen.' };
   const configuredIds = new Set([
-    ...settingLines(moduleConfig.automaticRoleIds),
-    ...settingLines(moduleConfig.removableColorRoleIds),
+    ...FHCCModuleConfigInputs.settingLines(moduleConfig.automaticRoleIds),
+    ...FHCCModuleConfigInputs.settingLines(moduleConfig.removableColorRoleIds),
     ...mappings.map(function (mapping) { return mapping.roleId; })
   ]);
   const knownIds = new Set(state.moduleRoles.map(function (role) { return String(role.id); }));
@@ -2032,29 +2078,35 @@ async function restoreServerBackupFromButton(button) {
 function serverTagTrackerOverview(config) {
   const active = config?.enabled === true;
   const monitorOnly = config?.monitorOnly !== false;
-  const selectedRoleIds = settingLines(config?.roleIds?.length ? config.roleIds : config?.roleId);
+  const selectedRoleIds = FHCCModuleConfigInputs.settingLines(config?.roleIds?.length ? config.roleIds : config?.roleId);
   const selectedRoles = selectedRoleIds.map(function (roleId) { return state.moduleRoles.find(function (role) { return String(role.id) === roleId; }); }).filter(Boolean);
   const ready = active && selectedRoleIds.length > 0 && selectedRoles.length === selectedRoleIds.length;
   return '<section id="server-tag-tracker-panel" class="server-tag-tracker-panel ' + (ready ? 'ready' : 'attention') + '" data-state="idle">' +
-    '<header><span><small>SERVER-TAG AUTOMATIK · ' + selectedRoleIds.length + ' ROLLE' + (selectedRoleIds.length === 1 ? '' : 'N') + '</small><strong data-server-tag-title>' + (active ? (monitorOnly ? 'Sicherer Prüfmodus' : 'Tracker wird geladen …') : 'Modul ist deaktiviert') + '</strong><p data-server-tag-detail>Discord Primary-Guild-Daten werden frisch und mehrfach ausgewertet.</p></span><div><em data-server-tag-badge>' + (ready ? (monitorOnly ? 'PRÜFMODUS' : 'BEREIT') : 'KONFIGURIEREN') + '</em><button type="button" data-sync-server-tags ' + (ready ? '' : 'disabled') + '>Jetzt vollständig prüfen</button></div></header>' +
+    '<header><span><small>SERVER-TAG AUTOMATIK · ' + selectedRoleIds.length + ' ROLLE' + (selectedRoleIds.length === 1 ? '' : 'N') + '</small><strong data-server-tag-title>' + (active ? (monitorOnly ? 'Vorschau aktiv' : 'Tracker wird geladen …') : 'Modul ist deaktiviert') + '</strong><p data-server-tag-detail>Tag an: Rolle dran. Tag aus: Rolle weg. Nur fehlende Discord-Daten bleiben unklar.</p></span><div><em data-server-tag-badge>' + (ready ? (monitorOnly ? 'VORSCHAU' : 'BEREIT') : 'KONFIGURIEREN') + '</em><button type="button" data-sync-server-tags ' + (ready ? '' : 'disabled') + '>Jetzt vollständig abgleichen</button></div></header>' +
     '<div class="server-tag-summary">' +
-      '<article><small>BESTÄTIGTE TRÄGER</small><b data-server-tag-wearing>–</b><p>Frisch mehrfach geprüft</p></article>' +
-      '<article><small>API-PRÜFUNG OFFEN</small><b data-server-tag-candidates>–</b><p>Keine Änderung ohne frische Antwort</p></article>' +
-      '<article><small>UNKLAR</small><b data-server-tag-unknown>–</b><p>Keine Rollenänderung</p></article>' +
+      '<article><small>TRÄGT UNSEREN TAG</small><b data-server-tag-wearing>–</b><p>Rolle wird synchron gehalten</p></article>' +
+      '<article><small>TRÄGT IHN NICHT</small><b data-server-tag-candidates>–</b><p>Verwaltete Rolle wird entfernt</p></article>' +
+      '<article><small>DISCORD-DATEN FEHLEN</small><b data-server-tag-unknown>–</b><p>Keine Rollenänderung</p></article>' +
       '<article><small>LETZTER ABGLEICH</small><b data-server-tag-last>–</b><p data-server-tag-next>Wird geladen</p></article>' +
     '</div>' +
     '<div class="server-tag-live"><div class="server-tag-progress"><i data-server-tag-progress></i></div><span data-server-tag-progress-text>Tracker-Status wird geladen …</span></div>' +
-    '<div class="server-tag-lists"><section><div class="server-tag-list-head"><span><small>MITGLIEDER</small><strong>Aktueller Prüfstand</strong></span><em data-server-tag-member-count>0</em></div><div data-server-tag-members class="server-tag-member-list"><p class="module-resource-empty">Mitglieder werden geladen …</p></div></section>' +
+    '<div class="server-tag-lists"><section><div class="server-tag-list-head"><span><small>MITGLIEDER</small><strong>Aktueller Tag-Stand</strong></span><em data-server-tag-member-count>0</em></div><div data-server-tag-members class="server-tag-member-list"><p class="module-resource-empty">Mitglieder werden geladen …</p></div></section>' +
     '<section><div class="server-tag-list-head"><span><small>VERLAUF</small><strong>Rollenänderungen</strong></span></div><div data-server-tag-history class="server-tag-history"><p class="module-resource-empty">Noch keine Rollenänderung protokolliert.</p></div></section></div>' +
-    '<p class="server-tag-safety-note"><b>Echtzeitlogik:</b> Ein Discord-Profilereignis löst sofort eine frische Benutzerabfrage aus. Meldet die API den Server-Tag als aktiv, wird der Rollensatz vergeben; andernfalls wird er entzogen. Bei API-Fehlern geschieht nichts. Der große Abgleich besitzt zusätzlich ein Massenlimit. Es werden keine DMs versendet.</p>' +
+    '<p class="server-tag-safety-note"><b>Echtzeitlogik:</b> Discord-Profilereignisse werden direkt frisch gelesen. Meldet Discord deinen Server als aktiven Primary-Guild, bekommt das Mitglied die Rolle. Meldet Discord keinen passenden Primary-Guild, wird sie entfernt. Bei fehlenden API-Daten bleibt alles unverändert.</p>' +
     '</section>';
 }
 
+function serverTagChip(entry) {
+  const tag = String(entry.tag || '').trim();
+  if (!tag) return '';
+  const image = entry.badgeUrl ? '<img src="' + escapeHtml(entry.badgeUrl) + '" alt="Server-Tag-Badge" loading="lazy">' : '';
+  return '<span class="server-tag-chip" title="Echter Discord-Server-Tag: ' + escapeHtml(tag) + '">' + image + '<b>' + escapeHtml(tag) + '</b></span>';
+}
+
 function serverTagStateCopy(entry) {
-  if (entry?.state === 'wearing' && entry.confirmed) return { label: 'TAG BESTÄTIGT', className: 'wearing' };
-  if (entry?.state === 'wearing') return { label: 'PRÜFUNG OFFEN', className: 'unknown' };
-  if (entry?.state === 'not-wearing') return { label: entry.confirmed ? 'NICHT AKTIV' : 'BESTÄTIGUNG OFFEN', className: 'missing' };
-  return { label: 'UNKLAR', className: 'unknown' };
+  if (entry?.state === 'wearing') return { label: 'TRÄGT TAG', className: 'wearing' };
+  if (entry?.state === 'not-wearing') return { label: 'TRÄGT TAG NICHT', className: 'missing' };
+  return { label: 'DISCORD-DATEN FEHLEN', className: 'unknown' };
 }
 
 function renderServerTagTrackerStatus(status) {
@@ -2065,16 +2117,16 @@ function renderServerTagTrackerStatus(status) {
   const title = panel.querySelector('[data-server-tag-title]');
   const detail = panel.querySelector('[data-server-tag-detail]');
   const badge = panel.querySelector('[data-server-tag-badge]');
-  if (title) title.textContent = data.running ? (data.monitorOnly ? 'Sichere Prüfung läuft' : 'Server-Tag-Abgleich läuft') : data.phase === 'failed' ? 'Abgleich benötigt Aufmerksamkeit' : data.phase === 'disabled' ? 'Modul ist deaktiviert' : data.monitorOnly ? 'Sicherer Prüfmodus' : 'Server-Tag-Tracker bereit';
+  if (title) title.textContent = data.running ? (data.monitorOnly ? 'Vorschau läuft' : 'Server-Tag-Abgleich läuft') : data.phase === 'failed' ? 'Abgleich benötigt Aufmerksamkeit' : data.phase === 'disabled' ? 'Modul ist deaktiviert' : data.monitorOnly ? 'Vorschau aktiv' : 'Server-Tag-Tracker bereit';
   if (detail) detail.textContent = data.lastError || data.detail || 'Bereit für den nächsten Abgleich.';
-  if (badge) badge.textContent = data.running ? 'LIVE' : data.errors ? data.errors + ' FEHLER' : data.monitorOnly ? 'PRÜFMODUS' : 'BEREIT';
+  if (badge) badge.textContent = data.running ? 'LIVE' : data.errors ? data.errors + ' FEHLER' : data.monitorOnly ? 'VORSCHAU' : 'BEREIT';
   const set = function (selector, value) { const node = panel.querySelector(selector); if (node) node.textContent = value; };
   set('[data-server-tag-wearing]', Number(data.wearing || 0).toLocaleString('de-DE'));
-  set('[data-server-tag-candidates]', Number(data.candidates || 0).toLocaleString('de-DE'));
+  set('[data-server-tag-candidates]', Number(data.notWearing || 0).toLocaleString('de-DE'));
   set('[data-server-tag-unknown]', Number(data.unknown || 0).toLocaleString('de-DE'));
   set('[data-server-tag-last]', data.lastCompletedAt ? formatBackupDate(data.lastCompletedAt) : 'Noch keiner');
   set('[data-server-tag-next]', data.nextScanAt ? 'Nächster Abgleich ' + formatBackupDate(data.nextScanAt) : 'Kein Termin geplant');
-  set('[data-server-tag-progress-text]', data.running ? (data.detail || 'Abgleich läuft …') : data.monitorOnly ? ((data.previewAdds || 0) + ' Vergaben vorgemerkt · ' + (data.previewRemovals || 0) + ' Entzüge vorgemerkt · keine Rollen geändert') : ((data.roleAssigned || 0) + ' vergeben · ' + (data.roleRemoved || 0) + ' entfernt · ' + (data.deferredAssignments || 0) + ' zurückgestellt · ' + (data.errors || 0) + ' Fehler'));
+  set('[data-server-tag-progress-text]', data.running ? (data.detail || 'Abgleich läuft …') : data.monitorOnly ? ((data.previewAdds || 0) + ' würden Rollen bekommen · ' + (data.previewRemovals || 0) + ' würden Rollen verlieren · keine Rollen geändert') : ((data.roleAssigned || 0) + ' vergeben · ' + (data.roleRemoved || 0) + ' entfernt · ' + (data.deferredAssignments || 0) + ' durch Massenlimit zurückgestellt · ' + (data.errors || 0) + ' Fehler'));
   set('[data-server-tag-member-count]', Number(data.memberCount || 0).toLocaleString('de-DE'));
   const fill = panel.querySelector('[data-server-tag-progress]');
   if (fill) fill.style.width = Math.max(0, Math.min(100, Number(data.progress || 0))) + '%';
@@ -2084,14 +2136,30 @@ function renderServerTagTrackerStatus(status) {
   if (memberHost) {
     memberHost.innerHTML = members.length ? members.slice(0, 120).map(function (entry) {
       const stateCopy = serverTagStateCopy(entry);
-      const misses = Number(entry.consecutiveMisses || 0);
-      const positives = Number(entry.positiveConfirmations || 0);
       return '<article class="server-tag-member ' + stateCopy.className + '">' +
         (entry.avatarUrl ? '<img src="' + escapeHtml(entry.avatarUrl) + '" alt="">' : '<span class="server-tag-avatar">' + escapeHtml(String(entry.displayName || '?').slice(0, 1).toUpperCase()) + '</span>') +
-        '<span><b>' + escapeHtml(entry.displayName || entry.username || entry.userId) + '</b><small>@' + escapeHtml(entry.username || entry.userId) + (entry.tag ? ' · Tag ' + escapeHtml(entry.tag) : '') + '</small></span>' +
-        '<em>' + stateCopy.label + (entry.state === 'wearing' && !entry.confirmed ? ' · ' + positives : '') + (misses && entry.state === 'not-wearing' ? ' · ' + misses : '') + '</em>' +
+        '<span><b>' + escapeHtml(entry.displayName || entry.username || entry.userId) + '</b><small>@' + escapeHtml(entry.username || entry.userId) + (entry.tag && entry.state !== 'wearing' ? ' · Tag ' + escapeHtml(entry.tag) : '') + '</small></span>' +
+        (entry.tag && entry.state === 'wearing' ? serverTagChip(entry) : '') +
+        '<em>' + stateCopy.label + '</em>' +
         '</article>';
     }).join('') : '<p class="module-resource-empty">Nach dem ersten vollständigen Abgleich erscheinen hier die Mitglieder.</p>';
+  }
+
+  const missingBadgeCount = members.filter(function (entry) { return entry.tag && !entry.badgeUrl; }).length;
+  const memberSection = memberHost?.closest('section');
+  if (memberSection && missingBadgeCount > 0) {
+    let hint = memberSection.querySelector('[data-server-tag-badge-hint]');
+    if (!hint) {
+      hint = document.createElement('p');
+      hint.className = 'server-tag-badge-hint';
+      hint.setAttribute('data-server-tag-badge-hint', '');
+      memberSection.insertBefore(hint, memberHost);
+    }
+    hint.textContent = missingBadgeCount === 1
+      ? '1 Server-Tag-Badge wird beim nächsten vollständigen Abgleich nachgeladen. „Jetzt vollständig abgleichen“ startet ihn sofort.'
+      : missingBadgeCount + ' Server-Tag-Badges werden beim nächsten vollständigen Abgleich nachgeladen. „Jetzt vollständig abgleichen“ startet ihn sofort.';
+  } else if (memberSection) {
+    memberSection.querySelector('[data-server-tag-badge-hint]')?.remove();
   }
 
   const history = Array.isArray(data.history) ? data.history : [];
@@ -2142,14 +2210,73 @@ async function startServerTagTrackerSync(button) {
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = 'Jetzt vollständig prüfen';
+      button.textContent = 'Jetzt vollständig abgleichen';
     }
   }
 }
 
+function voiceLogImportOverview(config) {
+  const active = config?.enabled === true;
+  const channelId = config?.channelId || '';
+  return '<section class="module-overview-card voice-log-events-card">' +
+    '<header><span><small>VOICE-LOG EVENTS</small><strong>' + (active ? 'Live-Events aus dem Carl-bot-Kanal' : 'Modul ist deaktiviert') + '</strong></span>' +
+    '<div>' + (channelId ? '<button type="button" class="button secondary" data-voice-log-events-load>Events laden</button>' : '') + '</div></header>' +
+    '<div class="voice-log-events-list" data-voice-log-events-list>' +
+    (channelId ? '<p class="module-resource-empty">Klicke „Events laden", um die letzten Voice-Events anzuzeigen.</p>' : '<p class="module-resource-empty">Kein Voice-Log-Kanal konfiguriert.</p>') +
+    '</div></section>';
+}
+
+async function loadVoiceLogEvents(append) {
+  if (voiceLogEventsLoading || !state.selectedGuildId) return;
+  const host = document.querySelector('[data-voice-log-events-list]');
+  if (!host) return;
+  voiceLogEventsLoading = true;
+  if (!append) {
+    voiceLogEventsCursor = null;
+    host.innerHTML = '<p class="module-resource-empty">Events werden geladen …</p>';
+  }
+  try {
+    let url = '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/voice-log-events?limit=30';
+    if (voiceLogEventsCursor) url += '&cursor=' + encodeURIComponent(JSON.stringify(voiceLogEventsCursor));
+    const response = await api.apiRequest({ path: url, timeoutMs: 12000 });
+    const events = response?.events || [];
+    const nextCursor = response?.cursor || null;
+    const hasMore = response?.hasMore || false;
+    voiceLogEventsCursor = nextCursor;
+    if (!events.length && !append) {
+      host.innerHTML = '<p class="module-resource-empty">Keine Voice-Events gefunden. Der Carl-bot-Kanal enthält keine erkennbaren Voice-Log-Embeds.</p>';
+      voiceLogEventsLoading = false;
+      return;
+    }
+    const typeIcons = { join: '🟢', leave: '🔴', move: '🔄' };
+    const typeLabels = { join: 'Beigetreten', leave: 'Verlassen', move: 'Gewechselt' };
+    const rows = events.map(function (ev) {
+      const icon = typeIcons[ev.type] || '❓';
+      const label = typeLabels[ev.type] || ev.type;
+      const time = ev.createdAt ? new Date(ev.createdAt).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–';
+      const detail = ev.type === 'move'
+        ? escapeHtml(ev.beforeChannel || '?') + ' → ' + escapeHtml(ev.channelName || '?')
+        : escapeHtml(ev.channelName || '?');
+      const user = escapeHtml(ev.userName || ev.userId || 'Unbekannt');
+      return '<article class="voice-log-event-row"><span class="voice-log-event-icon">' + icon + '</span><span class="voice-log-event-copy"><b>' + user + '</b><small>' + label + ' · ' + detail + '</small></span><span class="voice-log-event-time"><em>' + time + '</em></span></article>';
+    }).join('');
+    if (append) {
+      host.insertAdjacentHTML('beforeend', rows);
+    } else {
+      host.innerHTML = rows;
+    }
+    if (hasMore) {
+      host.insertAdjacentHTML('beforeend', '<div class="voice-log-events-more"><button type="button" class="button secondary" data-voice-log-events-load>Mehr Events laden</button></div>');
+    }
+  } catch (error) {
+    if (!append) host.innerHTML = '<p class="module-resource-empty">Fehler beim Laden: ' + escapeHtml(error?.message || 'Unbekannter Fehler') + '</p>';
+  }
+  voiceLogEventsLoading = false;
+}
+
 function voiceChatCleanerOverview(config) {
   const active = config?.enabled === true;
-  const selected = settingLines(config?.channelIds).length;
+  const selected = FHCCModuleConfigInputs.settingLines(config?.channelIds).length;
   const grace = Math.max(10, Number(config?.emptyGraceSeconds || 60));
   const ready = active && selected > 0;
   return '<section id="voice-chat-cleaner-panel" class="server-tag-tracker-panel voice-chat-cleaner-panel ' + (ready ? 'ready' : 'attention') + '" data-state="idle">' +
@@ -2232,9 +2359,207 @@ async function refreshVoiceChatCleanerStatus(options) {
   }, status.cleaningCount || status.pendingCount ? 2500 : 30000);
 }
 
+let publicCallVoteRefreshTimer = null;
+
+async function refreshPublicCallVoteStatus(options) {
+  const settings = options || {};
+  if (!state.authenticated || !state.selectedGuildId || state.activeFeatureId !== 'publicCallVote') return;
+  const panel = document.getElementById('public-call-vote-panel');
+  const response = await apiRequestWithRetry({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/public-call-vote', timeoutMs: 12000 }, 2);
+  if (handleExpiredSession(response)) return;
+  if (!response.ok) {
+    if (!settings.silent) toast(response.data?.error || 'Public-Call-Status konnte nicht geladen werden.', 'error');
+    return;
+  }
+  const status = response.data?.status || {};
+  if (panel) {
+    const setText = function (selector, value) {
+      const node = panel.querySelector(selector);
+      if (node) node.textContent = value;
+    };
+    const setTitle = function (selector, value) {
+      const node = panel.querySelector(selector);
+      if (node) node.textContent = value;
+    };
+    setText('[data-pcv-panels]', String(Number(status?.panelCount || 0)));
+    setText('[data-pcv-open-votes]', String(Number(status?.openVoteCount || 0)));
+    setText('[data-pcv-strikes]', String(Number(status?.strikeCount || 0)));
+    const badge = panel.querySelector('[data-pcv-badge]');
+    if (badge) badge.textContent = Number(status?.panelCount || 0) > 0 ? 'BEREIT' : 'KONFIGURIEREN';
+    const title = panel.querySelector('[data-pcv-title]');
+    if (title) title.textContent = Number(status?.panelCount || 0) > 0 ? 'Moderations-Panels aktiv' : 'Öffentliche Calls auswählen';
+  }
+  if (publicCallVoteRefreshTimer) clearTimeout(publicCallVoteRefreshTimer);
+  publicCallVoteRefreshTimer = setTimeout(function () {
+    void refreshPublicCallVoteStatus({ silent: true });
+  }, 30000);
+}
+
+function publicCallVoteOverview(config) {
+  const active = config?.enabled === true;
+  const calls2 = FHCCModuleConfigInputs.settingLines(config?.callChannelIds2).length;
+  const calls3 = FHCCModuleConfigInputs.settingLines(config?.callChannelIds3).length;
+  const calls4 = FHCCModuleConfigInputs.settingLines(config?.callChannelIds4).length;
+  const calls = calls2 + calls3 + calls4 + FHCCModuleConfigInputs.settingLines(config?.callChannelIds).length;
+  const team = Boolean(String(config?.teamChannelId || '').trim());
+  const ready = active && calls > 0;
+  const reasons = (Array.isArray(config?.voteReasons) ? config.voteReasons : []).length;
+  return '<section id="public-call-vote-panel" class="server-tag-tracker-panel ' + (ready ? 'ready' : 'attention') + '" data-state="idle">' +
+    '<header><span><small>PUBLIC-CALL-MODERATION · ' + calls + ' ÖFFENTLICHE' + (calls === 1 ? 'R CALL' : ' CALLS') + '</small><strong data-pcv-title>' + (ready ? 'Rauswurf-Abstimmungen aktiv' : active ? 'Öffentliche Calls auswählen' : 'Modul ist deaktiviert') + '</strong><p>In den ausgewählten öffentlichen Calls hängt ein dauerhaftes Moderations-Panel. Mitglieder können per Abstimmung einen Rauswurf beantragen – bei Erfolg wird das Mitglied entfernt und für die konfigurierte Dauer aus dem Call ausgeschlossen. Bei wiederholten Verstößen greift automatisch ein Server-Timeout.</p></span><div><em data-pcv-badge>' + (ready ? 'BEREIT' : 'KONFIGURIEREN') + '</em><button type="button" data-refresh-public-call-vote>Live-Status laden</button></div></header>' +
+    '<div class="server-tag-summary">' +
+      '<article><small>ÖFFENTLICHE CALLS</small><b>' + calls.toLocaleString('de-DE') + '</b><p>Voice-Kanäle mit dauerhaftem Moderations-Panel.</p></article>' +
+      '<article><small>2ER CALLS</small><b>' + calls2.toLocaleString('de-DE') + '</b><p>Eine „Dafür“-Stimme genügt zum Rauswurf.</p></article>' +
+      '<article><small>3ER CALLS</small><b>' + calls3.toLocaleString('de-DE') + '</b><p>Zwei „Dafür“-Stimmen genügen zum Rauswurf.</p></article>' +
+      '<article><small>4ER CALLS</small><b>' + calls4.toLocaleString('de-DE') + '</b><p>Drei „Dafür“-Stimmen genügen zum Rauswurf.</p></article>' +
+      '<article><small>VOTE-GRÜNDE</small><b>' + reasons.toLocaleString('de-DE') + '</b><p>Vorgefertigte Gründe mit Call-Sperre und Timeout-Eskalation.</p></article>' +
+      '<article><small>TEAM-MELDUNG</small><b>' + (team ? 'AKTIV' : 'FEHLT') + '</b><p>' + (team ? 'Rauswürfe werden an den Team-Kanal gemeldet.' : 'Ohne Team-Kanal werden Rauswürfe nicht gemeldet.') + '</p></article>' +
+      '<article><small>ZUSTIMMUNG (5+ CALLS)</small><b>' + Math.max(1, Number(config?.passPercent || 51)) + '%</b><p>Für Calls ab 5 Personen: mindestens ' + Math.max(1, Number(config?.minVotes || 3)) + ' „Dafür“-Stimme(n) und diese Zustimmung.</p></article>' +
+    '</div>' +
+    '<div class="server-tag-live"><div class="server-tag-progress"><i></i></div><span>Panels: <b data-pcv-panels>0</b> · Offene Abstimmungen: <b data-pcv-open-votes>0</b> · Verstöße: <b data-pcv-strikes>0</b></span></div>' +
+    '<div class="pcv-design-actions"><b>Nachrichten gestalten</b>' +
+      '<div class="pcv-design-group"><h5>Alle öffentlichen Calls</h5><div class="pcv-design-grid">' +
+        '<button type="button" data-pcv-open-studio="panel"><span>🎙️</span>Moderations-Panel</button>' +
+        '<button type="button" data-pcv-open-studio="vote"><span>🗳️</span>Laufende Abstimmung</button>' +
+        '<button type="button" data-pcv-open-studio="result"><span>✅</span>Ergebnis</button>' +
+        '<button type="button" data-pcv-open-studio="team"><span>🛡️</span>Team-Meldung</button>' +
+        '<button type="button" data-pcv-open-studio="dm"><span>📩</span>DM an Betroffenen</button>' +
+        '<button type="button" data-pcv-open-studio="release"><span>🔓</span>Freigabe-DM</button>' +
+      '</div></div>' +
+      '<div class="pcv-design-group"><h5>2er Calls</h5><div class="pcv-design-grid">' +
+        '<button type="button" data-pcv-open-studio="panel2"><span>🎙️</span>Moderations-Panel</button>' +
+        '<button type="button" data-pcv-open-studio="vote2"><span>🗳️</span>Laufende Abstimmung</button>' +
+        '<button type="button" data-pcv-open-studio="result2"><span>✅</span>Ergebnis</button>' +
+        '<button type="button" data-pcv-open-studio="team2"><span>🛡️</span>Team-Meldung</button>' +
+        '<button type="button" data-pcv-open-studio="dm2"><span>📩</span>DM an Betroffenen</button>' +
+        '<button type="button" data-pcv-open-studio="release2"><span>🔓</span>Freigabe-DM</button>' +
+      '</div></div>' +
+      '<div class="pcv-design-group"><h5>3er Calls</h5><div class="pcv-design-grid">' +
+        '<button type="button" data-pcv-open-studio="panel3"><span>🎙️</span>Moderations-Panel</button>' +
+        '<button type="button" data-pcv-open-studio="vote3"><span>🗳️</span>Laufende Abstimmung</button>' +
+        '<button type="button" data-pcv-open-studio="result3"><span>✅</span>Ergebnis</button>' +
+        '<button type="button" data-pcv-open-studio="team3"><span>🛡️</span>Team-Meldung</button>' +
+        '<button type="button" data-pcv-open-studio="dm3"><span>📩</span>DM an Betroffenen</button>' +
+        '<button type="button" data-pcv-open-studio="release3"><span>🔓</span>Freigabe-DM</button>' +
+      '</div></div>' +
+      '<div class="pcv-design-group"><h5>4er Calls</h5><div class="pcv-design-grid">' +
+        '<button type="button" data-pcv-open-studio="panel4"><span>🎙️</span>Moderations-Panel</button>' +
+        '<button type="button" data-pcv-open-studio="vote4"><span>🗳️</span>Laufende Abstimmung</button>' +
+        '<button type="button" data-pcv-open-studio="result4"><span>✅</span>Ergebnis</button>' +
+        '<button type="button" data-pcv-open-studio="team4"><span>🛡️</span>Team-Meldung</button>' +
+        '<button type="button" data-pcv-open-studio="dm4"><span>📩</span>DM an Betroffenen</button>' +
+        '<button type="button" data-pcv-open-studio="release4"><span>🔓</span>Freigabe-DM</button>' +
+      '</div></div>' +
+    '</div>' +
+    '<p class="activity-race-safety"><b>Hinweis:</b> Das Panel ist eine feste Embed im Textchat des Calls und wird vom Voice-Chat-Cleaner nicht gelöscht. Ergebnis-Nachrichten verschwinden nach der eingestellten Zeit automatisch, Team-Meldungen pingen die Team-Rollen.</p>' +
+    '<div id="public-call-vote-locks-host"></div>' +
+    '</section>';
+}
+
+// Zeigt alle aktiven Call-Sperren (2er/3er/4er + übrige öffentliche Calls)
+// mit Restzeit, Call-Art und Grund – und erlaubt, sie direkt aufzuheben.
+function renderPublicCallVoteLocks(host, locks) {
+  if (!host) return;
+  const items = Array.isArray(locks) ? locks : [];
+  const typeLabel = function (type) {
+    if (type === '2er') return '2er';
+    if (type === '3er') return '3er';
+    if (type === '4er') return '4er';
+    return 'öff.';
+  };
+  host.innerHTML = '<section class="activity-race-panel ' + (items.length ? '' : 'ready') + '" id="public-call-vote-locks-panel">' +
+    '<header><div><small>FALLEN HEAVEN · PUBLIC-CALL-MODERATION</small><h3>Gesperrte Spieler (Calls)</h3><p>' + (items.length
+      ? 'Diese Spieler sind aktuell aus öffentlichen Calls ausgeschlossen – der Zugriff wird automatisch freigegeben, sobald die Sperrzeit abgelaufen ist. Du kannst jede Sperre hier manuell aufheben.'
+      : 'Aktuell ist niemand aus öffentlichen Calls gesperrt. Sperren entstehen automatisch nach Rauswurf-Abstimmungen und laufen nach der eingestellten Dauer ab.') + '</p></div><span data-pcv-locks-badge>' + (items.length ? items.length + ' AKTIV' : 'FREI') + '</span></header>' +
+    (items.length
+      ? '<div class="module-lock-list">' + items.map(function (lock) {
+        const name = String(lock.name || 'Unbekannt');
+        const channelPart = lock.channelName ? ' · #' + escapeHtml(String(lock.channelName)) : '';
+        const reasonPart = lock.reasonLabel ? ' · ' + escapeHtml(String(lock.reasonLabel)) : '';
+        return '<div class="module-lock-row">' +
+          lockAvatarHtml(lock) +
+          '<span class="module-lock-name">' + escapeHtml(name) + '</span>' +
+          '<span class="module-lock-time"><em class="pcv-lock-type">' + typeLabel(lock.callType) + '</em>' + channelPart + reasonPart + ' · noch <b>' + formatLockRemaining(lock.remainingMs) + '</b></span>' +
+          '<button type="button" data-pcv-unlock="' + encodeURIComponent(String(lock.userId || '')) + '">Sperre aufheben</button>' +
+          '</div>';
+      }).join('') + '</div>'
+      : '<p class="boost-top-empty">Keine aktiven Call-Sperren – alles frei.</p>') +
+    '</section>';
+}
+
+async function refreshPublicCallVoteLocks() {
+  const host = document.getElementById('public-call-vote-locks-host');
+  if (!host) return;
+  if (!state.authenticated || !state.selectedGuildId) {
+    host.innerHTML = '';
+    return;
+  }
+  host.innerHTML = '<div class="module-stats-loading">Lade Sperren …</div>';
+  const response = await apiRequestWithRetry({ path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/public-call-vote/locks', timeoutMs: 10000 }, 2);
+  if (handleExpiredSession(response)) return;
+  if (!response.ok) {
+    host.innerHTML = '';
+    return;
+  }
+  renderPublicCallVoteLocks(host, response.data?.locks || []);
+}
+
+async function unlockPublicCallVotePlayer(userId) {
+  if (!userId || !state.selectedGuildId) return;
+  const accepted = await showAppConfirm({
+    title: 'Call-Sperre aufheben?',
+    message: 'Der Spieler kann danach sofort wieder allen öffentlichen Calls beitreten. Die Sperrzeit wird nicht weitergezählt.',
+    confirmLabel: 'Sperre aufheben',
+    cancelLabel: 'Abbrechen',
+    tone: 'danger'
+  });
+  if (!accepted) return;
+  const response = await api.apiRequest({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/public-call-vote/locks/' + encodeURIComponent(userId),
+    method: 'DELETE',
+    timeoutMs: 20000
+  });
+  if (handleExpiredSession(response)) return;
+  if (!response.ok) {
+    toast(response.data?.error || 'Die Call-Sperre konnte nicht aufgehoben werden.', 'error');
+    return;
+  }
+  toast('Call-Sperre aufgehoben – der Spieler kann wieder beitreten.', 'success');
+  void refreshPublicCallVoteLocks();
+}
+
+const tempVoiceUi = window.FHCCTempVoiceUI.create({
+  getState: function () { return state; },
+  settingLines: FHCCModuleConfigInputs.settingLines,
+  apiRequestWithRetry,
+  apiRequest: function (options) { return api.apiRequest(options); },
+  handleExpiredSession,
+  toast,
+  formatDate: formatBackupDate,
+  escapeHtml,
+  escapeAttr,
+  showConfirm: showAppConfirm,
+  setView,
+  refreshConfig,
+  loadStudioTemplate,
+  renderDrafts,
+  clone,
+  currentStudioTemplate,
+  renderStudioLimits,
+  saveStudioDesign
+});
+window.FHCCStudioJsonImport.create({ currentStudioTemplate, loadStudioTemplate, renderStudioLimits, renderDrafts, toast });
+
+// Compatibility adapters for existing renderer integrations and smoke checks.
+// TempVoice behavior remains implemented exclusively in temp-voice-ui.js.
+function tempVoiceStudioTemplate(config) { return tempVoiceUi.studioTemplate(config); }
+function openTempVoiceStudio() { return tempVoiceUi.openStudio(); }
+function saveTempVoiceStudioTemplate() { return tempVoiceUi.saveStudioTemplate(); }
+function confirmLeaveTempVoiceStudio() { return tempVoiceUi.confirmLeaveStudio(); }
+function hasUnsavedTempVoiceStudioChanges() { return tempVoiceUi.hasUnsavedStudioChanges(); }
+
 function forumCleanerOverview(config) {
   const active = config?.enabled === true;
-  const selected = settingLines(config?.channelIds).length;
+  const selected = FHCCModuleConfigInputs.settingLines(config?.channelIds).length;
   const ready = active && selected > 0;
   return '<section id="forum-cleaner-panel" class="server-tag-tracker-panel forum-cleaner-panel ' + (ready ? 'ready' : 'attention') + '" data-state="idle">' +
     '<header><span><small>FOREN-TIEFENSCAN · ' + selected + ' KANAL' + (selected === 1 ? '' : 'ÄLE') + '</small><strong data-forum-cleaner-title>' + (ready ? 'Cleaner-Status wird geladen …' : active ? 'Forum-Kanäle auswählen' : 'Modul ist deaktiviert') + '</strong><p data-forum-cleaner-detail>Aktive und archivierte Posts werden vollständig paginiert. Discord-Fehler gelten niemals als Server-Austritt.</p></span><div><em data-forum-cleaner-badge>' + (config?.dryRun ? 'PRÜFMODUS' : ready ? 'BEREIT' : 'KONFIGURIEREN') + '</em><button type="button" data-forum-cleaner-scan ' + (ready ? '' : 'disabled') + '>Jetzt tief prüfen</button></div></header>' +
@@ -2318,7 +2643,7 @@ async function startForumCleanerScan(button) {
 }
 
 function steamWorkshopOverview(config) {
-  const ids = settingLines(config?.workshopIds);
+  const ids = FHCCModuleConfigInputs.settingLines(config?.workshopIds);
   const ready = config?.enabled === true && Boolean(config?.forumChannelId) && ids.length > 0;
   return '<section id="steam-workshop-panel" class="server-tag-tracker-panel steam-workshop-panel ' + (ready ? 'ready' : 'attention') + '" data-state="idle">' +
     '<header><span><small>STEAM WORKSHOP · FORUM-KATALOG</small><strong data-steam-workshop-title>' + (ready ? 'Katalogstatus wird geladen …' : 'Workshop-Katalog konfigurieren') + '</strong><p data-steam-workshop-detail>Eine Mod pro Forum-Post. Steam-Daten werden aktualisiert, ohne neue Beiträge zu erzeugen.</p></span><div><em data-steam-workshop-badge>' + (ready ? 'BEREIT' : 'KONFIGURIEREN') + '</em><button type="button" data-steam-workshop-studio>Embed gestalten</button><button type="button" data-steam-workshop-sync ' + (ready ? '' : 'disabled') + '>Jetzt synchronisieren</button></div></header>' +
@@ -2346,7 +2671,7 @@ function renderSteamWorkshopStatus(status) {
   set('[data-steam-workshop-title]', running ? 'Steam-Daten werden synchronisiert' : items.length ? 'Workshop-Katalog ist bereit' : 'Bereit für den ersten Abgleich');
   set('[data-steam-workshop-detail]', running && status.currentWorkshopId ? 'Aktuell wird Workshop-ID ' + status.currentWorkshopId + ' verarbeitet.' : failures ? failures + ' Einträge brauchen Aufmerksamkeit; bestehende Discord-Posts blieben erhalten.' : 'Forum-Posts werden an Ort und Stelle aktualisiert. Optionale Update-Meldungen erscheinen getrennt.');
   set('[data-steam-workshop-badge]', running ? 'LIVE' : failures ? 'PRÜFEN' : 'SYNCHRON');
-  set('[data-steam-workshop-total]', Number(status?.total || settingLines(state.config?.steamWorkshop?.workshopIds).length).toLocaleString('de-DE'));
+  set('[data-steam-workshop-total]', Number(status?.total || FHCCModuleConfigInputs.settingLines(state.config?.steamWorkshop?.workshopIds).length).toLocaleString('de-DE'));
   set('[data-steam-workshop-posts]', items.filter(function (item) { return item.threadId; }).length.toLocaleString('de-DE'));
   set('[data-steam-workshop-last]', status?.lastCompletedAt ? new Date(status.lastCompletedAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '–');
   set('[data-steam-workshop-errors]', failures.toLocaleString('de-DE') + ' Fehler');
@@ -2378,7 +2703,9 @@ async function openSteamWorkshopItemStudio(workshopId) {
     return;
   }
   if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
   loadStudioTemplate(steamWorkshopStudioTemplate(state.config?.steamWorkshop, item));
   renderDrafts();
   toast('Du bearbeitest nur „' + String(item.title || 'Workshop ' + id) + '“. Die globale Vorlage bleibt unverändert.', 'success');
@@ -2632,31 +2959,7 @@ async function applyEmojiRenameFromPanel(button) {
 }
 
 function activityRaceOverview(config) {
-  const roleKeys = ['separatorRoleId'].concat(['daily', 'weekly', 'monthly'].flatMap(function (period) {
-    return ['Chat', 'Voice'].flatMap(function (metric) {
-      return [1, 2, 3].map(function (place) { return period + metric + (place === 1 ? '' : 'Top' + place) + 'RoleId'; });
-    });
-  }));
-  const selected = roleKeys.filter(function (key) { return String(config?.[key] || '').trim(); }).length;
-  const periods = [
-    ['daily', 'TAGESWERTUNG'],
-    ['weekly', 'WOCHENWERTUNG'],
-    ['monthly', 'MONATSWERTUNG']
-  ];
-  const ready = config?.enabled === true && selected === roleKeys.length;
-  const configuredChannel = String(config?.panelChannelId || '').trim();
-  return '<section id="activity-race-panel" class="activity-race-panel ' + (ready ? 'ready' : 'attention') + '">' +
-    '<header><div><small>FALLEN HEAVEN · AKTIVITÄTS-LIGA</small><h3>' + (ready ? 'Das Community-Rennen läuft.' : 'Top 1–3 professionell einrichten.') + '</h3><p>Tagesrollen folgen live der aktuellen Rangfolge. Wochen- und Monatsrollen entstehen erst nach einem vollständigen Abschluss.</p></div><span data-activity-race-badge>' + (ready ? 'LIVE' : selected + '/19 ROLLEN') + '</span></header>' +
-    '<div class="activity-race-periods">' + periods.map(function (row) {
-      const chatCount = [1, 2, 3].filter(function (place) { return String(config?.[row[0] + 'Chat' + (place === 1 ? '' : 'Top' + place) + 'RoleId'] || '').trim(); }).length;
-      const voiceCount = [1, 2, 3].filter(function (place) { return String(config?.[row[0] + 'Voice' + (place === 1 ? '' : 'Top' + place) + 'RoleId'] || '').trim(); }).length;
-      return '<article><em>' + escapeHtml(row[1]) + '</em><b>Chat · ' + chatCount + '/3 Plätze</b><b>Sprachchat · ' + voiceCount + '/3 Plätze</b><small data-activity-race-' + row[0] + '>Noch keine Live-Daten</small></article>';
-    }).join('') + '</div>' +
-    '<div class="activity-race-actions"><div><b>Eine Live-Nachricht im Kanal „aktivität-liga“</b><span>' + (configuredChannel ? 'Der ausgewählte Kanal hat Vorrang.' : 'Der Kanal wird automatisch über seinen Namen erkannt.') + ' Knöpfe öffnen persönliche Ansichten, ohne das öffentliche Embed für andere umzuschalten.</span></div><button type="button" data-activity-race-open-studio>Vorlage im Embed Studio bearbeiten</button><button type="button" data-activity-race-role-preview>Rollenset prüfen</button><button type="button" data-activity-race-refresh ' + (ready ? '' : 'disabled') + '>Embed jetzt aktualisieren</button></div>' +
-    '<section class="activity-race-full"><header><div><small>VOLLSTÄNDIGE TAGESWERTUNG</small><h4>Jedes aktuelle Mitglied. Jeder Rang.</h4><p>Gleichstände erhalten denselben fairen Rang. Mitglieder ohne heutige Aktivität bleiben sichtbar und werden nicht zu Gewinnern erklärt.</p></div><div class="activity-race-ranking-tools"><label><span class="sr-only">Mitglied suchen</span><input type="search" data-activity-race-ranking-search value="' + escapeHtml(activityRaceRankingQuery) + '" placeholder="Mitglied oder Benutzername suchen …" autocomplete="off"></label><div><button type="button" class="active" data-activity-race-ranking-metric="chat">Chat</button><button type="button" data-activity-race-ranking-metric="voice">Sprachchat</button></div></div></header><div class="activity-race-ranking-summary" data-activity-race-ranking-summary>Rangliste wird geladen …</div><div class="activity-race-ranking-list" data-activity-race-ranking-list><p>Aktuelle Mitgliedsdaten werden geladen …</p></div></section>' +
-    '<p class="activity-race-safety"><b>Dynamische Titel:</b> Tagesrollen wechseln automatisch zwischen Platz 1, 2 und 3. Die Trennerrolle begleitet jede aktive Liga-Auszeichnung und wird nach der letzten Auszeichnung entzogen. Wochen- und Monatsrollen werden nur aus vollständigen Zeiträumen gebildet. Bots, Webhooks, Spam, Duplikate und AFK zählen nicht.</p>' +
-    '<p class="activity-race-role-health" data-activity-race-role-health><b>Rollenabgleich:</b> Bereit für die nächste Auswertung.</p>' +
-    '</section>';
+  return window.FHCCActivityRaceStudio.overview(config, { escapeHtml, rankingQuery: activityRaceRankingQuery });
 }
 
 function formatActivityRaceRankingValue(value, metric) {
@@ -2705,42 +3008,6 @@ function renderActivityRaceFullRanking() {
       : '<i>' + escapeHtml(String(entry.displayName || '?').slice(0, 1).toUpperCase()) + '</i>';
     return '<article class="' + (Number(entry.value || 0) > 0 ? 'active' : 'inactive') + ' rank-' + Math.min(rank, 4) + '" style="--activity-share:' + share + '%"><strong>' + escapeHtml(badge) + '</strong>' + avatar + '<span><b>' + escapeHtml(entry.displayName || 'Mitglied') + '</b><small>@' + escapeHtml(entry.username || 'unbekannt') + '</small></span><em>' + escapeHtml(formatActivityRaceRankingValue(entry.value, activityRaceRankingMetric)) + '</em></article>';
   }).join('');
-}
-
-function serverKnowledgeOverview(config) {
-  const hotDays = Math.max(1, Math.min(30, Number(config?.retentionDays || 30)));
-  return '<section class="server-knowledge-overview">' +
-    '<header><div><small>SERVERWISSEN · ARCHITEKTUR</small><h3>Der gesamte Index. Gezielt statt ungefiltert.</h3><p>Die AI sucht serverweit und über die vollständige Historie. Ollama erhält nur die relevantesten, für den jeweiligen Nutzer sichtbaren Belege.</p></div><span>VOLLINDEX</span></header>' +
-    '<div class="server-knowledge-flow">' +
-      '<article><i><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"></ellipse><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"></path></svg></i><span><b>Persistenter Vollindex</b><small>Langfristige Discord-Historie aus allen indexierten Kanälen</small></span></article>' +
-      '<em>→</em>' +
-      '<article><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5.5 6v5.2c0 4.4 2.8 7.7 6.5 9.8 3.7-2.1 6.5-5.4 6.5-9.8V6L12 3Z"></path><path d="m9.2 12 1.8 1.8 3.8-4"></path></svg></i><span><b>Berechtigungsfilter</b><small>Private Kanäle bleiben für unberechtigte Nutzer unsichtbar</small></span></article>' +
-      '<em>→</em>' +
-      '<article><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.4 4.5L18 9l-4.6 1.5L12 15l-1.4-4.5L6 9l4.6-1.5L12 3Z"></path><path d="m18.5 14 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7.7-2.3Z"></path></svg></i><span><b>Relevante Belege</b><small>Kompaktes Kontextpaket für qwen2.5:7b statt 3 GB Rohdaten</small></span></article>' +
-    '</div>' +
-    '<footer><span><b>' + hotDays + ' Tage</b><small>Schneller Aktualitätskontext</small></span><span><b>Gesamte Historie</b><small>Durchsuchbares Langzeitwissen</small></span><span><b>Lokal</b><small>Keine Cloud-AI erforderlich</small></span></footer>' +
-  '</section>';
-}
-
-function aiChatIntelligenceOverview(config) {
-  const cleanup = config?.autoCleanChannel !== false;
-  const idle = Math.max(15, Math.min(10080, Number(config?.channelIdleMinutes || 60)));
-  const sources = [
-    ['DISCORD LIVE', 'Vollständige Mitgliederliste, Owner, Team, Rollen und Boosts'],
-    ['MITGLIEDSPROFILE', 'Nachrichtenanzahl, Kanalaktivität, Belege und Timeline'],
-    ['VIP & COINS', 'Heaven Economy mit geschützter Kontosicht'],
-    ['AKTIVITÄTS-LIGA', 'Tagesstand und abgeschlossene Wertungen'],
-    ['VOLLINDEX', 'Vollständige Historie mit Berechtigungsfilter'],
-    ['WEB', 'Nur für aktuelle externe Fakten und News']
-  ];
-  return '<section class="ai-intelligence-overview">' +
-    '<header><div><small>HYBRID INTELLIGENCE</small><h3>Die Frage entscheidet über die Quelle.</h3><p>Server-, Mitglieder-, VIP-, Aktivitäts- und Webfragen laufen durch getrennte Datenpfade. Ollama formuliert die Antwort, darf die Faktenquelle aber nicht selbst erfinden.</p></div><span>' + escapeHtml(String(config?.model || 'qwen2.5:7b')) + '</span></header>' +
-    '<div class="ai-intelligence-sources">' + sources.map(function (source) {
-      return '<article><i></i><span><b>' + source[0] + '</b><small>' + source[1] + '</small></span></article>';
-    }).join('') + '</div>' +
-    '<div class="activity-race-actions"><div><b>Info-Embed im Kanal gestalten</b><span>Die erste Nachricht im AI-Chat-Kanal wird wie jede andere Vorlage im Embed Studio bearbeitet – mit Live-Vorschau, Bildern und Feldern. Sie bleibt beim automatischen Aufräumen immer erhalten.</span></div><button type="button" data-ai-chat-open-studio>Info-Embed im Embed Studio bearbeiten</button></div>' +
-    '<footer><span><b>Normaler Chat</b><small>Lokales Ollama + persönliche Erinnerung</small></span><span><b>' + (cleanup ? 'Auto-Clean aktiv' : 'Auto-Clean aus') + '</b><small>' + (cleanup ? 'Sichtbarer Kanal nach ' + idle + ' Minuten Inaktivität leer' : 'Discord-Nachrichten bleiben sichtbar') + '</small></span><span><b>Privacy Gate</b><small>Fremde Coin-Guthaben bleiben geschützt</small></span></footer>' +
-  '</section>';
 }
 
 function renderActivityRaceStatus(status) {
@@ -2878,18 +3145,218 @@ async function refreshActivityRacePanel(button) {
 }
 
 function boostAutomationOverview(config) {
-  const baseCount = settingLines(config?.automaticRoleIds).length;
-  const tierCount = parseRoleMappings(config?.tierRoleMappings).length;
+  const baseCount = FHCCModuleConfigInputs.settingLines(config?.automaticRoleIds).length;
+  const tierCount = FHCCModuleConfigInputs.parseRoleMappings(config?.tierRoleMappings).length;
   const active = config?.enabled === true;
-  return '<section class="boost-automation-overview ' + (active && baseCount ? 'ready' : 'attention') + '"><header><span><small>BOOSTER-AUTOMATIK</small><strong>' + (active ? 'Automatischer Rollenabgleich aktiv' : 'Modul ist aktuell deaktiviert') + '</strong></span><div><em>' + (active && baseCount ? 'BEREIT' : 'KONFIGURIEREN') + '</em><button type="button" data-sync-boost-roles ' + (active ? '' : 'disabled') + '>Jetzt abgleichen</button></div></header><div><article><small>JEDER BOOSTER</small><b>' + baseCount + ' Basisrolle' + (baseCount === 1 ? '' : 'n') + '</b><p>Sofort bei aktivem Boost</p></article><article><small>STAFFELN</small><b>' + tierCount + ' Stufe' + (tierCount === 1 ? '' : 'n') + '</b><p>Bleiben nach Boost-Anzahl erhalten</p></article><article><small>BOOST-ENDE</small><b>Automatischer Entzug</b><p>Basis-, Staffel- und gewählte Farbrollen</p></article></div><p class="boost-automation-note">Speichern startet direkt einen vollständigen Abgleich. Zusätzlich korrigiert der Bot den Rollenstand regelmäßig und nach jedem Discord-Mitgliederupdate.</p></section>';
+  const announceActive = config?.boostAnnounceEnabled === true;
+  const announceChannel = config?.boostAnnounceChannelId ? String(config.boostAnnounceChannelId) : '';
+  const announceChannelName = announceChannel ? String(state.moduleChannels?.find(function (entry) { return String(entry.id) === announceChannel; })?.name || announceChannel) : '';
+  const announceTemplate = config?.boostAnnounceTemplate || {};
+  const announceEmbedCount = Array.isArray(announceTemplate.embeds) ? announceTemplate.embeds.length : announceTemplate.embed ? 1 : 0;
+  const topActive = config?.boostTopEnabled === true;
+  const topChannel = config?.boostTopChannelId ? String(config.boostTopChannelId) : '';
+  const topChannelName = topChannel ? String(state.moduleChannels?.find(function (entry) { return String(entry.id) === topChannel; })?.name || topChannel) : '';
+  const topPings = config?.boostTopPingsEnabled !== false;
+  return '<section class="boost-automation-overview ' + (active && baseCount ? 'ready' : 'attention') + '"><header><span><small>BOOSTER-AUTOMATIK</small><strong>' + (active ? 'Automatischer Rollenabgleich aktiv' : 'Modul ist aktuell deaktiviert') + '</strong></span><div><em>' + (active && baseCount ? 'BEREIT' : 'KONFIGURIEREN') + '</em><button type="button" data-sync-boost-roles ' + (active ? '' : 'disabled') + '>Jetzt abgleichen</button></div></header><div><article><small>JEDER BOOSTER</small><b>' + baseCount + ' Basisrolle' + (baseCount === 1 ? '' : 'n') + '</b><p>Sofort bei aktivem Boost</p></article><article><small>STAFFELN</small><b>' + tierCount + ' Stufe' + (tierCount === 1 ? '' : 'n') + '</b><p>Bleiben nach Boost-Anzahl erhalten</p></article><article><small>BOOST-ENDE</small><b>Automatischer Entzug</b><p>Basis-, Staffel- und gewählte Farbrollen</p></article></div><p class="boost-automation-note">Speichern startet direkt einen vollständigen Abgleich. Zusätzlich korrigiert der Bot den Rollenstand regelmäßig und nach jedem Discord-Mitgliederupdate.</p></section>' +
+    '<section class="activity-race-overview welcome-template-overview boost-announce-overview"><header><div><small>BOOST-BENACHRICHTIGUNG</small><strong>' + (announceActive && announceChannel ? 'Jeder Boost wird angekündigt' : 'Automatisches Boost-Embed ist aus') + '</strong><p>' + (announceActive && announceChannel ? 'Das gestaltete Embed erscheint bei jedem Boost in <code>#' + escapeHtml(announceChannelName) + '</code> und zeigt die aktuelle Boost-Zahl (1×, 2×, …) des Mitglieds.' : 'Aktiviere die Boost-Benachrichtigung und wähle einen Kanal – dann sendet der Bot bei jedem Boost das gestaltete Embed.') + '</p></div><em>' + (announceActive ? announceEmbedCount + ' EMBED' + (announceEmbedCount === 1 ? '' : 'S') : 'AUS') + '</em></header><div class="activity-race-actions"><div><b>Boost-Embed gestalten</b><span>Embed Studio mit Live-Vorschau · {boostcount} wird durch die echte Boost-Zahl ersetzt.</span></div><button type="button" data-boost-open-studio>Boost-Embed bearbeiten</button></div></section>' +
+    '<section class="activity-race-overview welcome-template-overview boost-announce-overview boost-top-overview"><header><div><small>TOP-BOOSTER-LIGA</small><strong>' + (topActive && topChannel ? 'Top 1–3 werden live angezeigt' : 'Live-Rangliste ist aus') + '</strong><p>' + (topActive && topChannel ? 'Genau ein Embed in <code>#' + escapeHtml(topChannelName) + '</code> – es wird bei jeder Änderung der Top 3 bearbeitet. Platzierungs-Pings ' + (topPings ? 'sind aktiv.' : 'sind aus.') : 'Aktiviere die Top-Booster-Liga und wähle einen Kanal (oder „top-booster“) – der Bot sendet genau ein Embed und aktualisiert es live.') + '</p></div><em>' + (topActive ? 'LIVE' : 'AUS') + '</em></header><div class="activity-race-actions"><div><b>Top-3-Embed gestalten</b><span>Embed Studio mit Live-Vorschau · {boostcount}, {server} und {range} werden automatisch ersetzt.</span></div><button type="button" data-boost-top-open-studio>Top-3-Embed bearbeiten</button><button type="button" data-boost-top-refresh ' + (topActive ? '' : 'disabled') + '>Embed jetzt aktualisieren</button></div><div class="boost-top-status" data-boost-top-status></div></section>';
 }
-
+function vipPanelsOverview(config) {
+  const panelsActive = config?.enabled === true && config?.vipPanelEnabled === true;
+  const channelId = config?.vipPanelChannelId ? String(config.vipPanelChannelId) : '';
+  const channelName = channelId ? String(state.moduleChannels?.find(function (entry) { return String(entry.id) === channelId; })?.name || channelId) : '';
+  return window.FHCCEconomyPanelStudio.overview(config, state, escapeHtml) + '<section class="activity-race-overview welcome-template-overview boost-announce-overview vip-panels-overview"><header><div><small>VIP-PANEL</small><strong>' + (panelsActive ? 'Alle VIP-Stufen in einem Embed' : 'VIP-Panel ist aus') + '</strong><p>' + (panelsActive
+    ? channelName
+      ? 'Genau ein Embed in <code>#' + escapeHtml(channelName) + '</code> – alle Stufen zusammen, bearbeitet bei jeder Änderung.'
+      : 'Wähle unten einen Kanal (oder „vip“) – der Bot sendet genau ein Embed mit allen Stufen zusammen.'
+    : 'Aktiviere das VIP-Panel und wähle einen Kanal. Alle VIP-Stufen erscheinen zusammen in genau einem Embed, jede mit ihrem Rang-Emoji.') + '</p></div><em>' + (panelsActive ? 'LIVE' : 'AUS') + '</em></header><div class="activity-race-actions"><div><b>VIP-Embed gestalten</b><span>Embed Studio mit Live-Vorschau · {memberCount}, {tierCount} und {server} werden automatisch ersetzt.</span></div><button type="button" data-vip-panels-open-studio>VIP-Embed bearbeiten</button><button type="button" data-vip-panels-refresh ' + (panelsActive ? '' : 'disabled') + '>Embed jetzt aktualisieren</button></div><div class="activity-race-actions"><div><b>VIP-Trennerrolle</b><span>Jedes Mitglied mit einer aktiven VIP-Stufe erhält die Trennerrolle automatisch – sie wird nach Entzug der letzten VIP-Stufe wieder entfernt. Nach einer Konfig-Änderung läuft der Abgleich automatisch, hier kannst du ihn zusätzlich manuell auslösen.</span></div><button type="button" data-vip-separator-sync>Jetzt abgleichen</button><em id="vip-separator-status" class="vip-separator-status"></em></div><div class="vip-panels-status" data-vip-panels-status></div>' +
+    '<div class="pcv-design-actions economy-message-designs"><b>Automatische Nachrichten &amp; Embeds</b><p>Diese Vorlagen werden automatisch als private Nachricht gesendet. Öffne jede Nachricht direkt im vollständigen Embed Studio.</p>' +
+      '<div class="pcv-design-group"><div class="pcv-design-grid">' +
+        '<button type="button" data-vip-dm-studio="giftReceived"><span>🎁</span>Geschenk-DM (Rolle erhalten)</button>' +
+        '<button type="button" data-vip-dm-studio="vipPurchased"><span>👑</span>Kauf-DM (VIP gekauft)</button>' +
+        '<button type="button" data-vip-dm-studio="coinsReceived"><span>🪙</span>Coin-Gutschrift-DM</button>' +
+        '<button type="button" data-vip-dm-studio="coinGiftReceived"><span>🎁</span>Coin-Geschenk empfangen</button>' +
+        '<button type="button" data-vip-dm-studio="coinGiftSent"><span>↗</span>Coin-Geschenk gesendet</button>' +
+        '<button type="button" class="economy-message-primary" data-vip-dm-studio="boostMilestone"><span>⚡</span>Boost-Meilenstein-Embed bearbeiten</button>' +
+      '</div></div>' +
+    '</div>' +
+    '</section>';
+}
 function welcomeFarewellOverview(config) {
   const deferred = config?.welcomeAfterVerification === true;
   const roleReady = Boolean(String(config?.verificationRoleId || '').trim());
   const template = config?.welcomeTemplate || {};
   const embedCount = Array.isArray(template.embeds) ? template.embeds.length : template.embed ? 1 : 0;
   return '<section class="activity-race-overview welcome-template-overview"><header><div><small>VERIFIZIERUNGS-WORKFLOW</small><strong>' + (deferred ? 'Begrüßung nach Rollenfreigabe' : 'Begrüßung direkt beim Beitritt') + '</strong><p>' + (deferred ? roleReady ? 'Die Nachricht erscheint erst, wenn die ausgewählte Unverified-Rolle entfernt wurde.' : 'Wähle noch die Unverified-Rolle aus.' : 'Optional kannst du unten auf die Begrüßung nach Verifizierung umstellen.') + '</p></div><em>' + embedCount + ' EMBED' + (embedCount === 1 ? '' : 'S') + '</em></header><div class="activity-race-actions"><div><b>Willkommensnachricht gestalten</b><span>Verwendet das bestehende Embed Studio mit Live-Vorschau, Bildern und bis zu zehn Embeds.</span></div><button type="button" data-welcome-open-studio>Willkommensnachricht bearbeiten</button></div></section>';
+}
+
+function memberVerifyOverview(config) {
+  const active = config?.enabled === true;
+  const panelReady = Boolean(String(config?.panelChannelId || '').trim());
+  const design = config?.panelTemplate || {};
+  const embedCount = Array.isArray(design.embeds) ? design.embeds.length : design.embed ? 1 : 1;
+  return '<section class="activity-race-overview welcome-template-overview"><header><div><small>VERIFY-PANEL</small><strong>' + (active ? (panelReady ? 'Verify-Panel wird gepflegt' : 'Kanal auswählen, dann aktiv') : 'Modul ist deaktiviert') + '</strong><p>' + (panelReady ? 'Das Panel-Embed steht im gewählten Kanal und wird beim Speichern automatisch aktualisiert – der Verifizieren-Button bleibt immer erhalten.' : 'Wähle unten den Verify-Panel-Kanal. Danach kannst du das Panel-Embed im Studio gestalten.') + '</p></div><em>' + embedCount + ' EMBED' + (embedCount === 1 ? '' : 'S') + '</em></header><div class="activity-race-actions"><div><b>Verify-Embed gestalten</b><span>Embed Studio mit Live-Vorschau · Titel, Beschreibung, Farben, Bilder, Felder und Nachricht sind frei editierbar.</span></div><button type="button" data-member-verify-open-studio>Verify-Embed bearbeiten</button></div></section>';
+}
+
+function memberVerifyStudioTemplate(config) {
+  const design = config?.panelTemplate || {};
+  const sources = Array.isArray(design.embeds) && design.embeds.length
+    ? design.embeds
+    : [{
+      title: 'Willkommen! Verifiziere dich, um loszulegen.',
+      description: 'Klicke unten auf „Verifizieren“, um ein kurzes Formular zu öffnen. Nach erfolgreicher Prüfung bekommst du deine Rolle und kannst alle Kanäle sehen.',
+      color: '#8b82ff',
+      authorName: 'FALLEN HEAVEN · VERIFIZIERUNG',
+      footerText: 'FALLEN HEAVEN · Sicherheitsprüfung',
+      timestamp: true,
+      fields: [
+        { name: 'Nur für dich sichtbar', value: 'Das Formular erscheint nur in deinem Chat – niemand anderes sieht deine Antworten.', inline: true },
+        { name: 'Kein Passwort', value: 'Gib niemals Passwort, E-Mail oder Token weiter. Der Bot fragt danach nie.', inline: true }
+      ]
+    }];
+  return {
+    specialTemplate: 'memberVerify',
+    channelId: String(config?.panelChannelId || ''),
+    content: Object.prototype.hasOwnProperty.call(design, 'content') ? String(design.content || '') : '',
+    outsideImageUrl: design.outsideImageAttachment && design.outsideImageAttachment.anchored !== true ? '' : String(design.outsideImageUrl || ''),
+    outsideImageName: String(design.outsideImageAttachment?.name || ''),
+    outsideImageSize: Number(design.outsideImageAttachment?.size || 0),
+    outsideImageAttachment: design.outsideImageAttachment || null,
+    embeds: sources.slice(0, 1).map(function (embed) {
+      return {
+        title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#8b82ff',
+        authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '',
+        imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '',
+        timestamp: embed.timestamp !== false, fields: Array.isArray(embed.fields) ? clone(embed.fields).slice(0, 25) : []
+      };
+    }),
+    componentSet: 'none',
+    reactionRoles: []
+  };
+}
+
+async function openMemberVerifyStudio() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
+  state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
+  loadStudioTemplate(memberVerifyStudioTemplate(state.config?.memberVerify));
+  renderDrafts();
+  toast('Verify-Embed im bestehenden Embed Studio geöffnet.', 'success');
+}
+
+async function saveMemberVerifyStudioTemplate() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return false;
+  }
+  const template = currentStudioTemplate();
+  const validation = renderStudioLimits(template);
+  if (!validation.valid) {
+    toast(validation.errors[0], 'error');
+    return false;
+  }
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/member-verify/design',
+    body: {
+      template: {
+        ...template,
+        embeds: (template.embeds || [template.embed || {}]).slice(0, 1),
+        channelId: template.channelId || state.config?.memberVerify?.panelChannelId || ''
+      }
+    },
+    errorMessage: 'Das Verify-Embed konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      state.config.memberVerify = result.config?.memberVerify || state.config.memberVerify;
+      loadStudioTemplate(memberVerifyStudioTemplate(state.config.memberVerify));
+    },
+    okMessage: function (result) {
+      return result.panel
+        ? 'Verify-Embed gespeichert und Live-Panel aktualisiert.'
+        : 'Verify-Embed gespeichert. Es wird nach der Aktivierung automatisch erstellt.';
+    }
+  });
+}
+
+// levels-panel.js provides all levels/levelUp/levelUpInfo functions
+
+// Aktionsformular: „Level setzen“ erst bei gefüllten Feldern aktiv.
+document.addEventListener('input', function (event) {
+  const target = event.target;
+  if (!target || typeof target.closest !== 'function') return;
+  if (!target.closest('[data-levels-set-user], [data-levels-set-level-value]')) return;
+  const panel = document.getElementById('levels-panel');
+  const button = panel?.querySelector('[data-levels-set-level]');
+  if (!button) return;
+  const user = panel?.querySelector('[data-levels-set-user]');
+  const level = panel?.querySelector('[data-levels-set-level-value]');
+  button.disabled = !String(user?.value || '').trim() || !String(level?.value || '').trim();
+});
+
+async function openBotUpdatesStudio() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
+  state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
+  loadStudioTemplate(botUpdatesStudioTemplate(state.config?.botUpdates));
+  renderDrafts();
+  toast('Update-Embed im bestehenden Embed Studio geöffnet.', 'success');
+}
+
+async function saveBotUpdatesStudioTemplate() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return false;
+  }
+  const template = currentStudioTemplate();
+  const validation = renderStudioLimits(template);
+  if (!validation.valid) {
+    toast(validation.errors[0], 'error');
+    return false;
+  }
+  if ((template.embeds?.length || (template.embed ? 1 : 0)) > 1) {
+    toast('Das Update-Embed verwendet genau ein automatisch gepflegtes Embed.', 'error');
+    return false;
+  }
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/bot-updates/design',
+    body: {
+      template: {
+        ...template,
+        design: template,
+        embeds: (template.embeds || [template.embed || {}]).slice(0, 1),
+        channelId: template.channelId || state.config?.botUpdates?.channelId || ''
+      }
+    },
+    errorMessage: 'Das Update-Embed konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      state.config.botUpdates = result.config?.botUpdates || state.config.botUpdates;
+      if (Array.isArray(result.changelog)) state.botUpdatesChangelog = result.changelog;
+      loadStudioTemplate(botUpdatesStudioTemplate(state.config.botUpdates));
+    },
+    okMessage: function (result) {
+      const panelStatus = result.status || {};
+      const panelAction = String(panelStatus.action || '');
+      if (panelAction === 'posted' || panelAction === 'updated') return 'Update-Embed gesendet und Live-Panel aktualisiert.';
+      if (panelAction === 'no-channel') return 'Update-Embed gespeichert. Wähle zuerst einen Kanal – dann wird es automatisch gesendet.';
+      if (panelAction === 'channel-unavailable' || panelAction === 'missing-permission') return 'Update-Embed gespeichert, aber der Kanal #' + (panelStatus.channelName || '?') + ' ist nicht erreichbar – der Bot hat dort keine Schreibrechte oder der Kanal existiert nicht.';
+      if (panelAction === 'send-failed') return 'Update-Embed gespeichert, aber das Senden in den Kanal ist fehlgeschlagen.';
+      if (panelStatus.lastError) return 'Update-Embed gespeichert, aber das Senden ist fehlgeschlagen: ' + panelStatus.lastError;
+      return 'Update-Embed gespeichert. Es wird automatisch gesendet, sobald ein Kanal gewählt ist.';
+    },
+    okType: function (result) {
+      const panelStatus = result.status || {};
+      return String(panelStatus.action || '') === 'send-failed' || panelStatus.lastError ? 'error' : 'success';
+    }
+  });
 }
 
 function renderModuleConfig(options) {
@@ -2937,23 +3404,36 @@ function renderModuleConfig(options) {
     (feature.id === 'serverBackup' ? serverBackupOverview(state.config[feature.id]) : '') +
     (feature.id === 'serverTagTracker' ? serverTagTrackerOverview(state.config[feature.id]) : '') +
     (feature.id === 'voiceChatCleaner' ? voiceChatCleanerOverview(state.config[feature.id]) : '') +
+    (feature.id === 'voiceLogImport' ? voiceLogImportOverview(state.config[feature.id]) : '') +
+    (feature.id === 'publicCallVote' ? publicCallVoteOverview(state.config[feature.id]) : '') +
+    (feature.id === 'tempVoice' ? tempVoiceUi.overview(state.config[feature.id]) : '') +
     (feature.id === 'forumCleaner' ? forumCleanerOverview(state.config[feature.id]) : '') +
     (feature.id === 'steamWorkshop' ? steamWorkshopOverview(state.config[feature.id]) : '') +
     (feature.id === 'emojiManager' ? emojiManagerOverview(state.config[feature.id]) : '') +
-    (feature.id === 'serverContext' ? serverKnowledgeOverview(state.config[feature.id]) : '') +
-    (feature.id === 'aiChat' ? aiChatIntelligenceOverview(state.config[feature.id]) : '') +
     (feature.id === 'welcomeFarewell' ? welcomeFarewellOverview(state.config[feature.id]) : '') +
     (feature.id === 'activityRace' ? activityRaceOverview(state.config[feature.id]) : '') +
     (feature.id === 'boostRoles' ? boostAutomationOverview(state.config[feature.id]) : '') +
+    (feature.id === 'heavenEconomy' ? vipPanelsOverview(state.config[feature.id]) : '') +
+    (feature.id === 'memberVerify' ? memberVerifyOverview(state.config[feature.id]) : '') +
+    (feature.id === 'levels' ? FHCCLevelsPanel.overview(state.config[feature.id]) : '') +
+    (feature.id === 'counting' ? FHCCCountingPanel.overview(state.config[feature.id]) : '') +
+    (feature.id === 'botUpdates' ? botUpdatesOverview(state.config[feature.id]) : '') +
+    (feature.id === 'roleSaver' ? roleSaverOverview(state.config[feature.id]) : '') +
+    (feature.id === 'inactiveReminder' ? FHCCInactiveReminderPanel.overview(state.config[feature.id]) : '') +
+    (feature.id === 'customRichPresence' ? '<div id="rp-health-card" class="module-overview-card" data-rp-state="disabled"><div class="rp-health-row"><span class="rp-health-label">Bot</span><span class="rp-health-value" data-rp-bot-status>offline</span></div><div class="rp-health-row"><span class="rp-health-label">Rich Presence</span><span class="rp-health-value" data-rp-status>deaktiviert</span></div><div class="rp-health-row" data-rp-retry-row hidden><span class="rp-health-label">Nächster Versuch</span><span class="rp-health-value" data-rp-retry>–</span></div><div class="rp-health-actions"><button id="rp-reconnect-btn" class="button secondary" type="button" hidden>Neu verbinden</button></div></div>' : '') +
     (fields.length ? '<div class="module-field-grid">' + fields.map(function (field) {
       const current = getByPath(state.config, field.key);
-      const type = String(field.type || 'text').toLowerCase(); const rich = ['rolemappingselect', 'multiroleselect', 'multichannelselect'].includes(type); const isToggle = type === 'checkbox';
-      const labelHtml = '<strong class="module-field-label">' + escapeHtml(field.label || field.key) + '</strong>'; const hintHtml = '<span>' + escapeHtml(field.hint || field.info || '') + '</span>'; const inner = isToggle ? '<span class="module-field-copy">' + labelHtml + hintHtml + '</span><span class="module-toggle">' + inputForField(field, current) + '<i></i></span>' : labelHtml + hintHtml + inputForField(field, current); return '<' + (rich ? 'div' : 'label') + ' class="module-field' + (rich ? ' module-field-rich' : '') + (isToggle ? ' module-field-toggle' : '') + '" data-field-type="' + escapeHtml(type) + '">' + inner + '</' + (rich ? 'div' : 'label') + '>';
+      const type = String(field.type || 'text').toLowerCase(); const rich = ['rolemappingselect', 'roleswapselect', 'multiroleselect', 'multichannelselect'].includes(type); const isToggle = type === 'checkbox';
+      const labelHtml = '<strong class="module-field-label">' + escapeHtml(field.label || field.key) + '</strong>'; const hintHtml = '<span>' + escapeHtml(field.hint || field.info || '') + '</span>'; const inner = isToggle ? '<span class="module-field-copy">' + labelHtml + hintHtml + '</span><span class="module-toggle">' + FHCCModuleConfigInputs.inputForField(field, current) + '<i></i></span>' : labelHtml + hintHtml + FHCCModuleConfigInputs.inputForField(field, current); return '<' + (rich ? 'div' : 'label') + ' class="module-field' + (rich ? ' module-field-rich' : '') + (isToggle ? ' module-field-toggle' : '') + '" data-field-type="' + escapeHtml(type) + '">' + inner + '</' + (rich ? 'div' : 'label') + '>';
     }).join('') + '</div>' : '<p class="empty-drafts">Dieses Modul hat keine weiteren Einstellungen.</p>');
   const save = document.getElementById('save-module-fields');
   if (feature.id === 'boostRoles') {
     host.querySelector('.boost-automation-overview')?.insertAdjacentHTML('afterend', '<section id="boost-rebuild-progress" class="boost-rebuild-progress" data-state="idle"><div class="boost-progress-orb"><i></i></div><div class="boost-progress-main"><div class="boost-progress-heading"><span><small data-boost-progress-state>STATUS</small><strong data-boost-progress-title>Bereit</strong></span><b data-boost-progress-value>0%</b></div><p data-boost-progress-detail>Warte auf den nächsten Abgleich.</p><div class="boost-progress-track"><i data-boost-progress-fill></i></div><small data-boost-progress-count>Noch keine offenen Prüfungen</small></div></section>');
     void refreshBoostProgress();
+    void refreshBoostTopStatus();
+  }
+  if (feature.id === 'heavenEconomy') {
+    void refreshVipPanelsStatus();
   }
   if (feature.id === 'serverBackup') {
     void refreshServerBackups();
@@ -2963,6 +3443,13 @@ function renderModuleConfig(options) {
   }
   if (feature.id === 'voiceChatCleaner') {
     void refreshVoiceChatCleanerStatus();
+  }
+  if (feature.id === 'publicCallVote') {
+    void refreshPublicCallVoteStatus();
+    void refreshPublicCallVoteLocks();
+  }
+  if (feature.id === 'tempVoice') {
+    void tempVoiceUi.refreshStatus();
   }
   if (feature.id === 'forumCleaner') {
     void refreshForumCleanerStatus();
@@ -2976,6 +3463,18 @@ function renderModuleConfig(options) {
   }
   if (feature.id === 'activityRace') {
     void refreshActivityRaceStatus();
+  }
+  if (feature.id === 'roleSaver') {
+    void refreshRoleSaverStatus();
+  }
+  if (feature.id === 'inactiveReminder') {
+    void FHCCInactiveReminderPanel.refreshStatus();
+  }
+  if (feature.id === 'counting') {
+    void FHCCCountingPanel.refreshLocks();
+  }
+  if (feature.id === 'customRichPresence') {
+    void refreshRichPresenceHealth();
   }
   save?.addEventListener('click', async function () {
     const moduleConfig = collectModuleConfig(host, feature);
@@ -3025,7 +3524,7 @@ function renderModuleConfig(options) {
     const emojiInputField = event.target.closest('[data-emoji-input]');
     if (emojiInputField) {
       const preview = emojiInputField.closest('.module-emoji-control')?.querySelector('[data-emoji-preview]');
-      if (preview) preview.innerHTML = emojiPreviewHtml(emojiInputField.value);
+      if (preview) preview.innerHTML = FHCCModuleConfigInputs.emojiPreviewHtml(emojiInputField.value);
     }
     if (feature.id === 'emojiManager') {
       emojiManagerPreview = null;
@@ -3038,6 +3537,12 @@ function renderModuleConfig(options) {
   };
   host.onchange = function (event) {
     if (event.target.closest('[data-activity-race-ranking-search]')) return;
+    const reminderCandidate = event.target.closest('[data-inactive-reminder-candidate]');
+    if (reminderCandidate) {
+      FHCCInactiveReminderPanel.refreshSelection();
+      setModuleDirty(false);
+      return;
+    }
     const multi = event.target.closest('.module-role-multi');
     if (multi) updateRoleMultiState(multi);
     const channelMulti = event.target.closest('.module-channel-multi');
@@ -3052,14 +3557,164 @@ function renderModuleConfig(options) {
     setModuleDirty(true);
   };
   host.onclick = function (event) {
+    const tempVoiceProfileReset = event.target.closest('[data-temp-voice-reset-profile]');
+    if (tempVoiceProfileReset) {
+      void tempVoiceUi.resetProfile(tempVoiceProfileReset.dataset.tempVoiceResetProfile || '', tempVoiceProfileReset);
+      return;
+    }
+    const tempVoiceResetAll = event.target.closest('[data-temp-voice-reset-all]');
+    if (tempVoiceResetAll) {
+      void tempVoiceUi.resetAllProfiles(tempVoiceResetAll);
+      return;
+    }
+    const tempVoiceStudio = event.target.closest('[data-temp-voice-open-studio]');
+    if (tempVoiceStudio) {
+      void tempVoiceUi.openStudio();
+      return;
+    }
+    const memberVerifyStudio = event.target.closest('[data-member-verify-open-studio]');
+    if (memberVerifyStudio) {
+      void openMemberVerifyStudio();
+      return;
+    }
+    const levelsStudio = event.target.closest('[data-levels-open-studio]');
+    if (levelsStudio) {
+      void FHCCLevelsPanel.openStudio();
+      return;
+    }
+    const inactiveReminderStudio = event.target.closest('[data-inactive-reminder-open-studio]');
+    if (inactiveReminderStudio) {
+      void FHCCInactiveReminderPanel.openStudio();
+      return;
+    }
+    const inactiveReminderPreview = event.target.closest('[data-inactive-reminder-preview]');
+    if (inactiveReminderPreview) {
+      void FHCCInactiveReminderPanel.runPreviewAction();
+      return;
+    }
+    const inactiveReminderSelectAll = event.target.closest('[data-inactive-reminder-select-all]');
+    if (inactiveReminderSelectAll) {
+      const host = document.querySelector('[data-inactive-reminder-preview-list]');
+      if (host) {
+        host.querySelectorAll('[data-inactive-reminder-candidate]').forEach(function (checkbox) { checkbox.checked = true; });
+        FHCCInactiveReminderPanel.refreshSelection();
+      }
+      return;
+    }
+    const inactiveReminderSelectNone = event.target.closest('[data-inactive-reminder-select-none]');
+    if (inactiveReminderSelectNone) {
+      const host = document.querySelector('[data-inactive-reminder-preview-list]');
+      if (host) {
+        host.querySelectorAll('[data-inactive-reminder-candidate]').forEach(function (checkbox) { checkbox.checked = false; });
+        FHCCInactiveReminderPanel.refreshSelection();
+      }
+      return;
+    }
+    const inactiveReminderSendSelected = event.target.closest('[data-inactive-reminder-send-selected]');
+    if (inactiveReminderSendSelected) {
+      void FHCCInactiveReminderPanel.runSendAction();
+      return;
+    }
+    const inactiveReminderDeleteAll = event.target.closest('[data-inactive-reminder-delete-all]');
+    if (inactiveReminderDeleteAll) {
+      void FHCCInactiveReminderPanel.deleteAllDms();
+      return;
+    }
+    const inactiveReminderCleanup = event.target.closest('[data-inactive-reminder-cleanup]');
+    if (inactiveReminderCleanup) {
+      void FHCCInactiveReminderPanel.cleanupDms();
+      return;
+    }
+    const inactiveReminderSendManual = event.target.closest('[data-inactive-reminder-send-manual]');
+    if (inactiveReminderSendManual) {
+      void FHCCInactiveReminderPanel.sendManualDm();
+      return;
+    }
+    const inactiveReminderPageBtn = event.target.closest('[data-inactive-reminder-page]');
+    if (inactiveReminderPageBtn && !inactiveReminderPageBtn.disabled) {
+      FHCCInactiveReminderPanel.setPage(Math.max(0, Number(inactiveReminderPageBtn.getAttribute('data-inactive-reminder-page') || 0)));
+      void FHCCInactiveReminderPanel.refreshStatus();
+      return;
+    }
+    const inactiveReminderDeleteOne = event.target.closest('[data-inactive-reminder-delete-one]');
+    if (inactiveReminderDeleteOne) {
+      void FHCCInactiveReminderPanel.deleteDm(inactiveReminderDeleteOne.getAttribute('data-inactive-reminder-delete-one') || '');
+      return;
+    }
+    const countingStudio = event.target.closest('[data-counting-open-studio]');
+    if (countingStudio) {
+      void FHCCCountingPanel.openStudio();
+      return;
+    }
+    const levelUpStudio = event.target.closest('[data-levels-open-up-studio]');
+    if (levelUpStudio) {
+      void FHCCLevelsPanel.openLevelUpStudio();
+      return;
+    }
+    const botUpdatesStudio = event.target.closest('[data-bot-updates-open-studio]');
+    if (botUpdatesStudio) {
+      void openBotUpdatesStudio();
+      return;
+    }
+    const levelUpInfoStudio = event.target.closest('[data-levels-open-info-studio]');
+    if (levelUpInfoStudio) {
+      void FHCCLevelsPanel.openLevelUpInfoStudio();
+      return;
+    }
+    const levelsSetLevel = event.target.closest('[data-levels-set-level]');
+    if (levelsSetLevel) {
+      void FHCCLevelsPanel.setMemberLevelAction();
+      return;
+    }
+    const levelsWipe = event.target.closest('[data-levels-wipe-roles]');
+    if (levelsWipe) {
+      void FHCCLevelsPanel.wipeLevelRolesAction(levelsWipe);
+      return;
+    }
+    const levelsGrantAll = event.target.closest('[data-levels-grant-all]');
+    if (levelsGrantAll) {
+      void FHCCLevelsPanel.grantLevelRolesToAllAction(levelsGrantAll);
+      return;
+    }
     const welcomeStudio = event.target.closest('[data-welcome-open-studio]');
     if (welcomeStudio) {
       void openWelcomeFarewellStudio();
       return;
     }
-    const aiChatStudio = event.target.closest('[data-ai-chat-open-studio]');
-    if (aiChatStudio) {
-      void openAiChatWelcomeStudio();
+    const boostStudio = event.target.closest('[data-boost-open-studio]');
+    if (boostStudio) {
+      void openBoostAnnounceStudio();
+      return;
+    }
+    const boostTopStudio = event.target.closest('[data-boost-top-open-studio]');
+    if (boostTopStudio) {
+      void openBoostTopStudio();
+      return;
+    }
+    const boostTopRefresh = event.target.closest('[data-boost-top-refresh]');
+    if (boostTopRefresh) {
+      void refreshBoostTopPanel();
+      return;
+    }
+    const vipPanelsStudio = event.target.closest('[data-vip-panels-open-studio]');
+    if (vipPanelsStudio) {
+      void openVipPanelStudio();
+      return;
+    }
+    if (event.target.closest('[data-economy-panel-open-studio]')) { void window.FHCCEconomyPanelStudio.open({ state, setView, refreshConfig, loadStudioTemplate, renderDrafts, toast }); return; }
+    const vipPanelsRefresh = event.target.closest('[data-vip-panels-refresh]');
+    if (vipPanelsRefresh) {
+      void refreshVipPanels();
+      return;
+    }
+    const vipDmStudio = event.target.closest('[data-vip-dm-studio]');
+    if (vipDmStudio) {
+      void openVipDmStudio(String(vipDmStudio.dataset.vipDmStudio || 'giftReceived'));
+      return;
+    }
+    const vipSeparatorSync = event.target.closest('[data-vip-separator-sync]');
+    if (vipSeparatorSync) {
+      void runVipSeparatorSync(vipSeparatorSync);
       return;
     }
     const activityRankingMetric = event.target.closest('[data-activity-race-ranking-metric]');
@@ -3068,9 +3723,29 @@ function renderModuleConfig(options) {
       renderActivityRaceFullRanking();
       return;
     }
+    const pcvStudio = event.target.closest('[data-pcv-open-studio]');
+    if (pcvStudio) {
+      void openPublicCallVoteStudio(String(pcvStudio.dataset.pcvOpenStudio || 'panel'));
+      return;
+    }
+    const countingDmStudio = event.target.closest('[data-counting-open-dm-studio]');
+    if (countingDmStudio) {
+      void FHCCCountingPanel.openDmStudio(String(countingDmStudio.dataset.countingOpenDmStudio || 'strikeLock'));
+      return;
+    }
+    const countingUnlock = event.target.closest('[data-counting-unlock]');
+    if (countingUnlock) {
+      void FHCCCountingPanel.unlockPlayer(String(countingUnlock.dataset.countingUnlock || ''));
+      return;
+    }
+    const pcvUnlock = event.target.closest('[data-pcv-unlock]');
+    if (pcvUnlock) {
+      void unlockPublicCallVotePlayer(String(pcvUnlock.dataset.pcvUnlock || ''));
+      return;
+    }
     const activityStudio = event.target.closest('[data-activity-race-open-studio]');
     if (activityStudio) {
-      void openActivityRaceStudio();
+      void openActivityRaceStudio(String(activityStudio.dataset.activityRaceOpenStudio || 'daily'));
       return;
     }
     const activityRolePreview = event.target.closest('[data-activity-race-role-preview]');
@@ -3118,9 +3793,24 @@ function renderModuleConfig(options) {
       void applyEmojiRenameFromPanel(emojiApplyAction);
       return;
     }
+    const publicCallVoteRefresh = event.target.closest('[data-refresh-public-call-vote]');
+    if (publicCallVoteRefresh) {
+      void refreshPublicCallVoteStatus();
+      return;
+    }
     const voiceCleanerRefresh = event.target.closest('[data-refresh-voice-cleaner]');
     if (voiceCleanerRefresh) {
       void refreshVoiceChatCleanerStatus();
+      return;
+    }
+    const voiceLogEventsLoad = event.target.closest('[data-voice-log-events-load]');
+    if (voiceLogEventsLoad) {
+      void loadVoiceLogEvents(true);
+      return;
+    }
+    const tempVoiceRefresh = event.target.closest('[data-refresh-temp-voice]');
+    if (tempVoiceRefresh) {
+      void tempVoiceUi.refreshStatus();
       return;
     }
     const serverTagSync = event.target.closest('[data-sync-server-tags]');
@@ -3191,7 +3881,7 @@ function renderModuleConfig(options) {
       const rows = addButton.closest('.module-role-mapping').querySelector('.module-role-map-rows');
       const counts = Array.from(rows.querySelectorAll('[data-role-count]')).map(function (input) { return Number(input.value || 0); });
       const kind = addButton.closest('.module-role-mapping')?.dataset.mappingKind || 'boost';
-      rows.insertAdjacentHTML('beforeend', roleMappingRow({ count: Math.max(0, ...counts) + 1 }, kind));
+      rows.insertAdjacentHTML('beforeend', FHCCModuleConfigInputs.roleMappingRow({ count: Math.max(0, ...counts) + 1 }, kind));
       setModuleDirty(true);
       return;
     }
@@ -3221,6 +3911,7 @@ function loadStudioMessages(guildId) {
     state.studioMessages = [];
   }
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
 }
 
 function persistStudioMessages() {
@@ -3232,6 +3923,7 @@ const studioChannelLoads = new Map();
 let studioOutsideImageRemovalRequested = false;
 let studioOutsideImageExistingAttachment = false;
 let studioOutsideImageAttachment = null;
+let studioOutsideImagePickedDataUrl = '';
 
 function studioChannelStorageKey(guildId) {
   return 'fh-studio-channels:v2:' + String(guildId || 'global');
@@ -3419,6 +4111,7 @@ window.addEventListener('fallen-heaven:channel-structure-update', function (even
   }, 320);
 });
 
+
 function studioChannelMeta(channelId) {
   const id = String(channelId || '').trim();
   return state.studioChannels.find(function (channel) { return String(channel.id) === id; }) || null;
@@ -3507,6 +4200,7 @@ function normalizeOutsideImageAttachment(value) {
     name: String(value.name || value.filename || 'Bild-Anhang'),
     size: Math.max(0, Number(value.size || 0)),
     contentType: String(value.contentType || value.content_type || ''),
+    mime: String(value.mime || ''),
     localAsset
   };
 }
@@ -3553,6 +4247,7 @@ function clearOutsideImage() {
   studioOutsideImageRemovalRequested = true;
   studioOutsideImageExistingAttachment = false;
   studioOutsideImageAttachment = null;
+  studioOutsideImagePickedDataUrl = '';
   ['studio-outside-image', 'studio-outside-image-name', 'studio-outside-image-size'].forEach(function (id) {
     const node = document.getElementById(id);
     if (node) node.value = '';
@@ -3565,7 +4260,7 @@ function clearOutsideImage() {
 
 async function selectOutsideImageFile(file) {
   if (!file) return;
-  if (!/^image\/(?:png|jpeg|webp|gif)$/i.test(String(file.type || ''))) { toast('Bitte wähle eine PNG-, JPG-, WEBP- oder GIF-Datei.', 'error'); return; }
+  if (!/^image\/(?:png|jpe?g|webp|gif)$/i.test(String(file.type || ''))) { toast('Bitte wähle eine PNG-, JPG-, WEBP- oder GIF-Datei.', 'error'); return; }
   if (file.size > 25 * 1024 * 1024) { toast('Das Außenbild darf maximal 25 MB groß sein.', 'error'); return; }
   const dataUrl = await new Promise(function (resolve, reject) {
     const reader = new FileReader();
@@ -3578,6 +4273,34 @@ async function selectOutsideImageFile(file) {
   });
   if (!dataUrl) return;
   studioOutsideImageRemovalRequested = false;
+  studioOutsideImagePickedDataUrl = dataUrl;
+  // Das Bild wird einmal auf den PC geladen (lokal gespeichert). Der Save
+  // schickt danach nur noch die kleine lokale Referenz statt des Riesen-
+  // Data-URLs – so gibt es keinen „ungültiges Embed-Bild“-Fehler mehr und
+  // nichts landet in einem Discord-Kanal.
+  if (state.authenticated && state.selectedGuildId) {
+    try {
+      const upload = await api.apiRequest({
+        path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/studio-image',
+        method: 'POST',
+        body: { dataUrl, name: file.name },
+        timeoutMs: 120000
+      });
+      if (!upload?.ok || !upload.data?.result?.attachment?.localAsset) {
+        throw new Error(upload?.data?.error || 'Das Bild konnte nicht gespeichert werden.');
+      }
+      studioOutsideImageAttachment = {
+        localAsset: true,
+        id: String(upload.data.result.attachment.id || ''),
+        name: String(upload.data.result.attachment.name || file.name),
+        size: Number(upload.data.result.attachment.size || 0),
+        mime: String(upload.data.result.attachment.mime || file.type || '')
+      };
+    } catch (error) {
+      toast(String(error?.message || error), 'error');
+      return;
+    }
+  }
   const outsideImage = document.getElementById('studio-outside-image');
   const outsideImageName = document.getElementById('studio-outside-image-name');
   const outsideImageSize = document.getElementById('studio-outside-image-size');
@@ -3668,7 +4391,8 @@ function renderStudioEmbedTabs() {
   }).join('');
   const add = document.getElementById('add-studio-embed');
   const remove = document.getElementById('remove-studio-embed');
-  const fixedAutomationEmbed = Boolean(state.studioSpecialTemplate);
+  const flexibleActivityInfo = state.studioSpecialTemplate === 'activityRace' && state.studioActivityRaceSection === 'ping-info';
+  const fixedAutomationEmbed = Boolean(state.studioSpecialTemplate && state.studioSpecialTemplate !== 'economyPanel' && !flexibleActivityInfo);
   if (add) add.disabled = fixedAutomationEmbed || state.studioEmbeds.length >= 10;
   if (remove) remove.disabled = fixedAutomationEmbed || state.studioEmbeds.length <= 1;
   const count = document.getElementById('studio-embed-count');
@@ -3848,19 +4572,19 @@ function createStableEmbedPreview(embed = {}, index = 0) {
     if (/^https?:\/\//i.test(String(embed.url || ''))) {
       const link = document.createElement('a');
       link.href = embed.url;
-      link.textContent = embed.title;
+      link.innerHTML = studioEmojiHtml(embed.title);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       heading.append(link);
     } else {
-      heading.textContent = embed.title;
+      heading.innerHTML = studioEmojiHtml(embed.title);
     }
     content.append(heading);
   }
 
   if (embed.description) {
     const description = document.createElement('p');
-    description.textContent = embed.description;
+    description.innerHTML = studioRichText(embed.description);
     content.append(description);
   }
 
@@ -3872,9 +4596,10 @@ function createStableEmbedPreview(embed = {}, index = 0) {
       const item = document.createElement('div');
       item.className = 'embed-field' + (field.inline ? ' inline' : '');
       const name = document.createElement('strong');
-      name.textContent = field.name || '\u200b';
+      if (state.studioSpecialTemplate === 'tempVoiceInterface') name.textContent = tempVoiceUi.plainPreview(field.name || '\u200b');
+      else name.innerHTML = studioRichText(field.name || '\u200b');
       const value = document.createElement('span');
-      value.textContent = field.value || '\u200b';
+      value.innerHTML = studioRichText(field.value || '\u200b');
       item.append(name, value);
       fieldGrid.append(item);
     });
@@ -3900,7 +4625,8 @@ function createStableEmbedPreview(embed = {}, index = 0) {
     }
     if (embed.footerText) {
       const footerText = document.createElement('span');
-      footerText.textContent = embed.footerText;
+      if (state.studioSpecialTemplate === 'tempVoiceInterface') footerText.textContent = tempVoiceUi.plainPreview(embed.footerText);
+      else footerText.innerHTML = studioRichText(embed.footerText);
       footer.append(footerText);
     }
     if (embed.timestamp !== false) {
@@ -3929,6 +4655,7 @@ function createStableEmbedPreview(embed = {}, index = 0) {
   return card;
 }
 
+
 function renderStableStudioPreview(template = {}) {
   const stack = document.getElementById('preview-embed-stack');
   if (!stack) return;
@@ -3941,16 +4668,19 @@ function currentStudioTemplate() {
   syncActiveStudioEmbed();
   syncStudioReactionRolesFromDom();
   const embeds = clone(state.studioEmbeds).slice(0, 10);
-  return {
+  const result = {
     specialTemplate: state.studioSpecialTemplate || '',
     activityRaceUsePeriodColor: state.studioSpecialTemplate === 'activityRace' && state.studioActivityUsesPeriodColor,
+    section: state.studioSpecialTemplate === 'activityRace' ? state.studioActivityRaceSection : '',
     workshopItemId: state.studioSpecialTemplate === 'steamWorkshop' ? state.studioWorkshopItemId : '',
     workshopItemTitle: state.studioSpecialTemplate === 'steamWorkshop' ? state.studioWorkshopItemTitle : '',
     workshopItemTokens: state.studioSpecialTemplate === 'steamWorkshop' && state.studioWorkshopItemTokens ? clone(state.studioWorkshopItemTokens) : null,
     workshopAssetMode: state.studioSpecialTemplate === 'steamWorkshop' ? state.studioWorkshopAssetMode : 'global',
     channelId: document.getElementById('studio-channel')?.value || state.selectedStudioChannelId || '',
     content: document.getElementById('studio-content')?.value || '',
-    outsideImageUrl: document.getElementById('studio-outside-image')?.value || '',
+    outsideImageUrl: studioOutsideImageAttachment?.localAsset
+      ? ''
+      : (studioOutsideImagePickedDataUrl || document.getElementById('studio-outside-image')?.value || ''),
     outsideImageName: document.getElementById('studio-outside-image-name')?.value || '',
     outsideImageSize: Number(document.getElementById('studio-outside-image-size')?.value || 0),
     outsideImageAttachment: studioOutsideImageAttachment ? clone(studioOutsideImageAttachment) : null,
@@ -3958,6 +4688,7 @@ function currentStudioTemplate() {
     messageId: state.activeStudioMessageId || '',
     embed: embeds[state.activeStudioEmbedIndex] || embeds[0],
     embeds,
+    studioComponents: clone(state.studioComponents),
     componentSet: document.getElementById('studio-component-set')?.value || state.studioComponentSet || 'none',
     reactionRoles: clone(state.studioReactionRoles),
     forumPost: {
@@ -3965,6 +4696,15 @@ function currentStudioTemplate() {
       appliedTags: selectedForumPostTagIds()
     }
   };
+  if (state.studioSpecialTemplate === 'tempVoiceInterface') {
+    result.channelId = '';
+    result.embeds = embeds.slice(0, 1);
+    result.embed = result.embeds[0] || normalizeStudioEmbed(tempVoiceUi.defaultStudioEmbed());
+    result.studioComponents = [];
+    result.componentSet = 'none';
+    result.reactionRoles = [];
+  }
+  return result;
 }
 
 function normalizeStudioReactionRole(entry) {
@@ -3982,6 +4722,7 @@ function normalizeStudioReactionRole(entry) {
   };
 }
 
+
 function studioRoleOptions(selected) {
   return ['<option value="">Rolle auswählen ...</option>'].concat(state.moduleRoles.map(function (role) {
     return '<option value="' + escapeHtml(role.id) + '" ' + (String(role.id) === String(selected) ? 'selected' : '') + '>' + escapeHtml(role.name) + '</option>';
@@ -3992,14 +4733,14 @@ function renderStudioReactionRoles() {
   const host = document.getElementById('studio-reaction-role-list');
   const count = document.getElementById('studio-reaction-role-count');
   if (!host) return;
-  if (count) count.textContent = state.studioReactionRoles.length + ' Reaktionen';
+  if (count) count.textContent = state.studioReactionRoles.length + ' Button' + (state.studioReactionRoles.length === 1 ? '' : 's');
   host.innerHTML = state.studioReactionRoles.length ? state.studioReactionRoles.map(function (entry, index) {
     const emojiPreview = entry.url
       ? '<img src="' + escapeHtml(entry.url) + '" alt="">'
       : '<strong>' + escapeHtml(entry.emoji || entry.emojiName || '?') + '</strong>';
     const emojiName = entry.emojiName || entry.name || entry.emoji || 'Emoji auswählen';
     return '<div class="studio-reaction-role-row" data-reaction-role-row="' + index + '"><button class="studio-reaction-emoji-picker-button" type="button" data-pick-reaction-emoji="' + index + '"><span class="studio-reaction-emoji">' + emojiPreview + '</span><span class="studio-reaction-emoji-copy"><b>' + escapeHtml(emojiName) + '</b><small>Server- oder Bot-Emoji auswählen</small></span><span class="studio-reaction-picker-chevron">⌄</span><input type="hidden" data-reaction-emoji value="' + escapeHtml(entry.emoji || entry.emojiName) + '"></button><label>Zielrolle<select data-reaction-role-id>' + studioRoleOptions(entry.roleId) + '</select></label><label class="studio-reaction-exclusive"><input type="checkbox" data-reaction-exclusive ' + (entry.exclusive ? 'checked' : '') + '><span>Nur eine Rolle</span></label><button type="button" data-remove-reaction-role="' + index + '" aria-label="Entfernen">&times;</button></div>';
-  }).join('') : '<div class="studio-reaction-empty"><b>Noch keine Reaction Roles</b><span>Übernimm eine bestehende Nachricht oder füge eine Reaktion hinzu.</span></div>';
+  }).join('') : '<div class="studio-reaction-empty"><b>Noch keine Rollen-Buttons</b><span>Übernimm eine bestehende Nachricht oder füge einen Button hinzu.</span></div>';
   renderStudioReactionPreview();
 }
 
@@ -4022,7 +4763,9 @@ function renderStudioReactionPreview() {
   if (!host) return;
   host.innerHTML = state.studioReactionRoles.map(function (entry) {
     const preview = entry.url ? '<img src="' + escapeHtml(entry.url) + '" alt="">' : escapeHtml(entry.emoji || entry.emojiName || '?');
-    return '<span>' + preview + '<b>1</b></span>';
+    const role = state.moduleRoles.find(function (item) { return String(item.id) === String(entry.roleId); });
+    const label = role?.name || entry.emojiName || 'Rolle';
+    return '<span class="function-button style-1">' + preview + '<b>' + escapeHtml(label) + '</b></span>';
   }).join('');
   host.hidden = !state.studioReactionRoles.length;
 }
@@ -4039,10 +4782,32 @@ function renderStudioComponentSetPreview() {
   card?.classList.toggle('active', active);
   if (!host) return;
   host.innerHTML = active
-    ? ['Mein Konto', 'VIP-Shop', 'VIP verschenken', 'Coins kaufen', 'Boost-Fortschritt', 'VIP-Vorteile', 'Coin-Verwaltung']
+    ? ['Mein Konto', 'VIP-Shop', 'VIP verschenken'].concat(state.config?.heavenEconomy?.coinGiftsEnabled === false ? [] : ['Coins verschenken'], ['Coins kaufen', 'Boost-Fortschritt', 'Coin-Verwaltung'])
       .map(function (label, index) { return '<span class="function-button style-' + (index % 3) + '">' + escapeHtml(label) + '</span>'; }).join('')
     : '';
   host.hidden = !active;
+}
+function renderStudioComponentsPreview() {
+  const host = document.getElementById('preview-imported-components') || document.getElementById('preview-function-set');
+  if (state.studioSpecialTemplate === 'tempVoiceInterface') {
+    if (!host) return;
+    const config = state.config?.tempVoice || {};
+    const labels = [];
+    if (config?.allowRename !== false) labels.push('✏️');
+    if (config?.allowLimit !== false) labels.push('🔢');
+    if (config?.allowThreads !== false) labels.push('🧵');
+    if (config?.allowRegion !== false) labels.push('🌍');
+    if (config?.allowLock !== false) labels.push('🔒');
+    labels.push('🚪', '👑');
+    if (config?.allowTransfer !== false) labels.push('🔁');
+    labels.push('🗑️');
+    if (config?.rememberUserProfiles !== false) labels.push('↩️');
+    host.innerHTML = labels
+      .map(function (label, index) { return '<span class="function-button style-' + (index % 3) + '">' + label + '</span>'; }).join('');
+    host.hidden = false;
+    return;
+  }
+  window.FHCCStudioComponents.renderPreview(state.studioComponents, host);
 }
 
 function welcomeFarewellStudioTemplate(config) {
@@ -4055,6 +4820,9 @@ function welcomeFarewellStudioTemplate(config) {
     channelId: String(config?.welcomeChannelId || ''),
     content: Object.prototype.hasOwnProperty.call(design, 'content') ? String(design.content || '') : '{user}',
     outsideImageUrl: String(design.outsideImageUrl || ''),
+    outsideImageName: String(design.outsideImageAttachment?.name || design.outsideImageName || ''),
+    outsideImageSize: Number(design.outsideImageAttachment?.size || design.outsideImageSize || 0),
+    outsideImageAttachment: design.outsideImageAttachment && typeof design.outsideImageAttachment === 'object' ? clone(design.outsideImageAttachment) : null,
     embeds: sources.map(function (embed) {
       return {
         title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#58b9ff',
@@ -4095,112 +4863,57 @@ function welcomeFarewellPreviewTemplate(template) {
   return preview;
 }
 
-function activityRaceStudioTemplate(config) {
-  const design = config?.panelDesign || {};
-  const embed = design.embed || {};
+function boostAnnounceStudioTemplate(config) {
+  const design = config?.boostAnnounceTemplate || {};
+  const sources = Array.isArray(design.embeds) && design.embeds.length
+    ? design.embeds
+    : [design.embed || studioTemplates.welcome.embed];
   return {
-    specialTemplate: 'activityRace',
-    activityRaceUsePeriodColor: !String(embed.color || '').trim(),
-    channelId: String(config?.panelChannelId || ''),
-    content: String(design.content || ''),
+    specialTemplate: 'boostAnnounce',
+    channelId: String(config?.boostAnnounceChannelId || ''),
+    content: Object.prototype.hasOwnProperty.call(design, 'content') ? String(design.content || '') : '{usermention}',
     outsideImageUrl: design.outsideImageAttachment ? '' : String(design.outsideImageUrl || ''),
-    outsideImageName: String(design.outsideImageAttachment?.name || ''),
-    outsideImageSize: Number(design.outsideImageAttachment?.size || 0),
-    outsideImageAttachment: design.outsideImageAttachment || null,
-    embed: {
-      title: Object.prototype.hasOwnProperty.call(embed, 'title') ? embed.title : '{period}',
-      url: embed.url || '',
-      description: Object.prototype.hasOwnProperty.call(embed, 'description')
-        ? embed.description
-        : 'Die aktivsten Mitglieder im Chat und Sprachchat.\n*{completion}*',
-      color: embed.color || '#6fd8ff',
-      authorName: Object.prototype.hasOwnProperty.call(embed, 'authorName') ? embed.authorName : 'FALLEN HEAVEN · AKTIVITÄTS-LIGA',
-      authorIconUrl: embed.authorIconUrl || '',
-      thumbnailUrl: embed.thumbnailUrl || '',
-      imageUrl: embed.imageUrl || '',
-      footerText: Object.prototype.hasOwnProperty.call(embed, 'footerText') ? embed.footerText : '{period} · nachvollziehbar und automatisch ausgewertet',
-      footerIconUrl: embed.footerIconUrl || '',
-      timestamp: embed.timestamp !== false,
-      fields: Array.isArray(embed.fields) ? clone(embed.fields).slice(0, 21) : []
-    },
+    outsideImageName: String(design.outsideImageAttachment?.name || design.outsideImageName || ''),
+    outsideImageSize: Number(design.outsideImageAttachment?.size || design.outsideImageSize || 0),
+    outsideImageAttachment: design.outsideImageAttachment && typeof design.outsideImageAttachment === 'object' ? clone(design.outsideImageAttachment) : null,
+    embeds: sources.map(function (embed) {
+      return {
+        title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#a596ff',
+        authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '',
+        imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '',
+        timestamp: embed.timestamp === true, fields: Array.isArray(embed.fields) ? clone(embed.fields).slice(0, 25) : []
+      };
+    }),
     componentSet: 'none',
     reactionRoles: []
   };
 }
 
-function activityRacePreviewValue(value) {
+function boostAnnouncePreviewValue(value) {
+  const guildName = state.guilds.find(function (guild) { return String(guild.id) === String(state.selectedGuildId); })?.name || 'FALLEN HEAVEN';
   return String(value || '')
-    .replaceAll('{server}', state.guilds.find(function (guild) { return String(guild.id) === String(state.selectedGuildId); })?.name || 'FALLEN HEAVEN')
-    .replaceAll('{period}', 'Heute')
-    .replaceAll('{status}', 'Live-Zwischenstand')
-    .replaceAll('{completion}', 'Tagesrollen wechseln live; Wochen- und Monatsrollen werden nach dem vollständigen Abschluss vergeben.')
-    .replaceAll('{range}', new Date().toLocaleDateString('de-DE'))
-    .replaceAll('{nextEvaluation}', '3 Std. 12 Min.');
+    .replaceAll('${usermention}', '@NeuesMitglied')
+    .replaceAll('${usernickname}', 'Max Muster')
+    .replaceAll('${boostcount}', '2')
+    .replaceAll('${guildname}', guildName)
+    .replaceAll('{usermention}', '@NeuesMitglied')
+    .replaceAll('{user}', '@NeuesMitglied')
+    .replaceAll('{username}', 'maxmuster')
+    .replaceAll('{nickname}', 'Max Muster')
+    .replaceAll('{boostcount}', '2')
+    .replaceAll('{guildname}', guildName)
+    .replaceAll('{guild}', guildName);
 }
 
-function activityRacePreviewTemplate(template) {
-  if (state.studioSpecialTemplate !== 'activityRace') return template;
+function boostAnnouncePreviewTemplate(template) {
+  if (state.studioSpecialTemplate !== 'boostAnnounce') return template;
   const preview = clone(template);
-  const embed = preview.embed || preview.embeds?.[0] || {};
-  const dynamicFields = [
-    { name: 'CHAT', value: '🥇 @Mitglied\n> **128 Nachrichten**\n\n🥈 @Mitglied\n> **104 Nachrichten**\n\n🥉 @Mitglied\n> **91 Nachrichten**', inline: true },
-    { name: 'SPRACHCHAT', value: '🥇 @Mitglied\n> **8 Std. 14 Min.**\n\n🥈 @Mitglied\n> **6 Std. 42 Min.**\n\n🥉 @Mitglied\n> **5 Std. 08 Min.**', inline: true },
-    { name: 'NÄCHSTE AUSWERTUNG', value: '3 Std. 12 Min.', inline: true },
-    { name: 'ZEITRAUM', value: new Date().toLocaleDateString('de-DE'), inline: true }
-  ];
-  const renderEmbed = function (source) {
-    const result = clone(source || {});
-    ['title', 'description', 'authorName', 'footerText'].forEach(function (key) { result[key] = activityRacePreviewValue(result[key]); });
-    result.fields = dynamicFields.concat((Array.isArray(result.fields) ? result.fields : []).map(function (field) {
-      return { ...field, name: activityRacePreviewValue(field.name), value: activityRacePreviewValue(field.value) };
-    }));
-    return result;
-  };
-  preview.content = activityRacePreviewValue(preview.content);
-  preview.embed = renderEmbed(embed);
-  preview.embeds = [preview.embed];
-  return preview;
-}
-
-function aiChatWelcomeStudioTemplate(config) {
-  const templates = Array.isArray(config?.embeds?.templates) ? config.embeds.templates : [];
-  const stored = templates.find(function (template) { return template.id === 'ai-chat-welcome'; });
-  const fallback = studioTemplates['ai-chat-welcome'] || {};
-  const embed = (stored?.embed || fallback.embed || {});
-  return {
-    specialTemplate: 'aiChat',
-    channelId: String(config?.aiChat?.channelId || ''),
-    content: Object.prototype.hasOwnProperty.call(stored, 'content') ? String(stored.content || '') : String(fallback.content || ''),
-    outsideImageUrl: '',
-    embeds: [{
-      title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#9b59b6',
-      authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '',
-      imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '',
-      timestamp: embed.timestamp !== false, fields: Array.isArray(embed.fields) ? clone(embed.fields).slice(0, 25) : []
-    }],
-    componentSet: 'none',
-    reactionRoles: []
-  };
-}
-
-function aiChatWelcomePreviewValue(value) {
-  const guild = state.guilds.find(function (guild) { return String(guild.id) === String(state.selectedGuildId); });
-  return String(value || '')
-    .replaceAll('{guild}', guild?.name || 'FALLEN HEAVEN')
-    .replaceAll('{memberCount}', String(guild?.memberCount || 42))
-    .replaceAll('{date}', new Date().toLocaleDateString('de-DE'))
-    .replaceAll('{time}', new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }));
-}
-
-function aiChatWelcomePreviewTemplate(template) {
-  if (state.studioSpecialTemplate !== 'aiChat') return template;
-  const preview = clone(template);
-  preview.content = aiChatWelcomePreviewValue(preview.content);
+  preview.content = boostAnnouncePreviewValue(preview.content);
   preview.embeds = (preview.embeds || [preview.embed || {}]).map(function (source) {
     const embed = clone(source);
-    ['title', 'description', 'authorName', 'footerText'].forEach(function (key) { embed[key] = aiChatWelcomePreviewValue(embed[key]); });
+    ['title', 'description', 'authorName', 'footerText'].forEach(function (key) { embed[key] = boostAnnouncePreviewValue(embed[key]); });
     embed.fields = (embed.fields || []).map(function (field) {
-      return { ...field, name: aiChatWelcomePreviewValue(field.name), value: aiChatWelcomePreviewValue(field.value) };
+      return { ...field, name: boostAnnouncePreviewValue(field.name), value: boostAnnouncePreviewValue(field.value) };
     });
     return embed;
   });
@@ -4208,19 +4921,21 @@ function aiChatWelcomePreviewTemplate(template) {
   return preview;
 }
 
-async function openAiChatWelcomeStudio() {
+async function openBoostAnnounceStudio() {
   if (!state.authenticated || !state.selectedGuildId) {
     toast('Wähle zuerst einen Server.', 'error');
     return;
   }
   if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
   state.activeStudioMessageId = '';
-  loadStudioTemplate(aiChatWelcomeStudioTemplate(state.config));
+  state.studioSourceMessage = null;
+  loadStudioTemplate(boostAnnounceStudioTemplate(state.config?.boostRoles));
   renderDrafts();
-  toast('AI-Chat-Info-Embed im bestehenden Embed Studio geöffnet.', 'success');
+  toast('Boost-Benachrichtigung im bestehenden Embed Studio geöffnet.', 'success');
 }
 
-async function saveAiChatWelcomeStudioTemplate() {
+async function saveBoostAnnounceStudioTemplate() {
   if (!state.authenticated || !state.selectedGuildId) {
     toast('Wähle zuerst einen Server.', 'error');
     return false;
@@ -4231,29 +4946,447 @@ async function saveAiChatWelcomeStudioTemplate() {
     toast(validation.errors[0], 'error');
     return false;
   }
-  if (state.studioEmbeds.length !== 1) {
-    toast('Das AI-Chat-Info-Embed verwendet genau ein Embed. Entferne weitere Embeds, bevor du speicherst.', 'error');
-    return false;
-  }
-  const embeds = (template.embeds || [template.embed || {}]).slice(0, 10).map(function (embed) {
-    return {
-      title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#9b59b6',
-      authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '',
-      imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '',
-      timestamp: embed.timestamp === true, fields: Array.isArray(embed.fields) ? clone(embed.fields).slice(0, 25) : []
-    };
-  });
-  const current = clone(state.config?.embeds || {});
-  const templates = Array.isArray(current.templates) ? current.templates : [];
-  const stored = templates.find(function (entry) { return entry.id === 'ai-chat-welcome'; });
-  const next = stored
-    ? templates.map(function (entry) { return entry.id === 'ai-chat-welcome' ? { ...entry, content: String(template.content || ''), enabled: true, embed: embeds[0] || entry.embed } : entry; })
-    : templates.concat([{ id: 'ai-chat-welcome', name: 'AI Chat Willkommen', category: 'Automation', channelId: '', content: String(template.content || ''), messageId: '', enabled: true, embed: embeds[0] || {} }]);
-  const saved = await savePatch({ embeds: { ...current, templates: next } }, 'AI-Chat-Info-Embed gespeichert. Es wird beim nächsten Start oder Config-Update im Kanal aktualisiert.');
-  if (saved) loadStudioTemplate(aiChatWelcomeStudioTemplate(state.config));
+  // Außenbild wie bei Welcome/Farewell und der Aktivitäts-Liga speichern:
+  // lokal gewählte Datei (localAsset), bereits gesendeter Discord-Anhang oder
+  // URL wird mitgespeichert, damit das Bild beim nächsten Boost-Versand als
+  // echter Anhang erscheint statt stillschweigend verworfen zu werden.
+  const boostAnnounceTemplate = {
+    content: String(template.content || '').slice(0, 2000),
+    outsideImageUrl: String(template.outsideImageUrl || ''),
+    outsideImageName: String(template.outsideImageName || ''),
+    outsideImageSize: Number(template.outsideImageSize || 0),
+    outsideImageAttachment: normalizeOutsideImageAttachment(template.outsideImageAttachment),
+    removeOutsideImage: template.removeOutsideImage === true,
+    embeds: (template.embeds || [template.embed || {}]).slice(0, 10).map(function (embed) {
+      return {
+        title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#a596ff',
+        authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '',
+        imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '',
+        timestamp: embed.timestamp === true, fields: Array.isArray(embed.fields) ? clone(embed.fields).slice(0, 25) : []
+      };
+    })
+  };
+  const current = clone(state.config?.boostRoles || {});
+  const saved = await savePatch({ boostRoles: { ...current, boostAnnounceChannelId: template.channelId || current.boostAnnounceChannelId || '', boostAnnounceTemplate } }, 'Boost-Benachrichtigung gespeichert. Nach Aktivierung wird sie bei jedem neuen Boost mit der passenden Boost-Zahl gesendet.');
+  if (saved) loadStudioTemplate(boostAnnounceStudioTemplate(state.config?.boostRoles));
   return saved;
 }
 
+function boostTopStudioTemplate(config) {
+  const design = config?.boostTopTemplate || {};
+  const sources = Array.isArray(design.embeds) && design.embeds.length
+    ? design.embeds
+    : [design.embed || studioTemplates.welcome.embed];
+  function expandedBoostTopField(position) {
+    return '{boostMarker' + position + '} {boost' + position + '}\n> **{boostCount' + position + '}×** geboostet';
+  }
+  function editableBoostTopValue(value) {
+    let result = String(value || '').replaceAll('{boostRanking}', [1, 2, 3].map(expandedBoostTopField).join('\n\n'));
+    [1, 2, 3].forEach(function (position) {
+      result = result
+        .replaceAll('{boostBlock' + position + '}', expandedBoostTopField(position))
+        .replaceAll('{placeLine' + position + '}', expandedBoostTopField(position));
+    });
+    return result;
+  }
+  const fallbackFields = [
+    { name: String(config?.boostTopPlaceName1 || config?.boostTopPlaceFieldName || 'PLATZ 1'), value: '{boostMarker1} {boost1}\n> **{boostCount1}×** geboostet', inline: true },
+    { name: String(config?.boostTopPlaceName2 || 'PLATZ 2'), value: '{boostMarker2} {boost2}\n> **{boostCount2}×** geboostet', inline: true },
+    { name: String(config?.boostTopPlaceName3 || 'PLATZ 3'), value: '{boostMarker3} {boost3}\n> **{boostCount3}×** geboostet', inline: true },
+    { name: String(config?.boostTopStatusFieldName || '{statusFieldName}'), value: '{status}', inline: true },
+    { name: String(config?.boostTopNextEvaluationFieldName || '{nextEvalFieldName}'), value: '{nextEvaluation}', inline: true }
+  ];
+  return {
+    specialTemplate: 'boostTop',
+    channelId: String(config?.boostTopChannelId || ''),
+    boostTopPlaceName1: String(config?.boostTopPlaceName1 || 'PLATZ 1'),
+    boostTopPlaceName2: String(config?.boostTopPlaceName2 || 'PLATZ 2'),
+    boostTopPlaceName3: String(config?.boostTopPlaceName3 || 'PLATZ 3'),
+    content: Object.prototype.hasOwnProperty.call(design, 'content') ? String(design.content || '') : '',
+    outsideImageUrl: design.outsideImageAttachment ? '' : String(design.outsideImageUrl || ''),
+    outsideImageName: String(design.outsideImageAttachment?.name || ''),
+    outsideImageSize: Number(design.outsideImageAttachment?.size || 0),
+    outsideImageAttachment: design.outsideImageAttachment || null,
+    embeds: sources.slice(0, 1).map(function (embed) {
+      return {
+        title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#a596ff',
+        authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '',
+        imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '',
+        timestamp: embed.timestamp === true,
+        fields: Array.isArray(embed.fields) && embed.fields.length
+          ? clone(embed.fields).slice(0, 25).map(function (field) {
+            return { ...field, value: editableBoostTopValue(field.value) };
+          })
+          : clone(fallbackFields)
+      };
+    }),
+    componentSet: 'none',
+    reactionRoles: []
+  };
+}
+
+function boostTopPreviewValue(value) {
+  const guildName = state.guilds.find(function (guild) { return String(guild.id) === String(state.selectedGuildId); })?.name || 'FALLEN HEAVEN';
+  let result = String(value || '')
+    .replaceAll('{server}', guildName)
+    .replaceAll('{guildname}', guildName)
+    .replaceAll('{guild}', guildName)
+    .replaceAll('{period}', 'Live')
+    .replaceAll('{status}', 'Live-Zwischenstand')
+    .replaceAll('{boostcount}', '12')
+    .replaceAll('{range}', 'Stand: 14:32 Uhr')
+    .replaceAll('{nextEvaluation}', 'beim nächsten Boost oder Abgleich');
+  const samples = [
+    { marker: '🥇', mention: '@Beispiel', value: '3', block: '🥇 @Beispiel – **3×** geboostet' },
+    { marker: '🥈', mention: '@Zweitbester', value: '2', block: '🥈 @Zweitbester – **2×** geboostet' },
+    { marker: '🥉', mention: '@Dritter', value: '1', block: '🥉 @Dritter – **1×** geboostet' }
+  ];
+  samples.forEach(function (sample, index) {
+    const position = index + 1;
+    result = result
+      .replaceAll('{boost' + position + '}', sample.mention)
+      .replaceAll('{boostMention' + position + '}', sample.mention)
+      .replaceAll('{boostValue' + position + '}', sample.value)
+      .replaceAll('{boostCount' + position + '}', sample.value)
+      .replaceAll('{boostMarker' + position + '}', sample.marker)
+      .replaceAll('{boostBlock' + position + '}', sample.block)
+      .replaceAll('{placeLine' + position + '}', sample.block)
+      .replaceAll('{placeName' + position + '}', 'PLATZ ' + position);
+  });
+  result = result
+    .replaceAll('{statusFieldName}', 'STATUS')
+    .replaceAll('{nextEvalFieldName}', 'NÄCHSTE AUSWERTUNG');
+  return result;
+}
+
+function boostTopPreviewTemplate(template) {
+  if (state.studioSpecialTemplate !== 'boostTop') return template;
+  const preview = clone(template);
+  preview.content = boostTopPreviewValue(preview.content);
+  preview.embeds = (preview.embeds || [preview.embed || {}]).map(function (source) {
+    const embed = clone(source);
+    ['title', 'description', 'authorName', 'footerText'].forEach(function (key) { embed[key] = boostTopPreviewValue(embed[key]); });
+    embed.fields = (embed.fields || []).map(function (field) {
+      return { ...field, name: boostTopPreviewValue(field.name), value: boostTopPreviewValue(field.value) };
+    });
+    return embed;
+  });
+  preview.embed = preview.embeds[0] || {};
+  return preview;
+}
+
+async function openBoostTopStudio() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
+  state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
+  loadStudioTemplate(boostTopStudioTemplate(state.config?.boostRoles));
+  renderDrafts();
+  toast('Top-Booster-Liga im bestehenden Embed Studio geöffnet.', 'success');
+}
+
+async function saveBoostTopStudioTemplate() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return false;
+  }
+  const template = currentStudioTemplate();
+  const validation = renderStudioLimits(template);
+  if (!validation.valid) {
+    toast(validation.errors[0], 'error');
+    return false;
+  }
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/boost-top/design',
+    body: { template: { ...template, embeds: (template.embeds || [template.embed || {}]).slice(0, 1) }, boostTopPlaceName1: template.boostTopPlaceName1 || '', boostTopPlaceName2: template.boostTopPlaceName2 || '', boostTopPlaceName3: template.boostTopPlaceName3 || '' },
+    errorMessage: 'Die Top-Booster-Vorlage konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      state.config.boostRoles = result.config?.boostRoles || state.config.boostRoles;
+      loadStudioTemplate(boostTopStudioTemplate(state.config.boostRoles));
+      void refreshBoostTopStatus();
+    },
+    okMessage: function (result) {
+      return result.panel
+        ? 'Top-3-Vorlage gespeichert und Live-Panel aktualisiert.'
+        : 'Top-3-Vorlage gespeichert. Das Panel wird nach der Aktivierung automatisch erstellt.';
+    }
+  });
+}function vipPanelStudioTemplate(config) {
+  const design = config?.vipPanelTemplate || {};
+  const sources = Array.isArray(design.embeds) && design.embeds.length
+    ? design.embeds
+    : [design.embed || studioTemplates.welcome.embed];
+  // Tier-Template-Config: Individual editierbare Platzhalter
+  const tierFieldTemplate = design.vipTierFieldTemplate || '{tierEmoji} {tierName} \u00b7 {tierMemberCount}';
+  const tierMemberFormat = design.vipTierMemberFormat || '<@{memberId}>';
+  const tierEmptyText = design.vipTierEmptyText || '*Noch keine Mitglieder.*';
+  const tierOverflowText = design.vipTierOverflowText || '… und {overflowCount} weitere';
+  // Virtuelle Embed-Felder für die Tier-Formate: Diese erscheinen als
+  // editierbare Felder im Studio, sodass der Nutzer die Platzhalter-Rahmen
+  // frei gestalten kann. Beim Speichern werden sie wieder extrahiert.
+  // Platzhalter-Beschreibungen: {tierEmoji} = Rang-Emoji (👑/💎/⭐),
+  // {tierName} = Stufenname (VIP: GOLD), {tierMemberCount} = Anzahl,
+  // {memberId} = Discord-ID, {memberName} = Anzeigename,
+  // {overflowCount} = verbleibende Members über 15
+  const resolvedExamples = [
+    '👑 VIP: GOLD · 5',
+    '💎 VIP: DIAMANT · 3',
+    '⭐ VIP: SILBER · 2'
+  ];
+  const virtualTierFields = [
+    { name: '📝 STUFEN NAME — \u200b\u200b{Name + Emoji + Anzahl pro Stufe}\u200b\u200b  →  ' + resolvedExamples[0], value: tierFieldTemplate, inline: false, __vipTier: 'fieldTemplate' },
+    { name: '👤 MITGLIED FORMAT — \u200b\u200bWie jedes Mitglied in der Stufe angezeigt wird}\u200b  →  <@1234567890>', value: tierMemberFormat, inline: false, __vipTier: 'memberFormat' },
+    { name: '📭 LEERER STUFEN-TEXT — \u200b\u200bWenn Stufe keine Members hat}\u200b  →  Noch keine Mitglieder.', value: tierEmptyText, inline: false, __vipTier: 'emptyText' },
+    { name: '➕ MEHR-ANZEIGE — \u200b\u200b\u200bAb 15+ Members}\u200b  →  … und 3 weitere', value: tierOverflowText, inline: false, __vipTier: 'overflowText' }
+  ];
+  // Benutzerdefinierte Felder (aus gespeichertem Design) + virtuelle Tier-Felder
+  const userFields = Array.isArray(sources[0]?.fields) ? clone(sources[0].fields).slice(0, 21) : [];
+  // Alte virtuelle Felder beim erneuten Laden filtern
+  const cleanUserFields = userFields.filter(function (f) { return !f.__vipTier; });
+  const allFields = cleanUserFields.concat(virtualTierFields);
+  return {
+    specialTemplate: 'vipPanel',
+    channelId: String(config?.vipPanelChannelId || ''),
+    content: Object.prototype.hasOwnProperty.call(design, 'content') ? String(design.content || '') : '',
+    outsideImageUrl: design.outsideImageAttachment ? '' : String(design.outsideImageUrl || ''),
+    outsideImageName: String(design.outsideImageAttachment?.name || ''),
+    outsideImageSize: Number(design.outsideImageAttachment?.size || 0),
+    outsideImageAttachment: design.outsideImageAttachment || null,
+    embeds: sources.slice(0, 1).map(function (embed) {
+      return {
+        title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#ffbd59',
+        authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '', imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '', timestamp: embed.timestamp === true, fields: allFields.slice(0, 25)
+      };
+    }),
+    componentSet: 'none',
+    reactionRoles: []
+  };
+}
+
+function vipPanelPreviewValue(value) {
+  const guildName = state.guilds.find(function (guild) { return String(guild.id) === String(state.selectedGuildId); })?.name || 'FALLEN HEAVEN';
+  return String(value || '')
+    .replaceAll('{server}', guildName)
+    .replaceAll('{guildname}', guildName)
+    .replaceAll('{guild}', guildName)
+    .replaceAll('{memberCount}', '12')
+    .replaceAll('{tierCount}', '4')
+    .replaceAll('{date}', '08.08.2026')
+    .replaceAll('{time}', '14:32')
+    .replaceAll('{tierEmoji}', '👑')
+    .replaceAll('{tierName}', 'VIP: GOLD')
+    .replaceAll('{tierMemberCount}', '5')
+    .replaceAll('{memberId}', '1234567890')
+    .replaceAll('{memberName}', 'Max Muster')
+    .replaceAll('{overflowCount}', '3');
+}
+
+function vipPanelPreviewTemplate(template) {
+  if (state.studioSpecialTemplate !== 'vipPanel') return template;
+  const preview = clone(template);
+  preview.content = vipPanelPreviewValue(preview.content);
+  preview.embeds = (preview.embeds || [preview.embed || {}]).map(function (source) {
+    const embed = clone(source);
+    ['title', 'description', 'authorName', 'footerText'].forEach(function (key) { embed[key] = vipPanelPreviewValue(embed[key]); });
+    // Virtuelle Tier-Felder extrahieren und aus Preview entfernen
+    const allFields = Array.isArray(embed.fields) ? embed.fields : [];
+    const tierFieldConfig = { fieldTemplate: '{tierEmoji} {tierName} \u00b7 {tierMemberCount}', memberFormat: '<@{memberId}>', emptyText: '*Noch keine Mitglieder.*', overflowText: '… und {overflowCount} weitere' };
+    allFields.forEach(function (f) {
+      if (f.__vipTier === 'fieldTemplate') tierFieldConfig.fieldTemplate = String(f.value || tierFieldConfig.fieldTemplate);
+      else if (f.__vipTier === 'memberFormat') tierFieldConfig.memberFormat = String(f.value || tierFieldConfig.memberFormat);
+      else if (f.__vipTier === 'emptyText') tierFieldConfig.emptyText = String(f.value || tierFieldConfig.emptyText);
+      else if (f.__vipTier === 'overflowText') tierFieldConfig.overflowText = String(f.value || tierFieldConfig.overflowText);
+    });
+    // Benutzerdefinierte Felder (ohne virtuelle) + Mock-Tier-Felder
+    const userFields = allFields.filter(function (f) { return !f.__vipTier; }).map(function (field) {
+      return { ...field, name: vipPanelPreviewValue(field.name), value: vipPanelPreviewValue(field.value) };
+    });
+    const mockTiers = [
+      { emoji: '👑', name: 'VIP: GOLD', count: 5, members: ['Max Muster', 'Lena Schmidt', 'Tom Becker'] },
+      { emoji: '💎', name: 'VIP: DIAMANT', count: 3, members: ['Anna Weber', 'Lisa Braun'] },
+      { emoji: '⭐', name: 'VIP: SILBER', count: 2, members: ['Peter Kun'] }
+    ];
+    const tierFields = mockTiers.map(function (tier) {
+      const memberLines = tier.members.map(function (name) {
+        return tierFieldConfig.memberFormat.replaceAll('{memberId}', '1234567890').replaceAll('{memberName}', name);
+      });
+      if (tier.count > tier.members.length) {
+        memberLines.push(tierFieldConfig.overflowText.replaceAll('{overflowCount}', String(tier.count - tier.members.length)));
+      }
+      return {
+        name: tierFieldConfig.fieldTemplate
+          .replaceAll('{tierEmoji}', tier.emoji)
+          .replaceAll('{tierName}', tier.name)
+          .replaceAll('{tierMemberCount}', String(tier.count))
+          .replaceAll('{server}', preview.embed.title || 'FALLEN HEAVEN')
+          .replaceAll('{date}', '08.08.2026')
+          .replaceAll('{time}', '14:32')
+          .slice(0, 256),
+        value: memberLines.join('\n').slice(0, 1024),
+        inline: false
+      };
+    });
+    embed.fields = userFields.concat(tierFields);
+    return embed;
+  });
+  preview.embed = preview.embeds[0] || {};
+  return preview;
+}
+
+async function openVipPanelStudio() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
+  state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
+  loadStudioTemplate(vipPanelStudioTemplate(state.config?.heavenEconomy));
+  renderDrafts();
+  toast('VIP-Panels im bestehenden Embed Studio geöffnet.', 'success');
+}
+
+async function saveVipPanelStudioTemplate() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return false;
+  }
+  const template = currentStudioTemplate();
+  const validation = renderStudioLimits(template);
+  if (!validation.valid) {
+    toast(validation.errors[0], 'error');
+    return false;
+  }
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/vip-panels/design',
+    body: {
+      template: { ...template, embeds: (template.embeds || [template.embed || {}]).slice(0, 1) },
+      channelId: template.channelId || ''
+    },
+    errorMessage: 'Die VIP-Panel-Vorlage konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      state.config.heavenEconomy = result.config?.heavenEconomy || state.config.heavenEconomy;
+      loadStudioTemplate(vipPanelStudioTemplate(state.config.heavenEconomy));
+      void refreshVipPanelsStatus();
+    },
+    okMessage: function (result) {
+      return (result.panels && result.panels.length)
+        ? 'VIP-Embed gespeichert und Live-Panel aktualisiert.'
+        : 'VIP-Embed gespeichert. Es wird nach der Aktivierung automatisch erstellt.';
+    }
+  });
+}
+
+// ---- Editierbare VIP-DM-Embeds (Sektionen giftReceived / vipPurchased /
+// coinsReceived / boostMilestone) – Muster wie die Zähl-Kanal-DM-Embeds ----
+function vipDmStudioTemplate(config, sectionId) {
+  const design = config?.dmDesigns?.[sectionId] || {};
+  return {
+    specialTemplate: 'vipDm',
+    vipDmSection: sectionId,
+    channelId: '',
+    content: '',
+    outsideImageUrl: '',
+    outsideImageName: '',
+    outsideImageSize: 0,
+    outsideImageAttachment: null,
+    embeds: [{
+      title: design.title || '', url: design.url || '', description: design.description || '', color: design.color || '#7772ff',
+      authorName: design.authorName || '', authorIconUrl: design.authorIconUrl || '', thumbnailUrl: design.thumbnailUrl || '',
+      imageUrl: design.imageUrl || '', footerText: design.footerText || '', footerIconUrl: design.footerIconUrl || '',
+      timestamp: design.timestamp === true, fields: Array.isArray(design.fields) ? clone(design.fields).slice(0, 25) : []
+    }],
+    componentSet: 'none',
+    reactionRoles: []
+  };
+}
+
+function vipDmPreviewValue(value) {
+  const guildName = state.guilds.find(function (guild) { return String(guild.id) === String(state.selectedGuildId); })?.name || 'FALLEN HEAVEN';
+  return String(value || '')
+    .replaceAll('{server}', guildName)
+    .replaceAll('{guild}', guildName)
+    .replaceAll('{target}', 'Max Muster')
+    .replaceAll('{targetMention}', '@MaxMuster')
+    .replaceAll('{tier}', 'VIP: GOLD')
+    .replaceAll('{price}', '1.500 Coins')
+    .replaceAll('{giver}', 'Lena')
+    .replaceAll('{giverMention}', '@Lena')
+    .replaceAll('{coins}', '100 Coins')
+    .replaceAll('{balance}', '2.400 Coins')
+    .replaceAll('{giverBalance}', '1.725 Coins').replaceAll('{targetBalance}', '675 Coins').replaceAll('{messageBlock}', '\n\n> Viel Freude damit!').replaceAll('{message}', 'Viel Freude damit!').replaceAll('{transactionId}', 'FH-GIFT-8X4K2')
+    .replaceAll('{levels}', '**3×**, **4×**')
+    .replaceAll('{reason}', 'Danke für deine Unterstützung');
+}
+
+function vipDmPreviewTemplate(template) {
+  if (state.studioSpecialTemplate !== 'vipDm') return template;
+  const preview = clone(template);
+  preview.content = vipDmPreviewValue(preview.content);
+  preview.embeds = (preview.embeds || [preview.embed || {}]).map(function (source) {
+    const embed = clone(source);
+    ['title', 'description', 'authorName', 'footerText'].forEach(function (key) { embed[key] = vipDmPreviewValue(embed[key]); });
+    embed.fields = (embed.fields || []).map(function (field) {
+      return { ...field, name: vipDmPreviewValue(field.name), value: vipDmPreviewValue(field.value) };
+    });
+    return embed;
+  });
+  preview.embed = preview.embeds[0] || {};
+  return preview;
+}
+
+async function openVipDmStudio(sectionId) {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
+  state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
+  state.studioVipDmSection = String(sectionId || 'giftReceived');
+  loadStudioTemplate(vipDmStudioTemplate(state.config?.heavenEconomy, state.studioVipDmSection));
+  renderDrafts();
+  toast('VIP-DM-Embed im bestehenden Embed Studio geöffnet.', 'success');
+}
+
+async function saveVipDmStudioTemplate() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return false;
+  }
+  const template = currentStudioTemplate();
+  const validation = renderStudioLimits(template);
+  if (!validation.valid) {
+    toast(validation.errors[0], 'error');
+    return false;
+  }
+  if ((template.embeds?.length || (template.embed ? 1 : 0)) > 1) {
+    toast('Die DM-Nachricht verwendet genau ein Embed.', 'error');
+    return false;
+  }
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/heaven-economy/dm-design',
+    body: {
+      section: state.studioVipDmSection || 'giftReceived',
+      template: {
+        ...template,
+        embeds: (template.embeds || [template.embed || {}]).slice(0, 1)
+      }
+    },
+    errorMessage: 'Die VIP-DM-Nachricht konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      state.config.heavenEconomy = result.config?.heavenEconomy || state.config.heavenEconomy;
+      loadStudioTemplate(vipDmStudioTemplate(state.config.heavenEconomy, state.studioVipDmSection));
+    },
+    okMessage: 'VIP-DM-Embed gespeichert. Neue Geschenke, Käufe und Gutschriften nutzen es ab sofort.'
+  });
+}
 function steamWorkshopStudioTemplate(config, item) {
   const customized = Boolean(item?.designOverride);
   const design = customized ? item.designOverride : config?.design || {};
@@ -4364,21 +5497,47 @@ function steamWorkshopPreviewTemplate(template) {
   preview.embeds = [embed];
   return preview;
 }
-
 function specialStudioPreviewTemplate(template) {
+  if (state.studioSpecialTemplate === 'economyPanel') return window.FHCCEconomyPanelStudio.previewTemplate(template, state);
+  if (state.studioSpecialTemplate === 'tempVoiceInterface') return tempVoiceUi.previewTemplate(template);
+  if (state.studioSpecialTemplate === 'publicCallVote') return publicCallVotePreviewTemplate(template);
   if (state.studioSpecialTemplate === 'welcomeFarewell') return welcomeFarewellPreviewTemplate(template);
-  if (state.studioSpecialTemplate === 'activityRace') return activityRacePreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'boostAnnounce') return boostAnnouncePreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'boostTop') return boostTopPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'vipPanel') return vipPanelPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'vipDm') return vipDmPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'activityRace') return window.FHCCActivityRaceStudio.previewTemplate(template, state);
   if (state.studioSpecialTemplate === 'steamWorkshop') return steamWorkshopPreviewTemplate(template);
-  if (state.studioSpecialTemplate === 'aiChat') return aiChatWelcomePreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'levelsPanel') return levelsPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'levelUp') return levelUpPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'levelUpInfo') return levelUpInfoPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'botUpdates') return botUpdatesPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'countingPanel') return countingPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'countingDm') return countingDmPreviewTemplate(template);
+  if (state.studioSpecialTemplate === 'inactiveReminder') return inactiveReminderPreviewTemplate(template);
   return template;
 }
-
 function renderStudioSpecialTemplateUi() {
+  const economyPanelActive = state.studioSpecialTemplate === 'economyPanel';
+  const tempVoiceActive = state.studioSpecialTemplate === 'tempVoiceInterface';
   const welcomeActive = state.studioSpecialTemplate === 'welcomeFarewell';
+  const boostActive = state.studioSpecialTemplate === 'boostAnnounce';
+  const boostTopActive = state.studioSpecialTemplate === 'boostTop';
+  const vipPanelActive = state.studioSpecialTemplate === 'vipPanel';
+  const vipDmActive = state.studioSpecialTemplate === 'vipDm';
   const activityActive = state.studioSpecialTemplate === 'activityRace';
+  const activityPingInfoActive = activityActive && state.studioActivityRaceSection === 'ping-info';
   const workshopActive = state.studioSpecialTemplate === 'steamWorkshop';
-  const aiChatActive = state.studioSpecialTemplate === 'aiChat';
-  const active = welcomeActive || activityActive || workshopActive || aiChatActive;
+  const verifyActive = state.studioSpecialTemplate === 'memberVerify';
+  const levelsActive = state.studioSpecialTemplate === 'levelsPanel';
+  const levelUpActive = state.studioSpecialTemplate === 'levelUp';
+  const levelUpInfoActive = state.studioSpecialTemplate === 'levelUpInfo';
+  const botUpdatesActive = state.studioSpecialTemplate === 'botUpdates';
+  const countingPanelActive = state.studioSpecialTemplate === 'countingPanel';
+  const countingDmActive = state.studioSpecialTemplate === 'countingDm';
+  const pcvActive = state.studioSpecialTemplate === 'publicCallVote';
+  const inactiveReminderActive = state.studioSpecialTemplate === 'inactiveReminder';
+  const active = economyPanelActive || tempVoiceActive || welcomeActive || boostActive || boostTopActive || vipPanelActive || vipDmActive || activityActive || workshopActive || verifyActive || levelsActive || levelUpActive || levelUpInfoActive || botUpdatesActive || countingPanelActive || countingDmActive || pcvActive || inactiveReminderActive;
   const view = document.getElementById('studio-view');
   view?.classList.toggle('studio-activity-race-mode', activityActive);
   view?.classList.toggle('studio-steam-workshop-mode', workshopActive);
@@ -4387,80 +5546,394 @@ function renderStudioSpecialTemplateUi() {
   const bannerTitle = banner?.querySelector('[data-studio-special-title]');
   const bannerDetail = banner?.querySelector('[data-studio-special-detail]');
   const placeholders = banner?.querySelector('[data-studio-special-placeholders]');
-  if (bannerTitle) bannerTitle.textContent = welcomeActive ? 'Welcome / Farewell' : workshopActive
+  if (bannerTitle) bannerTitle.textContent = tempVoiceActive ? 'TempVoice-Interface' : welcomeActive ? 'Welcome / Farewell' : boostActive ? 'Boost-Benachrichtigung' : boostTopActive ? 'Top-Booster-Liga' : vipPanelActive ? 'VIP-Panels' : vipDmActive ? 'VIP-DM-Benachrichtigung' : workshopActive
     ? state.studioWorkshopItemId ? 'Steam Workshop · ' + state.studioWorkshopItemTitle : 'Steam Workshop'
-    : aiChatActive ? 'AI Chat Info-Embed'
+
+    : verifyActive ? 'Verify-Panel'
+    : levelsActive ? 'Levelrollen-Panel'
+    : levelUpActive ? 'Level-Up-Embed'
+    : levelUpInfoActive ? 'Level-Up-Kanal-Info'
+    : botUpdatesActive ? 'Bot-Updates'
+    : countingPanelActive ? 'Zähl-Panel'
+    : countingDmActive ? (state.studioCountingDmSection === 'strikeRelease' ? 'Zähl-Kanal · Freigabe-DM' : 'Zähl-Kanal · Sperr-DM')
+    : pcvActive ? 'Call-Moderation'
+    : inactiveReminderActive ? 'Inaktivitäts-Erinnerung'
     : 'Aktivitäts-Liga';
-  if (bannerDetail) bannerDetail.textContent = welcomeActive
+  if (bannerDetail) bannerDetail.textContent = tempVoiceActive
+    ? 'Dieses Embed erscheint in jedem temporären Sprachkanal. Texte, Bilder und Felder sind frei editierbar; die funktionalen TempVoice-Buttons verwaltet der Bot.'
+    : welcomeActive
     ? 'Diese Vorlage wird automatisch gesendet, sobald die Begrüßungsbedingung erfüllt ist. Discord-Mitglied und Server werden beim Versand dynamisch eingesetzt.'
+    : boostActive
+    ? 'Dieses Embed wird bei jedem neuen Server-Boost in den gewählten Kanal gesendet. {boostcount} zeigt automatisch, ob das Mitglied 1×, 2× oder öfter boostet.'
+    : boostTopActive
+    ? 'Genau ein Embed mit den Top 1–3 Boostern. Der Bot sendet es einmal und bearbeitet es bei jeder Änderung der Rangfolge; {boostcount}, {server} und {range} werden automatisch ersetzt.'
+    : vipPanelActive
+    ? 'Ein gemeinsames Embed mit allen VIP-Stufen in einem Kanal. Jede Stufe wird mit Rang-Emoji und Mitgliederliste als eigenes Feld geführt – {memberCount}, {tierCount} und {server} ersetzt der Bot automatisch. Die vier Felder unten (STUFEN NAME, MITGLIED FORMAT etc.) gelten für ALLE Stufen – die Platzhalter werden pro Stufe dynamisch aufgelöst (z.B. 👑 VIP: GOLD · 5, 💎 VIP: DIAMANT · 3, ⭐ VIP: SILBER · 2).'
+    : vipDmActive
+    ? (state.studioVipDmSection === 'vipPurchased'
+      ? 'Dieses Embed wird als DM gesendet, sobald ein Mitglied eine VIP-Stufe kauft. {targetMention}, {tier}, {price} und {server} ersetzt der Bot automatisch.'
+      : state.studioVipDmSection === 'coinsReceived'
+      ? 'Dieses Embed wird als DM gesendet, sobald ein Konto eine Coin-Gutschrift erhält. {targetMention}, {coins}, {balance} und {reason} ersetzt der Bot automatisch.'
+      : state.studioVipDmSection === 'boostMilestone'
+      ? 'Dieses Embed wird als DM gesendet, sobald eine neue Boost-Stufe vergütet wird. {targetMention}, {levels}, {coins} und {balance} ersetzt der Bot automatisch.'
+      : state.studioVipDmSection === 'coinGiftReceived'
+      ? 'Dieses Embed erhält der Empfänger bei jedem Coin-Geschenk neu. {giverMention}, {coins}, {targetBalance}, {messageBlock} und {transactionId} ersetzt der Bot automatisch.'
+      : state.studioVipDmSection === 'coinGiftSent'
+      ? 'Dieses Embed erhält der Absender als neue Quittung. {targetMention}, {coins}, {giverBalance}, {messageBlock} und {transactionId} ersetzt der Bot automatisch.'
+      : 'Dieses Embed wird als DM gesendet, sobald einem Mitglied eine VIP-Stufe geschenkt wird. {targetMention}, {tier}, {giver} und {server} ersetzt der Bot automatisch.')
     : workshopActive
     ? state.studioWorkshopItemId
       ? 'Du bearbeitest ausschließlich „' + state.studioWorkshopItemTitle + '“. Dieses Design bleibt bei späteren Steam-Abgleichen erhalten; die dynamischen Steam-Werte werden weiterhin aktualisiert.'
       : 'Du gestaltest die gemeinsame Standardvorlage. Ein eigenes großes Banner überschreibt das Steam-Vorschaubild; ohne Banner nutzt der Bot automatisch das beste Steam-Bild.'
-    : aiChatActive
-    ? 'Diese Nachricht steht immer im AI-Chat-Kanal, erklärt was man fragen kann und bleibt beim automatischen Aufräumen erhalten. Der Servername wird beim Versand dynamisch eingesetzt.'
+    : verifyActive
+    ? 'Dieses Embed ist das Verify-Panel im gewählten Kanal. Der „Verifizieren“-Button bleibt beim Speichern automatisch erhalten – du gestaltest Titel, Beschreibung, Farben, Bilder und Felder frei.'
+    : levelsActive
+    ? 'Dieses Embed ist das Levelrollen-Panel im gewählten Kanal. Einzelne Rollen-Slots wie {levelRole1}, {levelRoleName1} und {levelRoleLevel1} bis Platz 20 werden beim Versand dynamisch ersetzt – dein Text darum herum bleibt frei editierbar.'
+    : levelUpActive
+    ? 'Dieses Embed wird bei jedem Levelaufstieg im gewählten Kanal gesendet. {user}, {level}, {rank} und {guild} ersetzt der Bot automatisch – du gestaltest Titel, Beschreibung, Farben, Bilder und Felder frei.'
+    : botUpdatesActive
+    ? 'Dieses Embed informiert den Server über Bot-Updates und bekannte Probleme. {version}, {updateCount}, {change1}, {changeVersion1} und {changeDate1} ersetzt der Bot automatisch.'
+    : levelUpInfoActive
+    ? 'Dieses Embed bleibt dauerhaft im Level-Up-Kanal stehen. Regel-Blöcke wie {rulesChatFieldText}, {rulesVoiceFieldText} und {rulesBonusFieldText} werden beim Senden aus deinen aktuellen Level-Regeln gefüllt.'
+    : countingPanelActive
+    ? 'Dieses Embed ist das Live-Panel im Status-Panel-Kanal und wird bei jedem Zug automatisch aktualisiert – genau eine gepinnte Nachricht. {count}, {next}, {lastCounter}, {lastCounterName}, {fails} sowie {top1}, {topValue1} und {topMarker1} bis Platz 3 ersetzt der Bot automatisch.'
+    : countingDmActive
+    ? (state.studioCountingDmSection === 'strikeRelease'
+      ? 'Dieses Embed wird als DM gesendet, sobald eine Chat-Sperre abgelaufen ist. {targetMention}, {server} und {hours} ersetzt der Bot automatisch.'
+      : 'Dieses Embed wird als DM gesendet, sobald ein Mitglied gesperrt wird. {targetMention}, {server}, {limit} und {hours} ersetzt der Bot automatisch.')
+    : pcvActive
+    ? publicCallVoteStudioSectionDetail(state.studioPcvSection)
+    : inactiveReminderActive
+    ? 'Dieses Embed wird als DM gesendet, sobald ein Mitglied inaktiv ist. {user} wird durch einen echten Ping, {username}/{displayName} durch den Namen und {thresholdDays} durch deine Einstellung ersetzt. Die Buttons „Ja, ich bleibe“ und „Nein, bitte entfernen“ bleiben beim Speichern automatisch erhalten. Es gibt keinen Auto-Kick.'
+    : activityPingInfoActive
+    ? 'Diese separate Nachricht steht unter den drei Rankings. Bis zu zehn Embeds, Texte, Links, Felder und Bilder sind frei editierbar; den einen funktionalen Ping-Schalter setzt der Bot sicher darunter.'
     : 'Du bearbeitest hier direkt die Live-Vorlage des Moduls. Ranglisten, Zeitraum und Navigation setzt der Bot weiterhin automatisch ein.';
-  if (placeholders) placeholders.innerHTML = (welcomeActive
+  if (placeholders) placeholders.innerHTML = (tempVoiceActive
+    ? ['{owner}', '{ownerName}', '{channelName}', '{createdAt}', '{userLimit}', '{region}', '{accessState}', '{memberCount}', '{server}']
+    : welcomeActive
     ? ['{user}', '{nickname}', '{username}', '{guild}']
+    : boostActive
+    ? ['{usermention}', '{usernickname}', '{boostcount}', '{guildname}']
+    : boostTopActive
+    ? ['{server}', '{boostcount}', '{range}', '{status}', '{nextEvaluation}', '{boost1}', '{boostMention1}', '{boostValue1}', '{boostCount1}', '{boostMarker1}', '{boost2}', '{boostMention2}', '{boostValue2}', '{boostCount2}', '{boostMarker2}', '{boost3}', '{boostMention3}', '{boostValue3}', '{boostCount3}', '{boostMarker3}']
+    : vipPanelActive
+    ? ['{server}', '{memberCount}', '{tierCount}', '{date}', '{time}', '{tierEmoji}', '{tierName}', '{tierMemberCount}', '{memberId}', '{memberName}', '{overflowCount}']
     : workshopActive
     ? ['{title}', '{description}', '{previewUrl}', '{workshopUrl}', '{workshopId}', '{subscriptions}', '{favorites}', '{views}', '{ratingStars}', '{ratingValue}', '{ratingCount}', '{createdAt}', '{updatedAt}', '{fileSize}', '{appId}', '{game}', '{tags}', '{creator}', '{visibility}']
-    : aiChatActive
-    ? ['{guild}', '{memberCount}', '{date}', '{time}']
-    : ['{server}', '{period}', '{status}', '{completion}', '{range}', '{nextEvaluation}'])
+    : levelsActive
+    ? ['{guild}', '{levelRole1}', '{levelRoleName1}', '{levelRoleLevel1}', '{levelRole2}', '{levelRoleName2}', '{levelRoleLevel2}', '{levelRole3}', '{levelRoleName3}', '{levelRoleLevel3}', '{levelRole4}', '{levelRoleName4}', '{levelRoleLevel4}', '{levelRole5}', '{levelRoleName5}', '{levelRoleLevel5}', '{levelRole6}', '{levelRoleName6}', '{levelRoleLevel6}', '{levelRole7}', '{levelRoleName7}', '{levelRoleLevel7}', '{levelRole8}', '{levelRoleName8}', '{levelRoleLevel8}', '{levelRole9}', '{levelRoleName9}', '{levelRoleLevel9}', '{levelRole10}', '{levelRoleName10}', '{levelRoleLevel10}', '{levelRole11}', '{levelRoleName11}', '{levelRoleLevel11}', '{levelRole12}', '{levelRoleName12}', '{levelRoleLevel12}', '{levelRole13}', '{levelRoleName13}', '{levelRoleLevel13}', '{levelRole14}', '{levelRoleName14}', '{levelRoleLevel14}', '{levelRole15}', '{levelRoleName15}', '{levelRoleLevel15}', '{levelRole16}', '{levelRoleName16}', '{levelRoleLevel16}', '{levelRole17}', '{levelRoleName17}', '{levelRoleLevel17}', '{levelRole18}', '{levelRoleName18}', '{levelRoleLevel18}', '{levelRole19}', '{levelRoleName19}', '{levelRoleLevel19}', '{levelRole20}', '{levelRoleName20}', '{levelRoleLevel20}']
+    : levelUpActive
+    ? ['{user}', '{username}', '{userAvatar}', '{level}', '{nextLevel}', '{rank}', '{guild}', '{progressBar}', '{progressPercent}', '{xp}', '{xpInLevel}', '{xpNeeded}', '{role}', '{roleText}']
+    : botUpdatesActive
+    ? ['{version}', '{updateCount}', '{changeCount}', '{change1}', '{changeVersion1}', '{changeDate1}', '{change2}', '{changeVersion2}', '{changeDate2}', '{change3}', '{changeVersion3}', '{changeDate3}', '{guild}']
+    : levelUpInfoActive
+    ? ['{guild}', '{rulesTitle}', '{rulesDescription}', '{rulesFooter}', '{rulesChatFieldName}', '{rulesChatFieldText}', '{rulesVoiceFieldName}', '{rulesVoiceFieldText}', '{rulesActivityFieldName}', '{rulesActivityFieldText}', '{rulesBonusFieldName}', '{rulesBonusFieldText}', '{rulesCurveFieldName}', '{rulesCurveFieldText}', '{rulesNoXpFieldName}', '{rulesNoXpFieldText}', '{rulesExcludedFieldName}', '{rulesExcludedFieldText}', '{noXpRoleNames}', '{excludedChannels}', '{excludedRoles}']
+    : countingPanelActive
+    ? ['{server}', '{count}', '{next}', '{lastCounter}', '{lastCounterName}', '{fails}', '{lastFail}', '{top1}', '{top2}', '{top3}', '{topValue1}', '{topValue2}', '{topValue3}', '{topMarker1}', '{topMarker2}', '{topMarker3}']
+    : countingDmActive
+    ? ['{server}', '{target}', '{targetMention}', '{limit}', '{hours}']
+    : vipDmActive
+    ? ['{server}', '{target}', '{targetMention}', '{tier}', '{price}', '{giver}', '{giverMention}', '{coins}', '{balance}', '{giverBalance}', '{targetBalance}', '{message}', '{messageBlock}', '{transactionId}', '{levels}', '{reason}']
+    : pcvActive
+    ? ['{server}', '{targetName}', '{target}', '{targetMention}', '{channel}', '{reason}', '{yes}', '{no}', '{progress}', '{remaining}', '{attending}', '{requester}', '{outcome}', '{outcomeText}', '{kickMinutes}', '{strikes}']
+    : inactiveReminderActive
+    ? ['{user}', '{username}', '{displayName}', '{guild}', '{server}', '{thresholdDays}']
+    : activityPingInfoActive
+    ? ['{server}', '{buttonLabel}']
+    : ['{server}', '{period}', '{status}', '{completion}', '{range}', '{nextEvaluation}', '{chatFieldName}', '{voiceFieldName}', '{nextEvaluationFieldName}', '{rangeFieldName}', '{panelDescription}', '{chat1}', '{chat2}', '{chat3}', '{chatValue1}', '{chatValue2}', '{chatValue3}', '{chatMarker1}', '{chatMarker2}', '{chatMarker3}', '{voice1}', '{voice2}', '{voice3}', '{voiceValue1}', '{voiceValue2}', '{voiceValue3}', '{voiceMarker1}', '{voiceMarker2}', '{voiceMarker3}'])
     .map(function (entry) { return '<code>' + escapeHtml(entry) + '</code>'; }).join('');
   const heading = view?.querySelector('.page-head h1');
   const detail = view?.querySelector('.page-head h1 + p');
-  if (heading) heading.textContent = welcomeActive ? 'Willkommensnachricht im Embed Studio.' : workshopActive
+  if (heading) heading.textContent = tempVoiceActive ? 'TempVoice-Interface im Embed Studio.' : welcomeActive ? 'Willkommensnachricht im Embed Studio.' : boostActive ? 'Boost-Benachrichtigung im Embed Studio.' : boostTopActive ? 'Top-Booster-Liga im Embed Studio.' : vipPanelActive ? 'VIP-Panels im Embed Studio.' : vipDmActive ? 'VIP-DM im Embed Studio.' : workshopActive
     ? state.studioWorkshopItemId ? 'Workshop-Post individuell bearbeiten.' : 'Steam Workshop im Embed Studio.'
-    : aiChatActive ? 'AI Chat Info-Embed im Embed Studio.'
-    : activityActive ? 'Aktivitäts-Liga im Embed Studio.' : 'Embed Studio.';
-  if (detail) detail.textContent = welcomeActive
+    : levelsActive ? 'Levelrollen-Panel im Embed Studio.'
+    : levelUpActive ? 'Level-Up-Embed im Embed Studio.'
+    : levelUpInfoActive ? 'Level-Up-Kanal-Info im Embed Studio.'
+    : botUpdatesActive ? 'Bot-Updates-Embed im Embed Studio.'
+    : countingPanelActive ? 'Zähl-Panel im Embed Studio.'
+    : countingDmActive ? 'Zähl-Kanal-DM im Embed Studio.'
+    : pcvActive ? 'Call-Moderation im Embed Studio.'
+    : activityPingInfoActive ? 'Liga-Ping-Info im Embed Studio.' : activityActive ? 'Aktivitäts-Liga im Embed Studio.' : 'Embed Studio.';
+  if (detail) detail.textContent = tempVoiceActive
+    ? 'Gestalte das vollständige Interface. Die Vorschau zeigt Beispieldaten; echte Buttons und Live-Werte setzt der Bot beim Versand ein.'
+    : welcomeActive
     ? 'Gestalte die automatische Begrüßung mit Live-Vorschau, Bildern, Feldern und mehreren Embeds.'
+    : boostActive
+    ? 'Gestalte das automatische Boost-Embed mit denselben Werkzeugen wie jedes andere Embed – inklusive {boostcount} für die aktuelle Boost-Zahl.'
+    : boostTopActive
+    ? 'Gestalte die automatische Top-Booster-Rangliste mit denselben Werkzeugen wie jedes andere Embed. Die Top-3-Zeilen setzt der Bot automatisch ein.'
+    : vipPanelActive
+    ? 'Gestalte das kombinierte VIP-Embed mit denselben Werkzeugen wie jedes andere Embed. Die Stufen-Felder mit Rang-Emojis und Mitgliederlisten setzt der Bot automatisch ein.'
+    : vipDmActive
+    ? 'Gestalte die VIP-DM-Benachrichtigung mit denselben Werkzeugen wie jedes andere Embed – Titel, Beschreibung, Farben, Bilder und Felder sind frei editierbar.'
     : workshopActive
     ? state.studioWorkshopItemId
       ? 'Titel, Text, Felder, Farben und Bilder gelten nur für diesen einen dauerhaften Forum-Post.'
       : 'Gestalte den vollständigen Mod-Katalog mit dem vorhandenen Editor und einer echten Steam-Datenvorschau.'
-    : aiChatActive
-    ? 'Gestalte die erste Nachricht im AI-Chat-Kanal mit denselben Werkzeugen wie jedes andere Embed.'
-    : activityActive ? 'Gestalte die automatische Rangliste mit denselben Werkzeugen wie jedes andere Embed.' : 'Nachrichten mit Live-Vorschau erstellen, speichern, senden und später bearbeiten.';
+    : levelsActive ? 'Gestalte das Levelrollen-Panel mit denselben Werkzeugen wie jedes andere Embed. Die Rollenliste setzt der Bot automatisch ein.'
+    : levelUpActive ? 'Gestalte die Levelaufstiegs-Nachricht mit denselben Werkzeugen wie jedes andere Embed. {user}, {level}, {rank} und {guild} werden automatisch ersetzt.'
+    : botUpdatesActive ? 'Gestalte das Update-Embed mit denselben Werkzeugen wie jedes andere Embed. {version} und {guild} werden automatisch ersetzt.'
+    : levelUpInfoActive ? 'Gestalte das dauerhafte Info-Embed des Level-Up-Kanals mit denselben Werkzeugen wie jedes andere Embed. {guild} und die {rules...}-Platzhalter werden automatisch ersetzt.'
+    : countingPanelActive ? 'Gestalte das Zähl-Panel mit denselben Werkzeugen wie jedes andere Embed. Der aktuelle Stand bleibt über die Platzhalter automatisch live.'
+    : countingDmActive ? 'Gestalte die Zähl-Kanal-DM mit denselben Werkzeugen wie jedes andere Embed – Titel, Beschreibung, Farben, Bilder und Felder sind frei editierbar.'
+    : pcvActive ? 'Gestalte das Call-Moderations-Embed mit denselben Werkzeugen wie jedes andere Embed. Autor-Icon und Avatar setzt der Bot automatisch ein.'
+    : activityPingInfoActive ? 'Gestalte bis zu zehn Info-Embeds. Der echte persönliche Ein/Aus-Button bleibt bei jeder Bearbeitung funktional erhalten.' : activityActive ? 'Gestalte die automatische Rangliste mit denselben Werkzeugen wie jedes andere Embed.' : 'Nachrichten mit Live-Vorschau erstellen, speichern, senden und später bearbeiten.';
   const save = document.getElementById('save-draft');
   const send = document.getElementById('send-studio-message');
   const sendSecondary = document.getElementById('send-studio-message-secondary');
   const edit = document.getElementById('edit-studio-message');
   const clear = document.getElementById('clear-content');
-  if (save) save.textContent = welcomeActive ? 'Willkommensvorlage speichern' : workshopActive ? state.studioWorkshopItemId ? 'Einzelpost speichern' : 'Workshop-Vorlage speichern' : aiChatActive ? 'AI-Chat-Embed speichern' : activityActive ? 'Liga-Vorlage speichern' : 'Entwurf speichern';
-  if (send) send.textContent = welcomeActive ? 'Willkommensvorlage übernehmen' : workshopActive ? state.studioWorkshopItemId ? 'Einzelpost aktualisieren' : 'Speichern & Katalog aktualisieren' : aiChatActive ? 'Embed speichern & aktualisieren' : activityActive ? 'Speichern & Panel aktualisieren' : 'Mit Bot senden';
-  if (sendSecondary) sendSecondary.textContent = welcomeActive ? 'Willkommensvorlage übernehmen' : workshopActive ? state.studioWorkshopItemId ? 'Einzelpost aktualisieren' : 'Speichern & Katalog aktualisieren' : aiChatActive ? 'Embed speichern & aktualisieren' : activityActive ? 'Speichern & Panel aktualisieren' : 'Mit Bot senden';
+  if (save) save.textContent = tempVoiceActive ? 'Speichern & aktive Interfaces aktualisieren' : welcomeActive ? 'Willkommensvorlage speichern' : boostActive ? 'Boost-Vorlage speichern' : boostTopActive ? 'Top-3-Vorlage speichern' : vipPanelActive ? 'VIP-Panel-Vorlage speichern' : vipDmActive ? 'VIP-DM-Embed speichern' : workshopActive ? state.studioWorkshopItemId ? 'Einzelpost speichern' : 'Workshop-Vorlage speichern' : verifyActive ? 'Verify-Embed speichern' : levelsActive ? 'Levelrollen-Embed speichern' : levelUpActive ? 'Level-Up-Embed speichern' : levelUpInfoActive ? 'Kanal-Info-Embed speichern' : botUpdatesActive ? 'Update-Embed speichern' : countingPanelActive ? 'Zähl-Panel-Embed speichern' : countingDmActive ? 'DM-Embed speichern' : pcvActive ? 'Sektion speichern' : activityActive ? 'Liga-Vorlage speichern' : 'Entwurf speichern';
+  if (send) send.textContent = tempVoiceActive ? 'Speichern & aktive Interfaces aktualisieren' : welcomeActive ? 'Willkommensvorlage übernehmen' : boostActive ? 'Boost-Vorlage übernehmen' : boostTopActive ? 'Speichern & Panel aktualisieren' : vipPanelActive ? 'Speichern & Panels aktualisieren' : vipDmActive ? 'VIP-DM-Embed speichern' : workshopActive ? state.studioWorkshopItemId ? 'Einzelpost aktualisieren' : 'Speichern & Katalog aktualisieren' : verifyActive ? 'Speichern & Panel aktualisieren' : levelsActive ? 'Speichern & Panel aktualisieren' : levelUpActive ? 'Level-Up-Embed übernehmen' : levelUpInfoActive ? 'Speichern & Kanal aktualisieren' : botUpdatesActive ? 'Speichern & Panel aktualisieren' : countingPanelActive ? 'Speichern & Panel aktualisieren' : countingDmActive ? 'DM-Embed speichern' : pcvActive ? 'Sektion speichern' : activityActive ? 'Speichern & Panel aktualisieren' : 'Mit Bot senden';
+  if (sendSecondary) sendSecondary.textContent = tempVoiceActive ? 'Speichern & aktive Interfaces aktualisieren' : welcomeActive ? 'Willkommensvorlage übernehmen' : boostActive ? 'Boost-Vorlage übernehmen' : boostTopActive ? 'Speichern & Panel aktualisieren' : vipPanelActive ? 'Speichern & Panels aktualisieren' : vipDmActive ? 'VIP-DM-Embed speichern' : workshopActive ? state.studioWorkshopItemId ? 'Einzelpost aktualisieren' : 'Speichern & Katalog aktualisieren' : verifyActive ? 'Speichern & Panel aktualisieren' : levelsActive ? 'Speichern & Panel aktualisieren' : levelUpActive ? 'Level-Up-Embed übernehmen' : levelUpInfoActive ? 'Speichern & Kanal aktualisieren' : botUpdatesActive ? 'Speichern & Panel aktualisieren' : countingPanelActive ? 'Speichern & Panel aktualisieren' : countingDmActive ? 'DM-Embed speichern' : pcvActive ? 'Sektion speichern' : activityActive ? 'Speichern & Panel aktualisieren' : 'Mit Bot senden';
   if (edit) edit.hidden = active;
-  if (clear) clear.textContent = welcomeActive ? 'Welcome-Standard laden' : workshopActive ? state.studioWorkshopItemId ? 'Globale Vorlage laden' : 'Workshop-Standard laden' : aiChatActive ? 'AI-Chat-Standard laden' : activityActive ? 'Liga-Standard laden' : 'Leeren';
+  if (clear) clear.textContent = tempVoiceActive ? 'TempVoice-Standard laden' : welcomeActive ? 'Welcome-Standard laden' : boostActive ? 'Boost-Standard laden' : boostTopActive ? 'Top-3-Standard laden' : vipPanelActive ? 'VIP-Panel-Standard laden' : vipDmActive ? 'VIP-DM-Standard laden' : workshopActive ? state.studioWorkshopItemId ? 'Globale Vorlage laden' : 'Workshop-Standard laden' : verifyActive ? 'Verify-Standard laden' : levelsActive ? 'Levelrollen-Standard laden' : levelUpActive ? 'Level-Up-Standard laden' : levelUpInfoActive ? 'Kanal-Info-Standard laden' : botUpdatesActive ? 'Update-Standard laden' : countingPanelActive ? 'Zähl-Panel-Standard laden' : countingDmActive ? 'DM-Standard laden' : pcvActive ? 'Standard der Sektion laden' : activityActive ? 'Liga-Standard laden' : 'Leeren';
+  const channelLabel = document.getElementById('studio-channel')?.closest('label');
+  if (channelLabel) channelLabel.hidden = tempVoiceActive;
+  document.querySelectorAll('.studio-function-set, .reaction-role-studio').forEach(function (section) { section.hidden = tempVoiceActive || economyPanelActive; });
+  const threadSection = document.querySelector('.thread-section');
+  if (threadSection) threadSection.hidden = tempVoiceActive;
+  const addEmbed = document.getElementById('add-studio-embed');
+  const removeEmbed = document.getElementById('remove-studio-embed');
+  if (addEmbed) addEmbed.hidden = tempVoiceActive;
+  if (removeEmbed) removeEmbed.hidden = tempVoiceActive;
+  const pcvSectionWrap = document.getElementById('studio-pcv-section-wrap');
+  const pcvSectionSelect = document.getElementById('studio-pcv-section');
+  if (pcvSectionWrap) pcvSectionWrap.hidden = !pcvActive;
+  if (pcvActive && pcvSectionSelect) {
+    const sections = [
+      ['Alle öffentlichen Calls', [
+        ['panel', 'Moderations-Panel'],
+        ['vote', 'Laufende Abstimmung'],
+        ['result', 'Ergebnis (beschlossen / abgelehnt)'],
+        ['team', 'Team-Kanal-Meldung'],
+        ['dm', 'DM an rausgeworfenes Mitglied'],
+        ['release', 'Freigabe-DM (Sperre vorbei)']
+      ]],
+      ['2er Calls', [
+        ['panel2', 'Moderations-Panel (2er)'],
+        ['vote2', 'Laufende Abstimmung (2er)'],
+        ['result2', 'Ergebnis (2er)'],
+        ['team2', 'Team-Kanal-Meldung (2er)'],
+        ['dm2', 'DM an rausgeworfenes Mitglied (2er)'],
+        ['release2', 'Freigabe-DM (2er)']
+      ]],
+      ['3er Calls', [
+        ['panel3', 'Moderations-Panel (3er)'],
+        ['vote3', 'Laufende Abstimmung (3er)'],
+        ['result3', 'Ergebnis (3er)'],
+        ['team3', 'Team-Kanal-Meldung (3er)'],
+        ['dm3', 'DM an rausgeworfenes Mitglied (3er)'],
+        ['release3', 'Freigabe-DM (3er)']
+      ]],
+      ['4er Calls', [
+        ['panel4', 'Moderations-Panel (4er)'],
+        ['vote4', 'Laufende Abstimmung (4er)'],
+        ['result4', 'Ergebnis (4er)'],
+        ['team4', 'Team-Kanal-Meldung (4er)'],
+        ['dm4', 'DM an rausgeworfenes Mitglied (4er)'],
+        ['release4', 'Freigabe-DM (4er)']
+      ]]
+    ];
+    const current = state.studioPcvSection || 'panel';
+    pcvSectionSelect.innerHTML = sections.map(function (group) {
+      return '<optgroup label="' + escapeHtml(group[0]) + '">' + group[1].map(function (entry) {
+        return '<option value="' + entry[0] + '"' + (entry[0] === current ? ' selected' : '') + '>' + escapeHtml(entry[1]) + '</option>';
+      }).join('') + '</optgroup>';
+    }).join('');
+    pcvSectionSelect.value = current;
+  }
   document.querySelectorAll('#template-row [data-template]').forEach(function (button) {
     if (active) button.classList.toggle('active', button.dataset.template === state.studioSpecialTemplate);
   });
+  if (economyPanelActive) window.FHCCEconomyPanelStudio.applyChrome();
   renderStudioEmbedTabs();
 }
-
 async function openWelcomeFarewellStudio() {
   if (!state.authenticated || !state.selectedGuildId) {
     toast('Wähle zuerst einen Server.', 'error');
     return;
   }
   if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
   loadStudioTemplate(welcomeFarewellStudioTemplate(state.config?.welcomeFarewell));
   renderDrafts();
   toast('Willkommensnachricht im bestehenden Embed Studio geöffnet.', 'success');
 }
 
-async function openActivityRaceStudio() {
+function publicCallVoteStudioSectionDetail(section) {
+  const descriptions = {
+    panel: 'Dieses Embed ist das dauerhafte Moderations-Panel in den ausgewählten öffentlichen Calls – inklusive „Rauswurf beantragen“-Button.',
+    vote: 'Dieses Embed ist die laufende Rauswurf-Abstimmung. {remaining} wird jede Sekunde als echter Countdown aktualisiert, {progress} zeigt die aktuellen Stimmen.',
+    result: 'Dieses Embed ist das Ergebnis nach dem Ende der Abstimmung („Rauswurf beschlossen / abgelehnt“). Die Nachricht wird nach der eingestellten Sekundenzahl automatisch gelöscht.',
+    team: 'Dieses Embed wird bei jedem erfolgreichen Rauswurf mit Team-Rollen-Ping in den Team-Kanal gesendet.',
+    dm: 'Dieses Embed wird dem rausgeworfenen Mitglied als DM geschickt – mit {targetName} als Autor (Avatar + Name) und allen Infos zum Rauswurf. {target} in der Beschreibung ist ein echter Ping.',
+    release: 'Dieses Embed wird dem Mitglied als DM geschickt, sobald seine Call-Sperre abgelaufen ist – „Du kannst dem Call wieder beitreten“. {reason} zeigt den Grund, {kickMinutes} die Sperrdauer.',
+    panel2: 'Dieses Embed ist das dauerhafte Moderations-Panel in den 2er-Calls. Eine „Dafür“-Stimme genügt für den Rauswurf.',
+    vote2: 'Dieses Embed ist die laufende Rauswurf-Abstimmung in einem 2er-Call – eine „Dafür“-Stimme entscheidet.',
+    result2: 'Dieses Embed ist das Ergebnis einer Abstimmung in einem 2er-Call („Rauswurf beschlossen / abgelehnt“).',
+    team2: 'Dieses Embed wird bei einem erfolgreichen Rauswurf aus einem 2er-Call mit Team-Rollen-Ping in den Team-Kanal gesendet.',
+    dm2: 'Dieses Embed wird dem Mitglied als DM geschickt, das aus einem 2er-Call entfernt wurde – mit {targetName} als Autor (Avatar + Name).',
+    release2: 'Dieses Embed wird dem Mitglied als DM geschickt, sobald seine Call-Sperre aus einem 2er-Call abgelaufen ist – „Du kannst wieder beitreten“.',
+    panel3: 'Dieses Embed ist das dauerhafte Moderations-Panel in den 3er-Calls. Zwei „Dafür“-Stimmen genügen für den Rauswurf.',
+    vote3: 'Dieses Embed ist die laufende Rauswurf-Abstimmung in einem 3er-Call – zwei „Dafür“-Stimmen entscheiden.',
+    result3: 'Dieses Embed ist das Ergebnis einer Abstimmung in einem 3er-Call („Rauswurf beschlossen / abgelehnt“).',
+    team3: 'Dieses Embed wird bei einem erfolgreichen Rauswurf aus einem 3er-Call mit Team-Rollen-Ping in den Team-Kanal gesendet.',
+    dm3: 'Dieses Embed wird dem Mitglied als DM geschickt, das aus einem 3er-Call entfernt wurde – mit {targetName} als Autor (Avatar + Name).',
+    release3: 'Dieses Embed wird dem Mitglied als DM geschickt, sobald seine Call-Sperre aus einem 3er-Call abgelaufen ist – „Du kannst wieder beitreten“.',
+    panel4: 'Dieses Embed ist das dauerhafte Moderations-Panel in den 4er-Calls. Drei „Dafür“-Stimmen genügen für den Rauswurf.',
+    vote4: 'Dieses Embed ist die laufende Rauswurf-Abstimmung in einem 4er-Call – drei „Dafür“-Stimmen entscheiden.',
+    result4: 'Dieses Embed ist das Ergebnis einer Abstimmung in einem 4er-Call („Rauswurf beschlossen / abgelehnt“).',
+    team4: 'Dieses Embed wird bei einem erfolgreichen Rauswurf aus einem 4er-Call mit Team-Rollen-Ping in den Team-Kanal gesendet.',
+    dm4: 'Dieses Embed wird dem Mitglied als DM geschickt, das aus einem 4er-Call entfernt wurde – mit {targetName} als Autor (Avatar + Name).',
+    release4: 'Dieses Embed wird dem Mitglied als DM geschickt, sobald seine Call-Sperre aus einem 4er-Call abgelaufen ist – „Du kannst wieder beitreten“.'
+  };
+  return descriptions[String(section || 'panel')] || descriptions.panel;
+}
+
+// Löst eine publicCallVote-Design-Sektion auf. 2er-/3er-/4er-Sektionen
+// (panel2/vote2/.../dm4) existieren in gespeicherten Configs aus älteren
+// Versionen noch nicht – der Editor fällt dann auf die Basis-Sektion zurück
+// (vote2 → vote), statt ein leeres Embed zu zeigen. Der Backend-Get liefert
+// die Sektionen normalisiert mit; dieser Fallback ist das Sicherheitsnetz,
+// damit der Studio-Editor NIE leer öffnet.
+function resolvePublicCallVoteSection(design, sectionId) {
+  const direct = design && typeof design === 'object' ? design[sectionId] : null;
+  if (direct && typeof direct === 'object') return direct;
+  const base = String(sectionId || 'panel').replace(/[234]$/, '');
+  const fallback = design && typeof design === 'object' ? design[base] : null;
+  return fallback && typeof fallback === 'object' ? fallback : {};
+}
+
+function publicCallVoteStudioTemplate(config) {
+  const design = config?.design || {};
+  const sectionId = state.studioPcvSection || 'panel';
+  const section = resolvePublicCallVoteSection(design, sectionId);
+  return {
+    specialTemplate: 'publicCallVote',
+    channelId: '',
+    content: '',
+    outsideImageUrl: '',
+    outsideImageName: '',
+    outsideImageSize: 0,
+    outsideImageAttachment: null,
+    embeds: [{
+      title: section.title || '', url: section.url || '', description: section.description || '', color: section.color || '#2b2d31',
+      authorName: section.authorName || '', authorIconUrl: section.authorIconUrl || '', thumbnailUrl: section.thumbnailUrl || '',
+      imageUrl: section.imageUrl || '', footerText: section.footerText || '', footerIconUrl: section.footerIconUrl || '',
+      timestamp: section.timestamp === true, fields: Array.isArray(section.fields) ? clone(section.fields).slice(0, 25) : []
+    }],
+    componentSet: 'none',
+    reactionRoles: []
+  };
+}
+
+function publicCallVotePreviewValue(value) {
+  const guildName = state.guilds.find(function (guild) { return String(guild.id) === String(state.selectedGuildId); })?.name || 'FALLEN HEAVEN';
+  return String(value || '')
+    .replaceAll('{server}', guildName)
+    .replaceAll('{guild}', guildName)
+    .replaceAll('{targetName}', 'Max Muster')
+    .replaceAll('{target}', '@MaxMuster')
+    .replaceAll('{targetMention}', '@MaxMuster')
+    .replaceAll('{channel}', '#Öffentlicher Call')
+    .replaceAll('{reason}', 'Spam / Flood')
+    .replaceAll('{yes}', '3')
+    .replaceAll('{no}', '1')
+    .replaceAll('{progress}', '✅ 3 dafür · ❌ 1 dagegen')
+    .replaceAll('{remaining}', '42 Sek.')
+    .replaceAll('{attending}', '6')
+    .replaceAll('{requester}', 'Alice')
+    .replaceAll('{outcome}', '✅ Rauswurf beschlossen')
+    .replaceAll('{outcomeText}', String(state.config?.publicCallVote?.passedOutcomeText || 'wird entfernt'))
+    .replaceAll('{kickMinutes}', '10')
+    .replaceAll('{strikes}', '0');
+}
+
+function publicCallVotePreviewTemplate(template) {
+  if (state.studioSpecialTemplate !== 'publicCallVote') return template;
+  const preview = clone(template);
+  preview.content = publicCallVotePreviewValue(preview.content);
+  preview.embeds = (preview.embeds || [preview.embed || {}]).map(function (source) {
+    const embed = clone(source);
+    ['title', 'description', 'authorName', 'footerText'].forEach(function (key) { embed[key] = publicCallVotePreviewValue(embed[key]); });
+    if (Array.isArray(embed.fields)) {
+      embed.fields = embed.fields.map(function (field) {
+        return { ...field, name: publicCallVotePreviewValue(field.name), value: publicCallVotePreviewValue(field.value) };
+      });
+    }
+    return embed;
+  });
+  preview.embed = preview.embeds[0] || {};
+  return preview;
+}
+
+async function openPublicCallVoteStudio(section) {
   if (!state.authenticated || !state.selectedGuildId) {
     toast('Wähle zuerst einen Server.', 'error');
     return;
   }
   if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
   state.activeStudioMessageId = '';
-  loadStudioTemplate(activityRaceStudioTemplate(state.config?.activityRace));
+  state.studioSourceMessage = null;
+  state.studioPcvSection = ['panel', 'vote', 'result', 'team', 'dm', 'release', 'panel2', 'vote2', 'result2', 'team2', 'dm2', 'release2', 'panel3', 'vote3', 'result3', 'team3', 'dm3', 'release3', 'panel4', 'vote4', 'result4', 'team4', 'dm4', 'release4'].includes(String(section)) ? String(section) : 'panel';
+  loadStudioTemplate(publicCallVoteStudioTemplate(state.config?.publicCallVote));
   renderDrafts();
-  toast('Aktivitäts-Liga im bestehenden Embed Studio geöffnet.', 'success');
+  toast('Call-Moderation im bestehenden Embed Studio geöffnet.', 'success');
+}
+
+async function savePublicCallVoteStudioTemplate() {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return false;
+  }
+  const template = currentStudioTemplate();
+  const validation = renderStudioLimits(template);
+  if (!validation.valid) {
+    toast(validation.errors[0], 'error');
+    return false;
+  }
+  const section = state.studioPcvSection || 'panel';
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/public-call-vote/design',
+    body: { section: section, template: { ...template, embeds: (template.embeds || [template.embed || {}]).slice(0, 1) } },
+    errorMessage: 'Das Design der Call-Moderation konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      // result.config ist die volle Guild-Config – wir brauchen nur den
+      // publicCallVote-Anteil mit dem aktualisierten Design.
+      const savedCfg = result.config || {};
+      state.config.publicCallVote = savedCfg.publicCallVote || state.config.publicCallVote;
+      // Falls das Design im Patch direkt enthalten ist (result.design),
+      // in die Config übernehmen damit die Vorschau sofort aktualisiert wird.
+      if (result.design && state.config.publicCallVote) {
+        state.config.publicCallVote.design = { ...state.config.publicCallVote.design, ...result.design };
+      }
+      loadStudioTemplate(publicCallVoteStudioTemplate(state.config.publicCallVote));
+    },
+    okMessage: 'Design-Sektion gespeichert. Live-Nachrichten werden automatisch aktualisiert.'
+  });
+}
+
+async function openActivityRaceStudio(section) {
+  if (!state.authenticated || !state.selectedGuildId) {
+    toast('Wähle zuerst einen Server.', 'error');
+    return;
+  }
+  if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
+  state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
+  const targetSection = ['weekly', 'monthly', 'ping-info'].includes(section) ? section : 'daily';
+  loadStudioTemplate(window.FHCCActivityRaceStudio.studioTemplate(state.config?.activityRace, targetSection, state));
+  renderDrafts();
+  toast(targetSection === 'daily'
+    ? 'Heute-Embed im Embed Studio geöffnet.'
+    : targetSection === 'ping-info'
+      ? 'Ping-Info-Panel im Embed Studio geöffnet.'
+      : (targetSection === 'weekly' ? 'Wochen-Embed' : 'Monat-Embed') + ' im Embed Studio geöffnet.', 'success');
 }
 
 async function openSteamWorkshopStudio() {
@@ -4469,7 +5942,9 @@ async function openSteamWorkshopStudio() {
     return;
   }
   if (!(await setView('studio'))) return;
+  await refreshConfig(state.selectedGuildId);
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
   state.studioWorkshopItemId = '';
   state.studioWorkshopItemTitle = '';
   state.studioWorkshopItemTokens = null;
@@ -4490,9 +5965,16 @@ async function saveWelcomeFarewellStudioTemplate() {
     toast(validation.errors[0], 'error');
     return false;
   }
+  // Außenbild wie bei der Aktivitäts-Liga: lokal gespeicherte Datei (localAsset),
+  // ein bereits gesendeter Discord-Anhang oder eine URL wird mitgespeichert,
+  // damit das Bild beim nächsten Versand als echter Anhang erscheint.
   const welcomeTemplate = {
     content: String(template.content || '').slice(0, 2000),
     outsideImageUrl: String(template.outsideImageUrl || ''),
+    outsideImageName: String(template.outsideImageName || ''),
+    outsideImageSize: Number(template.outsideImageSize || 0),
+    outsideImageAttachment: normalizeOutsideImageAttachment(template.outsideImageAttachment),
+    removeOutsideImage: template.removeOutsideImage === true,
     embeds: (template.embeds || [template.embed || {}]).slice(0, 10).map(function (embed) {
       return {
         title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#58b9ff',
@@ -4516,16 +5998,45 @@ async function saveActivityRaceStudioTemplate() {
     return false;
   }
   const template = currentStudioTemplate();
+  // Round-Trip: Titel, Beschreibung und Footer stehen im Editor als lesbarer
+  // Text (z. B. „Heute“, Completion-Satz). Wurden sie nicht geändert (sie
+  // entsprechen noch exakt der Auflösung), werden sie zurück auf ihre
+  // Platzhalter gesetzt ({period}, {completion}, {panelDescription}) und
+  // bleiben dynamisch. Die Felder zeigen bereits Platzhalter und werden
+  // unverändert gespeichert.
+  const raceSection = ['weekly', 'monthly', 'ping-info'].includes(state.studioActivityRaceSection) ? state.studioActivityRaceSection : 'daily';
+  const raceConfig = state.config?.activityRace || {};
+  const raceDesignKey = raceSection === 'weekly' ? 'panelDesignWeekly' : raceSection === 'monthly' ? 'panelDesignMonthly' : 'panelDesign';
+  const raceRawEmbed = raceSection === 'ping-info' ? {} : raceConfig[raceDesignKey]?.embed || {};
+  const roundTrip = function (editedValue, rawValue) {
+    if (rawValue === undefined || rawValue === null) return false;
+    return String(editedValue || '') === window.FHCCActivityRaceStudio.resolvePreview(String(rawValue), state);
+  };
+  if (template.embed && raceSection !== 'ping-info') {
+    if (roundTrip(template.embed.title, Object.prototype.hasOwnProperty.call(raceRawEmbed, 'title') ? raceRawEmbed.title : '{period}')) {
+      template.embed.title = Object.prototype.hasOwnProperty.call(raceRawEmbed, 'title') ? raceRawEmbed.title : '{period}';
+    }
+    if (Object.prototype.hasOwnProperty.call(raceRawEmbed, 'description')) {
+      if (String(template.embed.description || '') === window.FHCCActivityRaceStudio.studioDescription(raceRawEmbed.description, raceConfig, raceSection, state)) {
+        template.embed.description = raceRawEmbed.description;
+      }
+    } else if (String(template.embed.description || '') === window.FHCCActivityRaceStudio.resolvePreview('{completion}', state)) {
+      template.embed.description = '{completion}';
+    }
+    if (roundTrip(template.embed.footerText, Object.prototype.hasOwnProperty.call(raceRawEmbed, 'footerText') ? raceRawEmbed.footerText : '{period} · nachvollziehbar und automatisch ausgewertet')) {
+      template.embed.footerText = Object.prototype.hasOwnProperty.call(raceRawEmbed, 'footerText') ? raceRawEmbed.footerText : '{period} · nachvollziehbar und automatisch ausgewertet';
+    }
+  }
   const validation = renderStudioLimits(template);
   if (!validation.valid) {
     toast(validation.errors[0], 'error');
     return false;
   }
-  if ((template.embed?.fields || []).length > 21) {
+  if (raceSection !== 'ping-info' && (template.embed?.fields || []).length > 21) {
     toast('Die Liga reserviert vier Felder für Chat, Sprachchat, Auswertung und Zeitraum. Du kannst bis zu 21 eigene Felder ergänzen.', 'error');
     return false;
   }
-  if (validation.totalEmbedCharacters > 5_000) {
+  if (raceSection !== 'ping-info' && validation.totalEmbedCharacters > 5_000) {
     toast('Halte mindestens 1.000 Embed-Zeichen für die automatisch erzeugten Ranglisten frei.', 'error');
     return false;
   }
@@ -4534,33 +6045,20 @@ async function saveActivityRaceStudioTemplate() {
     toast('Nachricht und Außenbild-Link dürfen zusammen maximal 2.000 Zeichen enthalten.', 'error');
     return false;
   }
-  const buttons = [
-    document.getElementById('save-draft'),
-    document.getElementById('send-studio-message'),
-    document.getElementById('send-studio-message-secondary')
-  ].filter(Boolean);
-  buttons.forEach(function (button) { button.disabled = true; });
-  try {
-    const response = await api.apiRequest({
-      path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/activity-race/design',
-      method: 'PUT',
-      body: { template },
-      timeoutMs: template.outsideImageUrl ? 120000 : 45000
-    });
-    if (handleExpiredSession(response)) return false;
-    if (!response.ok) throw new Error(response.data?.error || 'Die Liga-Vorlage konnte nicht gespeichert werden.');
-    state.config.activityRace = response.data?.result?.config || state.config.activityRace;
-    loadStudioTemplate(activityRaceStudioTemplate(state.config.activityRace));
-    toast(response.data?.result?.panel
-      ? 'Liga-Vorlage gespeichert und Live-Panel aktualisiert.'
-      : 'Liga-Vorlage gespeichert. Das Panel wird nach der Aktivierung automatisch erstellt.', 'success');
-    return true;
-  } catch (error) {
-    toast(String(error?.message || error), 'error');
-    return false;
-  } finally {
-    buttons.forEach(function (button) { button.disabled = false; });
-  }
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/activity-race/design',
+    body: { section: raceSection, template },
+    errorMessage: 'Die Liga-Vorlage konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      state.config.activityRace = result.config?.activityRace || state.config.activityRace;
+      loadStudioTemplate(window.FHCCActivityRaceStudio.studioTemplate(state.config.activityRace, state.studioActivityRaceSection, state));
+    },
+    okMessage: function (result) {
+      return result.panel
+        ? 'Liga-Vorlage gespeichert und Live-Panel aktualisiert.'
+        : 'Liga-Vorlage gespeichert. Das Panel wird nach der Aktivierung automatisch erstellt.';
+    }
+  });
 }
 
 async function saveSteamWorkshopStudioTemplate() {
@@ -4586,53 +6084,41 @@ async function saveSteamWorkshopStudioTemplate() {
     toast('Halte mindestens 300 Embed-Zeichen für die von Steam eingesetzten Daten frei.', 'error');
     return false;
   }
-  const buttons = [
-    document.getElementById('save-draft'),
-    document.getElementById('send-studio-message'),
-    document.getElementById('send-studio-message-secondary')
-  ].filter(Boolean);
-  buttons.forEach(function (button) { button.disabled = true; });
-  try {
-    template.workshopItemId = state.studioWorkshopItemId;
-    template.workshopAssetMode = state.studioWorkshopAssetMode;
-    const individual = Boolean(state.studioWorkshopItemId);
-    const response = await api.apiRequest({
-      path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/steam-workshop/' + (individual ? 'items/' + encodeURIComponent(state.studioWorkshopItemId) + '/design' : 'design'),
-      method: 'PUT',
-      body: { template },
-      timeoutMs: 180000
-    });
-    if (handleExpiredSession(response)) return false;
-    if (!response.ok) throw new Error(response.data?.error || 'Die Workshop-Vorlage konnte nicht gespeichert werden.');
-    if (individual) {
-      const savedItem = response.data?.result?.item || {};
-      steamWorkshopStatusSnapshot ||= { items: [] };
-      const items = Array.isArray(steamWorkshopStatusSnapshot.items) ? steamWorkshopStatusSnapshot.items : [];
-      const index = items.findIndex(function (entry) { return String(entry.workshopId || '') === state.studioWorkshopItemId; });
-      if (index >= 0) items[index] = savedItem;
-      else items.push(savedItem);
-      loadStudioTemplate(steamWorkshopStudioTemplate(state.config.steamWorkshop, savedItem));
-      toast('Individuelles Workshop-Design gespeichert und genau dieser Forum-Post aktualisiert.', 'success');
-    } else {
-      state.config.steamWorkshop = response.data?.result?.config || state.config.steamWorkshop;
-      loadStudioTemplate(steamWorkshopStudioTemplate(state.config.steamWorkshop));
-      toast(response.data?.result?.sync
+  template.workshopItemId = state.studioWorkshopItemId;
+  template.workshopAssetMode = state.studioWorkshopAssetMode;
+  const individual = Boolean(state.studioWorkshopItemId);
+  return saveStudioDesign({
+    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/steam-workshop/' + (individual ? 'items/' + encodeURIComponent(state.studioWorkshopItemId) + '/design' : 'design'),
+    body: { template },
+    timeoutMs: 180000,
+    errorMessage: 'Die Workshop-Vorlage konnte nicht gespeichert werden.',
+    onSaved: function (result) {
+      if (individual) {
+        const savedItem = result.item || {};
+        steamWorkshopStatusSnapshot ||= { items: [] };
+        const items = Array.isArray(steamWorkshopStatusSnapshot.items) ? steamWorkshopStatusSnapshot.items : [];
+        const index = items.findIndex(function (entry) { return String(entry.workshopId || '') === state.studioWorkshopItemId; });
+        if (index >= 0) items[index] = savedItem;
+        else items.push(savedItem);
+        loadStudioTemplate(steamWorkshopStudioTemplate(state.config.steamWorkshop, savedItem));
+      } else {
+        state.config.steamWorkshop = result.config?.steamWorkshop || state.config.steamWorkshop;
+        loadStudioTemplate(steamWorkshopStudioTemplate(state.config.steamWorkshop));
+      }
+    },
+    okMessage: function (result) {
+      if (individual) return 'Individuelles Workshop-Design gespeichert und genau dieser Forum-Post aktualisiert.';
+      return result.sync
         ? 'Workshop-Vorlage gespeichert und alle Katalogeinträge aktualisiert.'
-        : 'Workshop-Vorlage gespeichert. Nach der Modulaktivierung wird sie automatisch verwendet.', 'success');
+        : 'Workshop-Vorlage gespeichert. Nach der Modulaktivierung wird sie automatisch verwendet.';
     }
-    return true;
-  } catch (error) {
-    toast(String(error?.message || error), 'error');
-    return false;
-  } finally {
-    buttons.forEach(function (button) { button.disabled = false; });
-  }
+  });
 }
-
 function loadStudioTemplate(template) {
   const data = template || {};
-  state.studioSpecialTemplate = ['welcomeFarewell', 'activityRace', 'steamWorkshop', 'aiChat'].includes(data.specialTemplate) ? data.specialTemplate : '';
+  state.studioSpecialTemplate = ['economyPanel', 'welcomeFarewell', 'boostAnnounce', 'boostTop', 'vipPanel', 'vipDm', 'activityRace', 'steamWorkshop', 'memberVerify', 'levelsPanel', 'levelUp', 'levelUpInfo', 'botUpdates', 'publicCallVote', 'countingPanel', 'countingDm', 'inactiveReminder', 'tempVoiceInterface'].includes(data.specialTemplate) ? data.specialTemplate : '';
   state.studioActivityUsesPeriodColor = state.studioSpecialTemplate === 'activityRace' && data.activityRaceUsePeriodColor === true;
+  state.studioActivityRaceSection = state.studioSpecialTemplate === 'activityRace' && ['weekly', 'monthly', 'ping-info'].includes(data.activityRaceSection) ? data.activityRaceSection : 'daily';
   state.studioWorkshopItemId = state.studioSpecialTemplate === 'steamWorkshop' ? String(data.workshopItemId || '') : '';
   state.studioWorkshopItemTitle = state.studioWorkshopItemId ? String(data.workshopItemTitle || '') : '';
   state.studioWorkshopItemTokens = state.studioWorkshopItemId && data.workshopItemTokens ? clone(data.workshopItemTokens) : null;
@@ -4640,6 +6126,7 @@ function loadStudioTemplate(template) {
   const sourceEmbeds = Array.isArray(data.embeds) && data.embeds.length ? data.embeds : [data.embed || {}];
   state.studioEmbeds = sourceEmbeds.slice(0, 10).map(normalizeStudioEmbed);
   state.studioReactionRoles = (Array.isArray(data.reactionRoles) ? data.reactionRoles : []).map(normalizeStudioReactionRole);
+  state.studioComponents = window.FHCCStudioComponents.normalizeRows(data.studioComponents || data.components);
   state.studioComponentSet = data.componentSet === 'heavenEconomy' ? 'heavenEconomy' : 'none';
   state.activeStudioEmbedIndex = Math.min(Math.max(0, Number(data.activeEmbedIndex || 0)), state.studioEmbeds.length - 1);
   const channel = document.getElementById('studio-channel');
@@ -4653,20 +6140,34 @@ function loadStudioTemplate(template) {
   if (componentSet) componentSet.value = state.studioComponentSet;
   const legacyOutside = data.outsideImageUrl || sourceEmbeds[0]?.outsideImageUrl || '';
   const legacyOutsideName = data.outsideImageName || sourceEmbeds[0]?.outsideImageName || '';
+  // Außenbild-Vorschau erhalten: Wird beim erneuten Laden DIESELBE lokale
+  // Bild-Referenz zurückgeliefert (z. B. nach „Speichern & Kanal aktualisieren“
+  // ohne gewählten Kanal – der Server behält die lokale Datei bei), bleibt die
+  // frisch gewählte Datei sichtbar statt aus der Vorschau zu verschwinden.
+  // Erst wenn ein anderes Bild (oder gar keins) geladen wird, wird zurückgesetzt.
+  const previousOutsideAttachment = studioOutsideImageAttachment;
+  const previousPickedDataUrl = studioOutsideImagePickedDataUrl;
   studioOutsideImageAttachment = normalizeOutsideImageAttachment(data.outsideImageAttachment || sourceEmbeds[0]?.outsideImageAttachment);
   studioOutsideImageRemovalRequested = data.removeOutsideImage === true;
   studioOutsideImageExistingAttachment = !studioOutsideImageRemovalRequested && Boolean(studioOutsideImageAttachment || data.outsideImageNeedsReselect || sourceEmbeds[0]?.outsideImageNeedsReselect);
+  const sameLocalAsset = Boolean(
+    previousOutsideAttachment?.localAsset && studioOutsideImageAttachment?.localAsset &&
+    previousOutsideAttachment.id && studioOutsideImageAttachment.id === previousOutsideAttachment.id
+  );
+  const keepPickedPreview = Boolean(previousPickedDataUrl && sameLocalAsset);
   const outside = document.getElementById('studio-outside-image');
   const outsideName = document.getElementById('studio-outside-image-name');
   const outsideSize = document.getElementById('studio-outside-image-size');
-  if (outside) outside.value = legacyOutside;
+  if (outside) outside.value = legacyOutside || (keepPickedPreview ? previousPickedDataUrl : '');
   if (outsideName) outsideName.value = legacyOutsideName || studioOutsideImageAttachment?.name || '';
   if (outsideSize) outsideSize.value = String(data.outsideImageSize || sourceEmbeds[0]?.outsideImageSize || studioOutsideImageAttachment?.size || 0);
+  studioOutsideImagePickedDataUrl = keepPickedPreview ? previousPickedDataUrl : '';
   updateOutsideImagePicker();
   writeStudioEmbedToForm(state.studioEmbeds[state.activeStudioEmbedIndex]);
   renderStudioEmbedTabs();
   renderStudioReactionRoles();
   renderStudioComponentSetPreview();
+  renderStudioComponentsPreview();
   renderStudioSpecialTemplateUi();
   updatePreview();
 }
@@ -4706,9 +6207,9 @@ function updatePreview() {
   const extraEmbeds = document.getElementById('preview-extra-embeds');
   if (channelName) channelName.textContent = channel ? channel.name : 'preview';
   if (content) content.textContent = previewTemplate.content || '';
-  if (title) title.textContent = embed.title || 'Ohne Titel';
-  if (description) description.textContent = embed.description || 'Keine Beschreibung.';
-  if (signature) signature.textContent = embed.footerText || 'FALLEN HEAVEN';
+  if (title) title.innerHTML = studioRichText(embed.title || 'Ohne Titel');
+  if (description) description.innerHTML = studioRichText(embed.description || 'Keine Beschreibung.');
+  if (signature) signature.innerHTML = studioRichText(embed.footerText || 'FALLEN HEAVEN');
   var embedLine = document.querySelector('.embed-line');
   if (embedLine) embedLine.style.background = embed.color || '#58b9ff';
   if (author && authorName && authorIcon) {
@@ -4725,35 +6226,37 @@ function updatePreview() {
     image.src = validImageUrl(embed.imageUrl) ? embed.imageUrl : '';
   }
   if (outsideImage) {
-    const outsideSource = previewTemplate.outsideImageUrl || previewTemplate.outsideImageAttachment?.url || embed.outsideImageUrl || '';
+    const outsideSource = previewTemplate.outsideImageUrl || studioOutsideImagePickedDataUrl || document.getElementById('studio-outside-image')?.value || previewTemplate.outsideImageAttachment?.url || embed.outsideImageUrl || '';
     outsideImage.hidden = !validImageUrl(outsideSource);
     outsideImage.src = validImageUrl(outsideSource) ? outsideSource : '';
   }
   renderStudioReactionPreview();
   renderStudioComponentSetPreview();
+  renderStudioComponentsPreview();
   if (footerIcon) footerIcon.src = validImageUrl(embed.footerIconUrl) ? embed.footerIconUrl : 'assets/fallen-heaven-icon.png';
   if (timestamp) timestamp.hidden = !embed.timestamp;
   if (fields) {
     fields.innerHTML = (embed.fields || []).map(function (field) {
-      return '<div class="embed-field' + (field.inline ? ' inline' : '') + '"><strong>' + escapeHtml(field.name || '\u200b') + '</strong><span>' + escapeHtml(field.value || '\u200b') + '</span></div>';
+      return '<div class="embed-field' + (field.inline ? ' inline' : '') + '"><strong>' + studioRichText(field.name || '\u200b') + '</strong><span>' + studioRichText(field.value || '\u200b') + '</span></div>';
     }).join('');
   }
   if (extraEmbeds) {
     extraEmbeds.innerHTML = previewTemplate.embeds.map(function (item, index) {
       if (index === state.activeStudioEmbedIndex) return '';
       const itemFields = (item.fields || []).map(function (field) {
-        return '<div class="embed-field' + (field.inline ? ' inline' : '') + '"><strong>' + escapeHtml(field.name || '\u200b') + '</strong><span>' + escapeHtml(field.value || '\u200b') + '</span></div>';
+        return '<div class="embed-field' + (field.inline ? ' inline' : '') + '"><strong>' + studioRichText(field.name || '\u200b') + '</strong><span>' + studioRichText(field.value || '\u200b') + '</span></div>';
       }).join('');
       return '<div class="embed-preview studio-extra-embed" style="--studio-embed-color:' + escapeHtml(item.color || '#58b9ff') + '"><span class="embed-line" style="background:' + escapeHtml(item.color || '#58b9ff') + '"></span><div class="embed-content">' +
-        (item.authorName ? '<div class="embed-author"><img src="' + escapeHtml(validImageUrl(item.authorIconUrl) ? item.authorIconUrl : 'assets/fallen-heaven-icon.png') + '" alt=""><span>' + escapeHtml(item.authorName) + '</span></div>' : '') +
-        '<h3>' + escapeHtml(item.title || 'Ohne Titel') + '</h3><p>' + escapeHtml(item.description || 'Keine Beschreibung.') + '</p><div class="embed-fields">' + itemFields + '</div>' +
+        (item.authorName ? '<div class="embed-author"><img src="' + escapeHtml(validImageUrl(item.authorIconUrl) ? item.authorIconUrl : 'assets/fallen-heaven-icon.png') + '" alt=""><span>' + studioRichText(item.authorName) + '</span></div>' : '') +
+        '<h3>' + studioRichText(item.title || 'Ohne Titel') + '</h3><p>' + studioRichText(item.description || 'Keine Beschreibung.') + '</p><div class="embed-fields">' + itemFields + '</div>' +
         (validImageUrl(item.imageUrl) ? '<img class="embed-image" src="' + escapeHtml(item.imageUrl) + '" alt="">' : '') +
-        '<div class="embed-footer"><img src="' + escapeHtml(validImageUrl(item.footerIconUrl) ? item.footerIconUrl : 'assets/fallen-heaven-icon.png') + '" alt=""><span>' + escapeHtml(item.footerText || '') + '</span>' + (item.timestamp ? '<time>Heute</time>' : '') + '</div>' +
+        '<div class="embed-footer"><img src="' + escapeHtml(validImageUrl(item.footerIconUrl) ? item.footerIconUrl : 'assets/fallen-heaven-icon.png') + '" alt=""><span>' + studioRichText(item.footerText || '') + '</span>' + (item.timestamp ? '<time>Heute</time>' : '') + '</div>' +
         (validImageUrl(item.thumbnailUrl) ? '<img class="embed-thumbnail" src="' + escapeHtml(item.thumbnailUrl) + '" alt="">' : '') + '</div></div>';
     }).join('');
   }
   const editButton = document.getElementById('edit-studio-message');
   if (editButton) editButton.disabled = !state.activeStudioMessageId;
+  renderStudioMessageEmojiPreview();
 }
 
 function currentDraft() {
@@ -4776,11 +6279,15 @@ function renderDrafts() {
   const sentRows = state.studioMessages.map(function (entry) {
     const title = entry.template?.embed?.title || entry.title || 'Gesendete Nachricht';
     const channel = state.studioChannels.find(function (item) { return item.id === entry.channelId; });
-    return '<button class="draft-row sent ' + (entry.id === state.activeStudioMessageId ? 'active' : '') + '" data-studio-message="' + escapeHtml(entry.id) + '">' +
-      '<span style="background:' + escapeHtml(entry.template?.embed?.color || '#58b9ff') + '"></span><div><strong>' + escapeHtml(title) + '</strong><small>Gesendet in #' + escapeHtml(channel?.name || entry.channelId || 'Kanal') + ' · ' + escapeHtml(entry.updatedAt || entry.sentAt || '') + '</small></div><i>EDIT</i></button>';
+    return '<div class="draft-row-wrap">' +
+      '<button class="draft-row sent ' + (entry.id === state.activeStudioMessageId ? 'active' : '') + '" data-studio-message="' + escapeHtml(entry.id) + '">' +
+      '<span style="background:' + escapeHtml(entry.template?.embed?.color || '#58b9ff') + '"></span><div><strong>' + escapeHtml(title) + '</strong><small>Gesendet in #' + escapeHtml(channel?.name || entry.channelId || 'Kanal') + ' · ' + escapeHtml(entry.updatedAt || entry.sentAt || '') + '</small></div><i>EDIT</i></button>' +
+      '<button class="draft-row-delete" type="button" data-delete-message="' + escapeHtml(entry.id) + '" title="Aus der Liste entfernen – die Nachricht bleibt in Discord" aria-label="Referenz entfernen">×</button></div>';
   });
   const draftRows = state.drafts.map(function (draft) {
-    return '<button class="draft-row" data-draft="' + escapeHtml(draft.id) + '"><span style="background:' + escapeHtml(draft.color || draft.template?.embed?.color || '#58b9ff') + '"></span><div><strong>' + escapeHtml(draft.title || 'Entwurf') + '</strong><small>Entwurf · ' + escapeHtml(draft.createdAt || '') + '</small></div><i>LOAD</i></button>';
+    return '<div class="draft-row-wrap">' +
+      '<button class="draft-row" data-draft="' + escapeHtml(draft.id) + '"><span style="background:' + escapeHtml(draft.color || draft.template?.embed?.color || '#58b9ff') + '"></span><div><strong>' + escapeHtml(draft.title || 'Entwurf') + (draft.id === 'autosave' ? ' <em class="draft-autosave-badge">AUTO</em>' : '') + '</strong><small>' + (draft.id === 'autosave' ? 'Automatisch gespeichert · ' : 'Entwurf · ') + escapeHtml(draft.createdAt || '') + '</small></div><i>LOAD</i></button>' +
+      '<button class="draft-row-delete" type="button" data-delete-draft="' + escapeHtml(draft.id) + '" title="Entwurf löschen" aria-label="Entwurf löschen">×</button></div>';
   });
   container.innerHTML = sentRows.concat(draftRows).join('') || '<p class="empty-drafts">Noch keine Entwürfe oder gesendeten Bot-Nachrichten gespeichert.</p>';
 }
@@ -4789,6 +6296,7 @@ function loadDraft(id) {
   const draft = state.drafts.find(function (item) { return item.id === id; });
   if (!draft) return;
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
   if (draft.template) {
     loadStudioTemplate(draft.template);
   } else {
@@ -4815,26 +6323,8 @@ function loadSentMessage(id) {
   toast('Gesendete Nachricht geladen. Du kannst sie jetzt bearbeiten.', 'success');
 }
 
-function getStudioAssistantTarget() {
-  const target = document.getElementById('studio-ai-target')?.value || 'description';
-  if (target === 'title') return { id: 'studio-title', label: 'Embed-Titel', maximum: 256 };
-  if (target === 'content') return { id: 'studio-content', label: 'Nachricht', maximum: 2000 };
-  return { id: 'studio-description', label: 'Embed-Beschreibung', maximum: 4096 };
-}
-
-function updateStudioAssistantResultState() {
-  const output = document.getElementById('studio-ai-output');
-  const text = String(output?.value || '').trim();
-  const count = document.getElementById('studio-ai-result-count');
-  if (count) count.textContent = text.length.toLocaleString('de-DE') + ' Zeichen';
-  ['studio-ai-apply', 'studio-ai-append'].forEach(function (id) {
-    const button = document.getElementById(id);
-    if (button) button.disabled = !text;
-  });
-}
-
 function attachStudioTextCounter(input) {
-  if (!input || input.dataset.studioCounterReady === 'true' || input.id === 'studio-ai-output') return;
+  if (!input || input.dataset.studioCounterReady === 'true') return;
   const maximum = Number(input.maxLength);
   const label = input.closest('label');
   if (!label || !Number.isFinite(maximum) || maximum <= 0) return;
@@ -4844,7 +6334,17 @@ function attachStudioTextCounter(input) {
   const counter = document.createElement('span');
   counter.className = 'studio-text-counter';
   counter.setAttribute('aria-hidden', 'true');
-  label.append(counter);
+  // Bei Feldern mit Kopfzeile (z. B. „Nachricht über dem Embed“ mit Emoji-Button)
+  // wandert der Zähler in die Kopfzeile vor den Button, statt absolut darüber zu
+  // liegen (position: static via .studio-message-field .studio-text-counter).
+  const heading = label.querySelector('.studio-field-heading');
+  if (heading) {
+    const headingButton = heading.querySelector('button');
+    if (headingButton) heading.insertBefore(counter, headingButton);
+    else heading.append(counter);
+  } else {
+    label.append(counter);
+  }
 
   const update = function () {
     const length = String(input.value || '').length;
@@ -4871,68 +6371,34 @@ function initializeStudioTextCounters() {
   });
   observer.observe(studio, { childList: true, subtree: true });
 }
-
-async function generateStudioAssistantText() {
-  if (!state.authenticated) { void beginLogin(); return; }
-  if (!state.selectedGuildId) { toast('Wähle zuerst einen Server.', 'error'); return; }
-  const target = getStudioAssistantTarget();
-  const targetInput = document.getElementById(target.id);
-  const instruction = String(document.getElementById('studio-ai-instruction')?.value || '').trim();
-  const mode = document.getElementById('studio-ai-mode')?.value || 'create';
-  if (mode === 'create' && !instruction) { toast('Beschreibe kurz, welchen Text die AI schreiben soll.', 'info'); return; }
-
-  const button = document.getElementById('studio-ai-generate');
-  const status = document.getElementById('studio-ai-status');
-  if (button) { button.disabled = true; button.dataset.previousText = button.textContent; button.textContent = 'AI schreibt ...'; }
-  if (status) status.textContent = 'Ollama formuliert einen passenden Vorschlag ...';
-
-  const template = currentStudioTemplate();
-  const response = await api.apiRequest({
-    path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/embed/assistant',
-    method: 'POST',
-    body: {
-      mode,
-      target: document.getElementById('studio-ai-target')?.value || 'description',
-      tone: document.getElementById('studio-ai-tone')?.value || 'professional',
-      instruction,
-      currentText: String(targetInput?.value || ''),
-      context: {
-        content: template.content || '',
-        title: template.embed?.title || '',
-        description: template.embed?.description || ''
-      }
-    }
-  });
-
-  if (button) { button.disabled = false; button.textContent = button.dataset.previousText || 'Text erstellen'; }
-  if (!response.ok) {
-    if (status) status.textContent = response.data?.error || 'Der Text-Assistent konnte keinen Vorschlag erstellen.';
-    toast(response.data?.error || 'AI-Vorschlag fehlgeschlagen.', 'error');
+async function sendStudioMessage() {
+  if (state.studioSpecialTemplate === 'economyPanel') { await window.FHCCEconomyPanelStudio.save({ state, currentStudioTemplate, renderStudioLimits, saveStudioDesign, loadStudioTemplate, toast }); return; }
+  if (state.studioSpecialTemplate === 'tempVoiceInterface') {
+    await tempVoiceUi.saveStudioTemplate();
     return;
   }
-
-  const output = document.getElementById('studio-ai-output');
-  if (output) output.value = String(response.data?.result?.text || '').slice(0, 4096);
-  if (status) status.textContent = 'Vorschlag bereit für ' + target.label + '. Prüfe ihn und übernimm ihn anschließend.';
-  updateStudioAssistantResultState();
-}
-
-function applyStudioAssistantText(append = false) {
-  const target = getStudioAssistantTarget();
-  const input = document.getElementById(target.id);
-  const proposal = String(document.getElementById('studio-ai-output')?.value || '').trim();
-  if (!input || !proposal) return;
-  const separator = append && String(input.value || '').trim() ? '\n\n' : '';
-  const nextValue = (append ? String(input.value || '').trim() + separator + proposal : proposal).slice(0, target.maximum);
-  input.value = nextValue;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  updatePreview();
-  toast(target.label + (append ? ' wurde ergänzt.' : ' wurde ersetzt.'), 'success');
-}
-
-async function sendStudioMessage() {
+  if (state.studioSpecialTemplate === 'publicCallVote') {
+    await savePublicCallVoteStudioTemplate();
+    return;
+  }
   if (state.studioSpecialTemplate === 'welcomeFarewell') {
     await saveWelcomeFarewellStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'boostAnnounce') {
+    await saveBoostAnnounceStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'boostTop') {
+    await saveBoostTopStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'vipPanel') {
+    await saveVipPanelStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'vipDm') {
+    await saveVipDmStudioTemplate();
     return;
   }
   if (state.studioSpecialTemplate === 'activityRace') {
@@ -4941,6 +6407,38 @@ async function sendStudioMessage() {
   }
   if (state.studioSpecialTemplate === 'steamWorkshop') {
     await saveSteamWorkshopStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'memberVerify') {
+    await saveMemberVerifyStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'levelsPanel') {
+    await saveLevelsStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'levelUp') {
+    await saveLevelUpStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'levelUpInfo') {
+    await saveLevelUpInfoStudioTemplate(true);
+    return;
+  }
+  if (state.studioSpecialTemplate === 'botUpdates') {
+    await saveBotUpdatesStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'countingPanel') {
+    await saveCountingStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'countingDm') {
+    await saveCountingDmStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'inactiveReminder') {
+    await saveInactiveReminderStudioTemplate();
     return;
   }
   if (!state.authenticated) { void beginLogin(); return; }
@@ -4966,13 +6464,14 @@ async function sendStudioMessage() {
     button.dataset.previousText = button.textContent;
     button.textContent = 'Sende ...';
   });
+  const hasOutsideImage = Boolean(template.outsideImageUrl || template.outsideImageAttachment);
   const response = await api.apiRequest({
     path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + (sendAsForumPost ? '/thread/create' : '/embed/send'),
     method: 'POST',
     body: sendAsForumPost
       ? { parentChannelId: template.channelId, name: forumPostName, template: { ...template, channelId: template.channelId }, appliedTags: forumPostTags }
       : { template },
-    timeoutMs: template.outsideImageUrl ? 120000 : 45000
+    timeoutMs: hasOutsideImage ? 120000 : 45000
   });
   if (!response.ok) {
     toast(response.data?.error || (sendAsForumPost ? 'Forum-Post konnte nicht erstellt werden.' : 'Nachricht konnte nicht gesendet werden.'), 'error');
@@ -5036,13 +6535,16 @@ async function sendStudioMessage() {
 
 async function editStudioMessage() {
   if (!state.activeStudioMessageId) { toast('Lade zuerst eine gesendete Nachricht aus der Liste.', 'info'); return; }
-  const record = state.studioMessages.find(function (item) { return item.id === state.activeStudioMessageId; });
-  if (!record) return;
+  // Die Nachricht kann aus der eigenen Historie stammen oder direkt aus der
+  // Kanal-Ansicht geöffnet worden sein (studioSourceMessage). Beides editierbar.
+  const source = state.studioSourceMessage || null;
+  const record = state.studioMessages.find(function (item) { return item.id === state.activeStudioMessageId; }) || null;
+  if (!source && !record) return;
   const template = currentStudioTemplate();
   const validation = renderStudioLimits(template);
   if (!validation.valid) { toast(validation.errors[0], 'error'); return; }
-  template.messageId = record.messageId;
-  template.channelId = template.channelId || record.channelId;
+  template.messageId = source?.id || record.messageId;
+  template.channelId = template.channelId || source?.channelId || record.channelId;
   const editButton = document.getElementById('edit-studio-message');
   if (editButton) {
     editButton.disabled = true;
@@ -5053,7 +6555,7 @@ async function editStudioMessage() {
     path: '/api/guild/' + encodeURIComponent(state.selectedGuildId) + '/embed/edit',
     method: 'POST',
     body: { template },
-    timeoutMs: template.outsideImageUrl ? 120000 : 45000
+    timeoutMs: (template.outsideImageUrl || template.outsideImageAttachment) ? 120000 : 45000
   });
   if (!response.ok) {
     toast(response.data?.error || 'Nachricht konnte nicht bearbeitet werden.', 'error');
@@ -5064,7 +6566,7 @@ async function editStudioMessage() {
     return;
   }
   const outsideImageAttachment = normalizeOutsideImageAttachment(response.data?.result?.outsideImageAttachment);
-  record.template = makeStudioTemplateStorageSafe({
+  const storedTemplate = makeStudioTemplateStorageSafe({
     ...template,
     outsideImageAttachment,
     outsideImageName: outsideImageAttachment?.name || '',
@@ -5072,10 +6574,29 @@ async function editStudioMessage() {
     outsideImageNeedsReselect: false,
     removeOutsideImage: false
   });
-  record.channelId = template.channelId;
-  record.updatedAt = new Date().toLocaleString('de-DE');
-  persistStudioMessages();
-  loadStudioTemplate(record.template);
+  if (record) {
+    record.template = storedTemplate;
+    record.channelId = template.channelId;
+    record.updatedAt = new Date().toLocaleString('de-DE');
+    persistStudioMessages();
+  } else if (source) {
+    // Aus der Kanal-Ansicht geöffnete Nachricht: nach erfolgreicher Bearbeitung
+    // als Historie-Eintrag übernehmen, damit sie später erneut ladbar ist.
+    state.studioMessages.unshift({
+      id: makeId('msg'),
+      type: 'sent',
+      title: template.embed.title || 'Bearbeitete Nachricht',
+      color: template.embed.color || '#58b9ff',
+      messageId: source.id,
+      channelId: template.channelId || source.channelId,
+      template: storedTemplate,
+      createdAt: new Date().toLocaleString('de-DE'),
+      sentAt: new Date().toLocaleString('de-DE'),
+      updatedAt: new Date().toLocaleString('de-DE')
+    });
+    persistStudioMessages();
+  }
+  loadStudioTemplate({ ...template, messageId: template.messageId, channelId: template.channelId });
   renderDrafts();
   toast('Gesendete Nachricht wurde bearbeitet.', 'success');
   if (editButton) {
@@ -5252,264 +6773,56 @@ async function loadSystemCenter() {
     if (status) status.textContent = 'Systemdaten konnten nicht vollständig geladen werden.';
     console.error('System Center konnte nicht geladen werden:', error);
   }
+  await loadUpdateCenter();
+}
+
+let updateFolderState = '';
+function formatUpdateSize(bytes) {
+  if (!bytes) return '';
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+}
+
+async function loadUpdateCenter() {
+  const state = document.getElementById('system-update-state');
+  const status = document.getElementById('update-status');
+  const installButton = document.getElementById('update-install');
+  try {
+    const settings = await api.getUpdateSettings();
+    updateFolderState = String(settings?.updateFolder || '');
+    const folderInput = document.getElementById('update-folder');
+    if (folderInput && folderInput.value !== updateFolderState) folderInput.value = updateFolderState;
+    if (!updateFolderState) {
+      if (state) { state.textContent = 'Nicht konfiguriert'; state.dataset.state = 'neutral'; }
+      if (status) status.textContent = 'Kein Update-Ordner gesetzt. Trage den Ordner ein (z. B. C:\FHCC-Updates oder eine Netzwerkfreigabe) und speichere ihn – dort muss FHCC-Setup-<version>-x64.exe + latest.yml liegen.';
+      if (installButton) installButton.disabled = true;
+      return;
+    }
+    const result = await api.checkUpdate();
+    if (state) {
+      state.textContent = result.available ? 'Update verfügbar' : 'Aktuell';
+      state.dataset.state = result.available ? 'good' : 'neutral';
+    }
+    if (status) {
+      if (result.available) {
+        status.textContent = 'Version ' + result.version + ' ist verfügbar (' + formatUpdateSize(result.size) + (result.releaseDate ? ' · ' + new Date(result.releaseDate).toLocaleDateString('de-DE') : '') + '). Installiert ist v' + result.current + '.';
+      } else {
+        status.textContent = result.reason === 'no-artifact' ? 'Im Update-Ordner wurde kein FHCC-Setup-Paket gefunden. Lege das neue Paket dort ab und suche erneut.' : 'Du bist auf dem neuesten Stand (v' + result.current + ').';
+      }
+    }
+    if (installButton) installButton.disabled = !result.available;
+  } catch (error) {
+    if (state) { state.textContent = 'Fehler'; state.dataset.state = 'neutral'; }
+    if (status) status.textContent = 'Update-Prüfung fehlgeschlagen: ' + String(error?.message || error);
+    if (installButton) installButton.disabled = true;
+  }
 }
 
 function toggleTheme() {
-  const next = document.body.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = next;
-  document.body.dataset.theme = next;
-  document.documentElement.style.colorScheme = next;
-  document.body.classList.toggle('theme-light', next === 'light');
-  document.body.classList.toggle('theme-dark', next === 'dark');
-  localStorage.setItem('fh-app-theme', next);
-  localStorage.setItem('fh-native-theme', next);
-}
-
-function appEditorValue(id) {
-  return document.getElementById(id)?.value || '';
-}
-
-function setAppEditorStatus(message) {
-  const node = document.getElementById('app-editor-status');
-  if (node) node.textContent = message;
-}
-
-function mixAppColor(hex, target = '#f1f2f6', amount = 0.38) {
-  const normalize = (value) => {
-    const raw = String(value || '').replace('#', '').trim();
-    const expanded = raw.length === 3 ? raw.split('').map((part) => part + part).join('') : raw;
-    return /^[0-9a-f]{6}$/i.test(expanded) ? expanded : 'a796c8';
-  };
-  const source = normalize(hex);
-  const destination = normalize(target);
-  const channel = (offset) => Math.round(
-    parseInt(source.slice(offset, offset + 2), 16) * (1 - amount) +
-    parseInt(destination.slice(offset, offset + 2), 16) * amount
-  ).toString(16).padStart(2, '0');
-  return `#${channel(0)}${channel(2)}${channel(4)}`;
-}
-
-function applyAppEditorSettings(settings = appEditorSettings) {
-  appEditorSettings = {
-    ...appEditorDefaults,
-    ...settings,
-    pages: { ...appEditorDefaults.pages, ...(settings.pages || {}) }
-  };
-  appEditorActivePage = appEditorSettings.selectedPage || appEditorActivePage || 'home';
-  document.documentElement.style.setProperty('--accent', appEditorSettings.accent);
-  document.documentElement.style.setProperty('--accent-strong', appEditorSettings.accent);
-  document.documentElement.style.setProperty('--v4-amethyst', appEditorSettings.accent);
-  document.documentElement.style.setProperty('--v4-amethyst-bright', mixAppColor(appEditorSettings.accent));
-  document.body.dataset.appBackground = appEditorSettings.background;
-  document.body.dataset.appDensity = appEditorSettings.density;
-  document.body.classList.toggle('motion-reduced', !appEditorSettings.motion);
-
-  document.querySelectorAll('.landing-brand span, .native-dashboard-brand span').forEach(function (node) {
-    node.innerHTML = escapeHtml(appEditorSettings.brand).replace(/\s+/g, '<br>');
-  });
-  const heroTitle = document.querySelector('.hero-copy h1');
-  if (heroTitle) heroTitle.innerHTML = escapeHtml(appEditorSettings.hero).replace(/\n/g, '<br>');
-  const publicHeroTitle = document.querySelector('.landing-copy h1');
-  if (publicHeroTitle) publicHeroTitle.innerHTML = escapeHtml(appEditorSettings.hero).replace(/\n/g, '<br>');
-  document.querySelectorAll('.hero-lead, .landing-copy h2').forEach(function (node) {
-    node.textContent = appEditorSettings.lead;
-  });
-
-  const previewBrand = document.getElementById('app-editor-preview-brand');
-  const previewKicker = document.getElementById('app-editor-preview-kicker');
-  const previewTitle = document.getElementById('app-editor-preview-title');
-  const previewLead = document.getElementById('app-editor-preview-lead');
-  const selectedPreviewPage = appEditorSettings.pages?.[appEditorSettings.selectedPage || 'home'] || appEditorDefaults.pages.home;
-  const previewShell = document.querySelector('.app-editor-preview');
-  if (previewShell) {
-    previewShell.dataset.previewPage = appEditorSettings.selectedPage || 'home';
-    previewShell.dataset.previewTitle = selectedPreviewPage.title || appEditorSettings.hero || '';
-  }
-  if (previewBrand) previewBrand.textContent = appEditorSettings.brand;
-  if (previewKicker) previewKicker.textContent = selectedPreviewPage.kicker || 'LIVE APP PREVIEW';
-  if (previewTitle) previewTitle.innerHTML = escapeHtml(selectedPreviewPage.title || appEditorSettings.hero).replace(/\n/g, '<br>');
-  if (previewLead) previewLead.textContent = selectedPreviewPage.lead || appEditorSettings.lead;
-  const previewCardContent = {
-    home: [['Dashboard', 'Discord Login'], ['AI Center', 'Lokal + Web'], ['Embed Studio', 'Bot-Versand']],
-    center: [['Bot-Service', 'Live-Steuerung'], ['Server', 'Echtzeitdaten'], ['Aktivität', 'Übersicht']],
-    modules: [['Moderation', 'Schutz aktiv'], ['AI Chat', 'Smart Search'], ['Logging', 'Audit bereit']],
-    studio: [['Entwürfe', 'Gespeichert'], ['Live Preview', 'Discord-Look'], ['Nachrichten', 'Bearbeitbar']],
-    skin: [['Pixel Canvas', '64 × 64'], ['3D Modell', 'Live Vorschau'], ['Export', 'Minecraft PNG']],
-    editor: [['Seiten', 'Live bearbeitbar'], ['Theme', 'Hell + Dunkel'], ['Vorschau', 'Fokusmodus']],
-    system: [['Bot-Prozess', 'Überwacht'], ['Ollama', 'Lokal'], ['Speicher', 'Gesichert']]
-  };
-  document.querySelectorAll('.app-editor-preview-cards article').forEach(function (card, index) {
-    const content = (previewCardContent[appEditorSettings.selectedPage] || previewCardContent.home)[index];
-    if (!content) return;
-    const strong = card.querySelector('strong');
-    const small = card.querySelector('small');
-    if (strong) strong.textContent = content[0];
-    if (small) small.textContent = content[1];
-  });
-
-  applyPageCopy('home', {
-    kicker: ['.landing-copy .kicker', '.hero-copy .kicker'],
-    title: ['.landing-copy h1', '.hero-copy h1'],
-    lead: ['.landing-copy h2', '.hero-lead']
-  });
-  applyPageCopy('center', {
-    kicker: ['#center-view .page-head .eyebrow'],
-    title: ['#center-view .page-head h1'],
-    lead: ['#center-view .page-head > div > p:last-child']
-  });
-  applyPageCopy('community', {
-    kicker: ['#community-view .page-head .eyebrow'],
-    title: ['#community-view .page-head h1'],
-    lead: ['#community-view .page-head > div > p:last-child']
-  });
-  applyPageCopy('modules', {
-    kicker: ['#modules-view .page-head .eyebrow'],
-    title: ['#modules-view .page-head h1'],
-    lead: ['#modules-view .page-head > div > p:last-child']
-  });
-  applyPageCopy('studio', {
-    kicker: ['#studio-view .page-head .eyebrow'],
-    title: ['#studio-view .page-head h1'],
-    lead: ['#studio-view .page-head > div > p:last-child']
-  });
-  applyPageCopy('skin', {
-    kicker: ['#skin-view .page-head .eyebrow'],
-    title: ['#skin-view .page-head h1'],
-    lead: ['#skin-view .page-head > div > p:last-child']
-  });
-  applyPageCopy('editor', {
-    kicker: ['#editor-view .page-head .eyebrow'],
-    title: ['#editor-view .page-head h1'],
-    lead: ['#editor-view .page-head > div > p:last-child']
-  });
-  applyPageCopy('system', {
-    kicker: ['#system-view .page-head .eyebrow'],
-    title: ['#system-view .page-head h1'],
-    lead: ['#system-view .page-head > div > p:last-child']
-  });
-  scheduleAppEditorPagePreview();
-}
-
-function applyPageCopy(pageId, selectors) {
-  const page = appEditorSettings.pages?.[pageId] || appEditorDefaults.pages[pageId];
-  if (!page) return;
-  (selectors.kicker || []).forEach(function (selector) {
-    document.querySelectorAll(selector).forEach(function (node) { node.textContent = page.kicker || ''; });
-  });
-  (selectors.title || []).forEach(function (selector) {
-    document.querySelectorAll(selector).forEach(function (node) { node.innerHTML = escapeHtml(page.title || '').replace(/\n/g, '<br>'); });
-  });
-  (selectors.lead || []).forEach(function (selector) {
-    document.querySelectorAll(selector).forEach(function (node) { node.textContent = page.lead || ''; });
-  });
-}
-
-let appEditorPreviewTimer = null;
-function scheduleAppEditorPagePreview() {
-  clearTimeout(appEditorPreviewTimer);
-  appEditorPreviewTimer = setTimeout(renderAppEditorPagePreview, 90);
-}
-
-function renderAppEditorPagePreview() {
-  const pageId = appEditorSettings.selectedPage || appEditorActivePage || 'home';
-  const source = document.getElementById(pageId + '-view');
-  const frame = document.getElementById('app-editor-page-frame');
-  const label = document.getElementById('app-editor-preview-page-label');
-  if (!source || !frame) return;
-  const pageName = document.querySelector(`#app-edit-page option[value="${pageId}"]`)?.textContent || pageId;
-  if (label) label.textContent = `VOLLSTÄNDIGE SEITE · ${pageName.toUpperCase()}`;
-
-  const clone = source.cloneNode(true);
-  clone.classList.add('active', 'editor-native-page-clone');
-  clone.removeAttribute('aria-hidden');
-  clone.querySelectorAll('script, dialog').forEach(function (node) { node.remove(); });
-  clone.querySelectorAll('button, input, select, textarea, a').forEach(function (node) {
-    node.setAttribute('tabindex', '-1');
-    node.style.pointerEvents = 'none';
-  });
-  if (pageId === 'editor') {
-    const recursivePreview = clone.querySelector('.app-editor-preview');
-    if (recursivePreview) recursivePreview.innerHTML = '<div class="editor-recursion-note"><b>Vollseiten-App-Editor</b><p>Dieser Bereich ist die Vorschau, in der du dich gerade befindest.</p></div>';
-  }
-
-  const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map(function (link) {
-    return `<link rel="stylesheet" href="${escapeHtml(link.href)}">`;
-  }).join('');
-  const theme = document.body.dataset.theme || 'dark';
-  const background = document.body.dataset.appBackground || 'fallen';
-  const density = document.body.dataset.appDensity || 'premium';
-  frame.srcdoc = `<!doctype html><html><head><base href="${escapeHtml(document.baseURI)}">${styles}<style>html,body{min-height:100%;margin:0;overflow:auto}body{padding:0!important}.view.editor-native-page-clone{display:block!important;width:calc(100% - 28px)!important;max-width:none!important;min-height:100vh;margin:0 auto!important;padding:26px 0 70px!important}.view.editor-native-page-clone#home-view{width:100%!important;padding:0!important}.editor-recursion-note{min-height:520px;display:grid;place-content:center;text-align:center;color:var(--text)}.editor-recursion-note p{color:var(--muted)}button,input,select,textarea,a{cursor:default!important}</style></head><body data-theme="${escapeHtml(theme)}" data-app-background="${escapeHtml(background)}" data-app-density="${escapeHtml(density)}">${clone.outerHTML}</body></html>`;
-}
-
-function syncAppEditorForm() {
-  const setValue = function (id, value) {
-    const node = document.getElementById(id);
-    if (node) node.value = value;
-  };
-  setValue('app-edit-brand', appEditorSettings.brand);
-  setValue('app-edit-subtitle', appEditorSettings.subtitle);
-  setValue('app-edit-hero', appEditorSettings.hero);
-  setValue('app-edit-lead', appEditorSettings.lead);
-  setValue('app-edit-accent', appEditorSettings.accent);
-  setValue('app-edit-background', appEditorSettings.background);
-  setValue('app-edit-density', appEditorSettings.density);
-  setValue('app-edit-page', appEditorSettings.selectedPage || 'home');
-  appEditorActivePage = appEditorSettings.selectedPage || 'home';
-  syncAppEditorPageForm();
-  const motion = document.getElementById('app-edit-motion');
-  if (motion) motion.checked = appEditorSettings.motion !== false;
-}
-
-function syncAppEditorPageForm() {
-  const pageId = appEditorValue('app-edit-page') || appEditorSettings.selectedPage || 'home';
-  const page = appEditorSettings.pages?.[pageId] || appEditorDefaults.pages[pageId] || {};
-  const setValue = function (id, value) {
-    const node = document.getElementById(id);
-    if (node) node.value = value || '';
-  };
-  setValue('app-edit-page-kicker', page.kicker);
-  setValue('app-edit-page-title', page.title);
-  setValue('app-edit-page-lead', page.lead);
-}
-
-function readAppEditorForm(pageOverride = null) {
-  const selectedPage = appEditorValue('app-edit-page') || appEditorSettings.selectedPage || appEditorActivePage || 'home';
-  const currentPage = pageOverride || appEditorActivePage || selectedPage || 'home';
-  const pages = { ...(appEditorSettings.pages || {}) };
-  pages[currentPage] = {
-    kicker: appEditorValue('app-edit-page-kicker') || appEditorDefaults.pages[currentPage]?.kicker || '',
-    title: appEditorValue('app-edit-page-title') || appEditorDefaults.pages[currentPage]?.title || '',
-    lead: appEditorValue('app-edit-page-lead') || appEditorDefaults.pages[currentPage]?.lead || ''
-  };
-  return {
-    brand: appEditorValue('app-edit-brand') || appEditorDefaults.brand,
-    subtitle: appEditorValue('app-edit-subtitle') || appEditorDefaults.subtitle,
-    hero: appEditorValue('app-edit-hero') || appEditorDefaults.hero,
-    lead: appEditorValue('app-edit-lead') || appEditorDefaults.lead,
-    accent: appEditorValue('app-edit-accent') || appEditorDefaults.accent,
-    background: appEditorValue('app-edit-background') || appEditorDefaults.background,
-    density: appEditorValue('app-edit-density') || appEditorDefaults.density,
-    motion: document.getElementById('app-edit-motion')?.checked !== false,
-    selectedPage,
-    pages
-  };
-}
-
-function saveAppEditorSettings() {
-  appEditorSettings = readAppEditorForm();
-  localStorage.setItem('fh-app-editor-settings', JSON.stringify(appEditorSettings));
-  applyAppEditorSettings(appEditorSettings);
-  setAppEditorStatus('App-Design gespeichert und live angewendet.');
-  toast('App-Design gespeichert.', 'success');
-}
-
-function resetAppEditorSettings() {
-  appEditorSettings = normalizeAppEditorSettings(clone(appEditorDefaults));
-  localStorage.setItem('fh-app-editor-settings', JSON.stringify(appEditorSettings));
-  syncAppEditorForm();
-  applyAppEditorSettings(appEditorSettings);
-  setAppEditorStatus('App-Design wurde zurückgesetzt.');
-  toast('App Editor zurückgesetzt.', 'success');
+  const cycleOrder = ['dark', 'light', 'system'];
+  const current = localStorage.getItem('fh-app-theme') || 'dark';
+  const next = cycleOrder[(cycleOrder.indexOf(current) + 1) % cycleOrder.length];
+  window.dispatchEvent(new CustomEvent('fallen-heaven:set-theme', { detail: { theme: next } }));
 }
 
 document.querySelectorAll('[data-view]').forEach(function (button) {
@@ -5518,6 +6831,12 @@ document.querySelectorAll('[data-view]').forEach(function (button) {
 document.querySelectorAll('[data-login]').forEach(function (button) {
   button.addEventListener('click', function () { void beginLogin(); });
 });
+const openSetupTrigger = document.getElementById('open-secure-setup');
+if (openSetupTrigger) {
+  openSetupTrigger.addEventListener('click', function () {
+    if (api && typeof api.openSetup === 'function') void api.openSetup();
+  });
+}
 document.querySelectorAll('[data-public-target]').forEach(function (button) {
   button.addEventListener('click', function (event) {
     event.preventDefault();
@@ -5641,6 +6960,11 @@ document.addEventListener('input', function (event) {
 });
 document.addEventListener('change', function (event) {
   if (event.target?.matches?.('#forum-post-options [data-forum-tag]')) updatePreview();
+  if (event.target?.id === 'inactive-reminder-page-size') {
+    FHCCInactiveReminderPanel.setPageSize([25, 50, 100].includes(Number(event.target.value)) ? Number(event.target.value) : 25);
+    FHCCInactiveReminderPanel.setPage(0);
+    void FHCCInactiveReminderPanel.refreshStatus();
+  }
 });
 
 document.querySelectorAll('#studio-channel, #studio-content, #studio-title, #studio-url, #studio-description, #studio-signature, #studio-color, #studio-author-name, #studio-author-icon, #studio-thumbnail, #studio-image, #studio-footer-icon, #studio-timestamp').forEach(function (node) {
@@ -5666,17 +6990,76 @@ bindId('studio-channel', 'pointerdown', function () {
 bindId('studio-channel', 'focus', function () {
   if (state.authenticated && state.selectedGuildId && !state.studioChannels.length) void loadStudioChannels(state.selectedGuildId);
 });
-bindId('template-row', 'click', function (event) {
+
+// ---------------------------------------------------------------------------
+// Auto-Save des Embed Studios (nur freier Modus): Änderungen werden entprellt
+// nach 2,5 s als „Automatisch gespeichert“-Entwurf lokal abgelegt – bei einem
+// App-Absturz oder versehentlichem Schließen ist die Arbeit nicht mehr weg.
+// ---------------------------------------------------------------------------
+let studioAutosaveTimer = null;
+function scheduleStudioAutosave() {
+  if (state.studioSpecialTemplate) return; // Modul-Embeds speichert man bewusst
+  if (!document.getElementById('studio-view')?.classList.contains('active')) return;
+  if (studioAutosaveTimer) return;
+  studioAutosaveTimer = setTimeout(function () {
+    studioAutosaveTimer = null;
+    try {
+      const draft = currentDraft();
+      draft.id = 'autosave';
+      draft.title = (draft.title || 'Entwurf').slice(0, 40) + (String(draft.title || '').length > 40 ? '…' : '');
+      state.drafts = state.drafts.filter(function (entry) { return entry.id !== 'autosave'; });
+      state.drafts.unshift(makeStudioTemplateStorageSafe(draft));
+      state.drafts = state.drafts.slice(0, 12);
+      localStorage.setItem('fh-native-drafts', JSON.stringify(state.drafts));
+    } catch (error) { /* Auto-Save darf nie crashen */ }
+  }, 2500);
+}
+bindId('studio-view', 'input', scheduleStudioAutosave);
+bindId('studio-view', 'change', scheduleStudioAutosave);
+
+// Tastatur-Shortcuts: Strg+S = Speichern (Modul-Vorlage bzw. Entwurf),
+// Strg+Shift+S = Entwurf speichern, Strg+Enter = Senden/Speichern & Panel.
+document.addEventListener('keydown', function (event) {
+  if (!(event.ctrlKey || event.metaKey)) return;
+  if (!document.getElementById('studio-view')?.classList.contains('active')) return;
+  const key = event.key.toLowerCase();
+  if (key === 's') {
+    event.preventDefault();
+    const primary = document.getElementById('send-studio-message');
+    if (event.shiftKey) {
+      const saveDraftButton = document.getElementById('save-draft');
+      if (saveDraftButton) saveDraftButton.click();
+    } else if (state.studioSpecialTemplate && primary) {
+      primary.click();
+    } else {
+      const saveDraftButton = document.getElementById('save-draft');
+      if (saveDraftButton) saveDraftButton.click();
+    }
+    return;
+  }
+  if (key === 'enter') {
+    const target = event.target;
+    const inTextarea = Boolean(target && target.tagName === 'TEXTAREA');
+    if (!inTextarea) return;
+    event.preventDefault();
+    const sendButton = document.getElementById('send-studio-message-secondary') || document.getElementById('send-studio-message');
+    if (sendButton) sendButton.click();
+  }
+});
+
+bindId('template-row', 'click', async function (event) {
   const button = event.target.closest('[data-template]');
   if (!button) return;
+  if (!(await tempVoiceUi.confirmLeaveStudio())) return;
   if (['activityRace', 'steamWorkshop'].includes(button.dataset.template) && !state.selectedGuildId) {
     toast('Wähle zuerst einen Discord-Server für diese automatische Vorlage.', 'error');
     return;
   }
   document.querySelectorAll('#template-row [data-template]').forEach(function (item) { item.classList.toggle('active', item === button); });
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
   if (button.dataset.template === 'activityRace') {
-    loadStudioTemplate(activityRaceStudioTemplate(state.config?.activityRace));
+    loadStudioTemplate(window.FHCCActivityRaceStudio.studioTemplate(state.config?.activityRace, state.studioActivityRaceSection, state));
     renderDrafts();
     return;
   }
@@ -5688,11 +7071,19 @@ bindId('template-row', 'click', function (event) {
   loadStudioTemplate(studioTemplates[button.dataset.template] || studioTemplates.welcome);
   renderDrafts();
 });
-bindId('studio-special-back', 'click', function () {
+bindId('studio-special-back', 'click', async function () {
+  if (!(await tempVoiceUi.confirmLeaveStudio())) return;
   const button = document.querySelector('#template-row [data-template="welcome"]');
   document.querySelectorAll('#template-row [data-template]').forEach(function (item) { item.classList.toggle('active', item === button); });
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
   loadStudioTemplate(studioTemplates.welcome);
+  renderDrafts();
+});
+bindId('studio-pcv-section', 'change', function () {
+  if (state.studioSpecialTemplate !== 'publicCallVote') return;
+  state.studioPcvSection = document.getElementById('studio-pcv-section')?.value || 'panel';
+  loadStudioTemplate(publicCallVoteStudioTemplate(state.config?.publicCallVote));
   renderDrafts();
 });
 bindId('studio-fields', 'input', function () {
@@ -5767,10 +7158,6 @@ bindId('studio-embed-stack', 'click', function (event) {
   if (!target) return;
   selectStudioEmbed(Number(target.dataset.stackEmbedIndex));
 });
-bindId('studio-ai-generate', 'click', function () { void generateStudioAssistantText(); });
-bindId('studio-ai-apply', 'click', function () { applyStudioAssistantText(false); });
-bindId('studio-ai-append', 'click', function () { applyStudioAssistantText(true); });
-bindId('studio-ai-output', 'input', updateStudioAssistantResultState);
 bindId('preview-embed-stack', 'click', function (event) {
   const target = event.target.closest('[data-preview-embed-index]');
   if (!target) return;
@@ -5778,8 +7165,33 @@ bindId('preview-embed-stack', 'click', function (event) {
 });
 bindId('save-draft', 'click', function () {
   if (!state.authenticated) { void beginLogin(); return; }
+  if (state.studioSpecialTemplate === 'economyPanel') { void window.FHCCEconomyPanelStudio.save({ state, currentStudioTemplate, renderStudioLimits, saveStudioDesign, loadStudioTemplate, toast }); return; }
+  if (state.studioSpecialTemplate === 'tempVoiceInterface') {
+    void tempVoiceUi.saveStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'publicCallVote') {
+    void savePublicCallVoteStudioTemplate();
+    return;
+  }
   if (state.studioSpecialTemplate === 'welcomeFarewell') {
     void saveWelcomeFarewellStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'boostAnnounce') {
+    void saveBoostAnnounceStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'boostTop') {
+    void saveBoostTopStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'vipPanel') {
+    void saveVipPanelStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'vipDm') {
+    void saveVipDmStudioTemplate();
     return;
   }
   if (state.studioSpecialTemplate === 'activityRace') {
@@ -5790,10 +7202,39 @@ bindId('save-draft', 'click', function () {
     void saveSteamWorkshopStudioTemplate();
     return;
   }
-  if (state.studioSpecialTemplate === 'aiChat') {
-    void saveAiChatWelcomeStudioTemplate();
+  if (state.studioSpecialTemplate === 'memberVerify') {
+    void saveMemberVerifyStudioTemplate();
     return;
   }
+  if (state.studioSpecialTemplate === 'levelsPanel') {
+    void saveLevelsStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'levelUp') {
+    void saveLevelUpStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'levelUpInfo') {
+    void saveLevelUpInfoStudioTemplate(false);
+    return;
+  }
+  if (state.studioSpecialTemplate === 'botUpdates') {
+    void saveBotUpdatesStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'countingPanel') {
+    void saveCountingStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'countingDm') {
+    void saveCountingDmStudioTemplate();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'inactiveReminder') {
+    void saveInactiveReminderStudioTemplate();
+    return;
+  }
+  state.drafts = state.drafts.filter(function (entry) { return entry.id !== 'autosave'; });
   state.drafts.unshift(makeStudioTemplateStorageSafe(currentDraft()));
   state.drafts = state.drafts.slice(0, 12);
   localStorage.setItem('fh-native-drafts', JSON.stringify(state.drafts));
@@ -5802,6 +7243,25 @@ bindId('save-draft', 'click', function () {
 });
 initializeStudioTextCounters();
 bindId('draft-list', 'click', function (event) {
+  const messageDelete = event.target.closest('[data-delete-message]');
+  if (messageDelete) {
+    const id = String(messageDelete.dataset.deleteMessage || '');
+    state.studioMessages = state.studioMessages.filter(function (entry) { return entry.id !== id; });
+    if (state.activeStudioMessageId === id) { state.activeStudioMessageId = ''; state.studioSourceMessage = null; }
+    persistStudioMessages();
+    renderDrafts();
+    toast('Aus der Liste entfernt – die Nachricht bleibt in Discord.', 'success');
+    return;
+  }
+  const draftDelete = event.target.closest('[data-delete-draft]');
+  if (draftDelete) {
+    const id = String(draftDelete.dataset.deleteDraft || '');
+    state.drafts = state.drafts.filter(function (draft) { return draft.id !== id; });
+    localStorage.setItem('fh-native-drafts', JSON.stringify(state.drafts));
+    renderDrafts();
+    toast('Entwurf gelöscht.', 'success');
+    return;
+  }
   const message = event.target.closest('[data-studio-message]');
   if (message) { loadSentMessage(message.dataset.studioMessage); return; }
   const target = event.target.closest('[data-draft]');
@@ -5817,19 +7277,48 @@ bindId('copy-content', 'click', async function () {
 });
 bindId('clear-content', 'click', function () {
   state.activeStudioMessageId = '';
+  state.studioSourceMessage = null;
   state.studioFields = [];
+  if (state.studioSpecialTemplate === 'economyPanel') { loadStudioTemplate(window.FHCCEconomyPanelStudio.studioTemplate({ ...state.config?.heavenEconomy, panelTemplate: window.FHCCEconomyPanelStudio.defaultTemplate(), panelChannelId: document.getElementById('studio-channel')?.value || '' })); renderDrafts(); return; }
+  if (state.studioSpecialTemplate === 'tempVoiceInterface') {
+    loadStudioTemplate(tempVoiceUi.studioTemplate({ interfaceDesign: { embed: tempVoiceUi.defaultStudioEmbed() } }));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'publicCallVote') {
+    loadStudioTemplate(publicCallVoteStudioTemplate({ design: { [state.studioPcvSection || 'panel']: {} } }));
+    renderDrafts();
+    return;
+  }
   if (state.studioSpecialTemplate === 'welcomeFarewell') {
     loadStudioTemplate(welcomeFarewellStudioTemplate({ welcomeChannelId: document.getElementById('studio-channel')?.value || '' }));
     renderDrafts();
     return;
   }
-  if (state.studioSpecialTemplate === 'activityRace') {
-    loadStudioTemplate(activityRaceStudioTemplate({ panelChannelId: document.getElementById('studio-channel')?.value || '' }));
+  if (state.studioSpecialTemplate === 'boostAnnounce') {
+    loadStudioTemplate(boostAnnounceStudioTemplate({ boostAnnounceChannelId: document.getElementById('studio-channel')?.value || '' }));
     renderDrafts();
     return;
   }
-  if (state.studioSpecialTemplate === 'aiChat') {
-    loadStudioTemplate(aiChatWelcomeStudioTemplate({ aiChat: { channelId: document.getElementById('studio-channel')?.value || '' } }));
+  if (state.studioSpecialTemplate === 'boostTop') {
+    loadStudioTemplate(boostTopStudioTemplate({ boostTopChannelId: document.getElementById('studio-channel')?.value || '' }));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'vipPanel') {
+    loadStudioTemplate(vipPanelStudioTemplate(state.config?.heavenEconomy));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'activityRace') {
+    loadStudioTemplate(window.FHCCActivityRaceStudio.studioTemplate({
+      panelChannelId: document.getElementById('studio-channel')?.value || '',
+      panelDesign: state.config?.activityRace?.panelDesign,
+      panelDesignWeekly: state.config?.activityRace?.panelDesignWeekly,
+      panelDesignMonthly: state.config?.activityRace?.panelDesignMonthly,
+      pingInfoDesign: state.config?.activityRace?.pingInfoDesign,
+      pingToggleButtonLabel: state.config?.activityRace?.pingToggleButtonLabel
+    }, state.studioActivityRaceSection, state));
     renderDrafts();
     return;
   }
@@ -5849,6 +7338,38 @@ bindId('clear-content', 'click', function () {
     renderDrafts();
     return;
   }
+  if (state.studioSpecialTemplate === 'levelsPanel') {
+    loadStudioTemplate(levelsStudioTemplate({
+      levelRolesPanelChannelId: document.getElementById('studio-channel')?.value || ''
+    }));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'levelUp') {
+    loadStudioTemplate(levelUpStudioTemplate(state.config || {}));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'botUpdates') {
+    loadStudioTemplate(botUpdatesStudioTemplate({ channelId: document.getElementById('studio-channel')?.value || '' }));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'levelUpInfo') {
+    loadStudioTemplate(levelUpInfoStudioTemplate(state.config || {}));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'countingDm') {
+    loadStudioTemplate(countingDmStudioTemplate(state.config?.counting, state.studioCountingDmSection || 'strikeLock'));
+    renderDrafts();
+    return;
+  }
+  if (state.studioSpecialTemplate === 'vipDm') {
+    loadStudioTemplate(vipDmStudioTemplate(state.config?.heavenEconomy, state.studioVipDmSection || 'giftReceived'));
+    renderDrafts();
+    return;
+  }
   loadStudioTemplate({ content: '', embed: { title: '', description: '', color: '#58b9ff', footerText: 'FALLEN HEAVEN', timestamp: true, fields: [] } });
   renderDrafts();
   updatePreview();
@@ -5859,6 +7380,46 @@ bindId('edit-studio-message', 'click', function () { void editStudioMessage(); }
 bindId('create-thread', 'click', function () { void createStudioThread(); });
 bindId('refresh-logs', 'click', function () { void loadLogs(); });
 bindId('refresh-system', 'click', function () { void loadSystemCenter(); });
+bindId('update-check', 'click', function () { void loadUpdateCenter(); });
+bindId('update-folder-save', 'click', async function () {
+  const folderInput = document.getElementById('update-folder');
+  const folder = String(folderInput?.value || '').trim();
+  if (!folder) {
+    toast('Bitte einen Update-Ordner eintragen.', 'error');
+    return;
+  }
+  const settings = await api.setUpdateSettings({ updateFolder: folder });
+  if (String(settings?.updateFolder || '') === folder) {
+    toast('Update-Ordner gespeichert.', 'success');
+    void loadUpdateCenter();
+  } else {
+    toast('Update-Ordner konnte nicht gespeichert werden.', 'error');
+  }
+});
+bindId('update-install', 'click', async function () {
+  if (!window.fallenHeavenConfirm) {
+    toast('Bestätigung nicht verfügbar.', 'error');
+    return;
+  }
+  const confirmed = await window.fallenHeavenConfirm('Update wirklich installieren?', 'Die App wird still aktualisiert und danach neu gestartet. Gespeicherte Einstellungen und Daten bleiben erhalten.', 'Ja, installieren');
+  if (!confirmed) return;
+  const status = document.getElementById('update-status');
+  if (status) status.textContent = 'Update wird installiert … die App startet gleich neu.';
+  const result = await api.installUpdate();
+  if (!result?.ok) {
+    toast(result?.error || 'Update konnte nicht installiert werden.', 'error');
+    if (status) status.textContent = result?.error || 'Update konnte nicht installiert werden.';
+    void loadUpdateCenter();
+  }
+});
+bindId('update-open-folder', 'click', async function () {
+  if (!updateFolderState) {
+    toast('Kein Update-Ordner gesetzt.', 'error');
+    return;
+  }
+  const result = await api.openUpdateFolder();
+  if (!result?.ok) toast(result?.error || 'Update-Ordner konnte nicht geöffnet werden.', 'error');
+});
 bindId('export-diagnostics', 'click', async function () {
   const result = await api.exportDiagnostics();
   if (result?.canceled) return;
@@ -5878,34 +7439,34 @@ bindId('system-theme', 'click', function (event) {
 });
 document.querySelectorAll('#app-edit-brand, #app-edit-subtitle, #app-edit-hero, #app-edit-lead, #app-edit-accent, #app-edit-background, #app-edit-density, #app-edit-motion, #app-edit-page-kicker, #app-edit-page-title, #app-edit-page-lead').forEach(function (node) {
   node.addEventListener('input', function () {
-    appEditorSettings = readAppEditorForm();
-    applyAppEditorSettings(appEditorSettings);
-    setAppEditorStatus('Live-Vorschau aktualisiert. Speichern übernimmt die Einstellung dauerhaft.');
+    appEditorSettings = FHCCAppEditor.readAppEditorForm();
+    FHCCAppEditor.applyAppEditorSettings(appEditorSettings);
+    FHCCAppEditor.setAppEditorStatus('Live-Vorschau aktualisiert. Speichern übernimmt die Einstellung dauerhaft.');
   });
   node.addEventListener('change', function () {
-    appEditorSettings = readAppEditorForm();
-    applyAppEditorSettings(appEditorSettings);
+    appEditorSettings = FHCCAppEditor.readAppEditorForm();
+    FHCCAppEditor.applyAppEditorSettings(appEditorSettings);
   });
 });
 bindId('app-edit-page', 'change', function () {
-  const previousPage = appEditorActivePage || appEditorSettings.selectedPage || 'home';
-  const nextPage = appEditorValue('app-edit-page') || 'home';
-  appEditorSettings = readAppEditorForm(previousPage);
+  const previousPage = FHCCAppEditor.getActivePage() || appEditorSettings.selectedPage || 'home';
+  const nextPage = FHCCAppEditor.appEditorValue('app-edit-page') || 'home';
+  appEditorSettings = FHCCAppEditor.readAppEditorForm(previousPage);
   appEditorSettings.selectedPage = nextPage;
-  appEditorActivePage = nextPage;
-  syncAppEditorPageForm();
-  applyAppEditorSettings(appEditorSettings);
+  FHCCAppEditor.setActivePage(nextPage);
+  FHCCAppEditor.syncAppEditorPageForm();
+  FHCCAppEditor.applyAppEditorSettings(appEditorSettings);
   const selectedLabel = document.getElementById('app-edit-page')?.selectedOptions?.[0]?.textContent || nextPage;
-  setAppEditorStatus('Seite ausgewählt. Du bearbeitest jetzt: ' + selectedLabel + '.');
+  FHCCAppEditor.setAppEditorStatus('Seite ausgewählt. Du bearbeitest jetzt: ' + selectedLabel + '.');
 });
-bindId('app-editor-save', 'click', saveAppEditorSettings);
-bindId('app-editor-reset', 'click', resetAppEditorSettings);
+bindId('app-editor-save', 'click', FHCCAppEditor.saveAppEditorSettings);
+bindId('app-editor-reset', 'click', FHCCAppEditor.resetAppEditorSettings);
 bindId('app-editor-expand', 'click', function () {
   const editorView = document.getElementById('editor-view');
   if (!editorView) return;
   const expanded = editorView.classList.toggle('editor-focus');
   this.textContent = expanded ? 'Editor anzeigen' : 'Vorschau maximieren';
-  setAppEditorStatus(expanded ? 'Große Seitenvorschau aktiv. Mit dem Button kommst du zu den Editor-Feldern zurück.' : 'Editor-Felder wieder eingeblendet.');
+  FHCCAppEditor.setAppEditorStatus(expanded ? 'Große Seitenvorschau aktiv. Mit dem Button kommst du zu den Editor-Feldern zurück.' : 'Editor-Felder wieder eingeblendet.');
 });
 bindId('command-palette-open', 'click', openCommandPalette);
 bindId('command-palette-search', 'input', renderCommandPalette);
@@ -5963,22 +7524,23 @@ bindId('close', 'click', function () { api?.close?.(); });
       return;
     }
     document.body.dataset.theme = localStorage.getItem('fh-native-theme') || 'dark';
-    applyAppEditorSettings(appEditorSettings);
+    FHCCAppEditor.applyAppEditorSettings(appEditorSettings);
     updateShellMode();
     const info = await api.getInfo();
     setText('app-version', 'v' + (info?.version || ''));
     setText('modern-login-version', 'v' + (info?.version || ''));
     loadStudioTemplate(studioTemplates.welcome);
-    renderStudioFields();
-    renderDrafts();
-    updatePreview();
-    renderTimeline();
     renderModules();
     await refreshStatus(true);
     const restoredSession = await refreshAuth({ startup: true });
     if (restoredSession === true) setView('center');
     else if (restoredSession === 'pending') setPrebootStatus('Discord-Daten werden nach dem Neustart geprüft …');
     else document.body.classList.add('access-open');
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => { renderStudioFields(); renderDrafts(); updatePreview(); renderTimeline(); }, { timeout: 2000 });
+    } else {
+      setTimeout(() => { renderStudioFields(); renderDrafts(); updatePreview(); renderTimeline(); }, 0);
+    }
   } catch (error) {
     console.error('App-Initialisierung fehlgeschlagen:', error);
     document.body.classList.remove('auth-restoring', 'auth-busy');
@@ -5986,13 +7548,25 @@ bindId('close', 'click', function () { api?.close?.(); });
     document.getElementById('preboot-screen')?.setAttribute('aria-hidden', 'true');
     toast('Die App wurde mit eingeschränkten Funktionen gestartet. Details stehen im Systemprotokoll.', 'error');
   }
+  // Auf schwacher Hardware seltener pollen (30 s statt 15 s) – der Status ändert
+  // sich ohnehin selten, und jede Aktualisierung kostet Rendering-Zeit.
+  const statusPollMs = FHCCAppEditor.detectWeakDevice() ? 30000 : 15000;
   window.FallenHeavenJobs.upsert('app-status-refresh', async function () {
     if (document.hidden) return;
     await refreshStatus(true);
-  }, 15000, { immediate: false, retryDelay: 5000, maxBackoff: 60000 });
+  }, statusPollMs, { immediate: false, retryDelay: 5000, maxBackoff: 60000 });
   window.FallenHeavenJobs.upsert('boost-progress-refresh', function () {
-    if (!document.hidden && state.activeFeatureId === 'boostRoles') void refreshBoostProgress();
+    if (!document.hidden && state.activeFeatureId === 'boostRoles') {
+      void refreshBoostProgress();
+      void refreshBoostTopStatus();
+    }
   }, 5000, { immediate: false, retryDelay: 5000, maxBackoff: 30000 });
+  window.FallenHeavenJobs.upsert('vip-panels-refresh', function () {
+    if (!document.hidden && state.activeFeatureId === 'heavenEconomy') void refreshVipPanelsStatus();
+  }, 10000, { immediate: false, retryDelay: 5000, maxBackoff: 30000 });
+  window.FallenHeavenJobs.upsert('rp-health-refresh', function () {
+    if (!document.hidden && state.activeFeatureId === 'customRichPresence') void refreshRichPresenceHealth();
+  }, 15000, { immediate: false, retryDelay: 5000, maxBackoff: 30000 });
 })();
 
 function fhWebflowDropdownInit() {
@@ -6138,10 +7712,10 @@ document.addEventListener('DOMContentLoaded', fhWebflowDropdownInit);
 
   async function ensureCatalog(force = false) {
     if (!state?.authenticated || !state?.selectedGuildId || catalogPromise) return catalogPromise;
-    if (!force && emojiCatalog().length) return emojiCatalog();
+    if (!force && (emojiCatalog().length || state.messageEmojiLoading)) return emojiCatalog();
     catalogPromise = (async () => {
       if (force) state.messageEmojis = [];
-      await loadMessageEmojiCatalog();
+      await loadMessageEmojis(state.selectedGuildId);
       if (!emojiCatalog().length && !picker.hidden && catalogRetries < 2) {
         catalogRetries += 1;
         window.setTimeout(() => { catalogPromise = null; void ensureCatalog(true); }, 700 * catalogRetries);
@@ -6272,5 +7846,3 @@ document.addEventListener('DOMContentLoaded', fhWebflowDropdownInit);
   observer.observe(picker, { attributes: true, attributeFilter: ['class', 'hidden', 'open', 'style'] });
   scheduleRefresh();
 })();
-
-
