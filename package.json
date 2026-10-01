@@ -1,6 +1,6 @@
 {
   "name": "fhcc",
-  "version": "4.0.3",
+  "version": "4.0.4",
   "description": "Native Discord Control App für FALLEN HEAVEN",
   "author": "FALLEN HEAVEN",
   "productName": "FHCC",
@@ -89,7 +89,7 @@
     "build:dir": "npm run test:release && electron-builder --win --dir && npm run test:packaged",
     "build:win": "npm run test:release && electron-builder --win nsis && node scripts/generate-update-manifest.cjs && npm run test:packaged && npm run test:artifact && node scripts/cleanup-dist.cjs",
     "auth:doctor": "node scripts/auth-login-doctor.cjs",
-    "test:auth": "node scripts/auth-reliability-smoke.mjs",
+    "test:auth": "node scripts/auth-reliability-smoke.mjs && node scripts/discord-login-browser-smoke.mjs",
     "test:economy": "node scripts/heaven-economy-admin-smoke.mjs && node scripts/heaven-economy-migration-smoke.mjs && node scripts/heaven-economy-ui-smoke.mjs && node scripts/heaven-economy-panel-studio-smoke.mjs && node scripts/heaven-economy-coin-gift-smoke.mjs && node scripts/boost-economy-reliability-smoke.mjs && node scripts/vip-panels-smoke.mjs && node scripts/heaven-economy-vip-dm-smoke.mjs",
     "test:moderation": "node scripts/moderation-assistant-smoke.mjs",
     "test:security": "node scripts/moderation-assistant-smoke.mjs && node scripts/antiraid-shield-smoke.mjs && node scripts/server-logging-smoke.mjs",

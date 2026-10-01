@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "version": "4.0.4",
+      "date": "2026-10-01",
+      "changes": [
+        "Behoben: Discord-Anmeldung öffnet die Discord-OAuth-Seite im normalen Standardbrowser statt im eingebetteten Electron-Fenster. Discords Web-Client benötigt globale Browser-Variablen und zeigte im eingebetteten Fenster \"Global environment variables not set!\".",
+        "Das FHCC-Statusfenster blockiert jetzt Discord-Seiten in Electron. Nur der lokale OAuth-Callback darf im App-Fenster geladen werden; alle externen HTTP(S)-Seiten gehen in den Standardbrowser.",
+        "Vor dem Öffnen wird die OAuth-URL auf HTTPS und exakt discord.com validiert.",
+        "Auth-Regressionstest stellt sicher, dass Discord nie wieder in das Electron-WebView geladen wird."
+      ]
+    },
+    {
       "version": "4.0.3",
       "date": "2026-10-01",
       "changes": [

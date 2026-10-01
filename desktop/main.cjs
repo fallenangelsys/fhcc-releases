@@ -682,18 +682,23 @@ function createDiscordLoginWindow() {
     try {
       const url = new URL(rawUrl);
       if (url.protocol === 'data:' || url.protocol === 'about:') return true;
-      if (url.protocol === 'https:' && ['discord.com', 'www.discord.com', 'support.discord.com'].includes(url.hostname)) return true;
-      return url.protocol === 'http:' && url.hostname === CANONICAL_DASHBOARD_HOST && Number(url.port || 80) === CANONICAL_DASHBOARD_PORT && url.pathname.startsWith('/api/auth/discord/callback');
+      // Nur der lokale OAuth-Callback darf in diesem Statusfenster landen.
+      // discord.com wird absichtlich NICHT eingebettet: Discord-Web meldet in
+      // Electron unter Umstaenden "Global environment variables not set!".
+      return url.protocol === 'http:'
+        && url.hostname === CANONICAL_DASHBOARD_HOST
+        && Number(url.port || 80) === CANONICAL_DASHBOARD_PORT
+        && url.pathname.startsWith('/api/auth/discord/callback');
     } catch {
       return false;
     }
   };
 
   discordLoginWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedAuthUrl(url)) {
-      void discordLoginWindow?.loadURL(url).catch(() => {});
-    } else if (/^https?:\/\//i.test(String(url || ''))) {
-      void shell.openExternal(url).catch(() => {});
+    if (/^https?:\/\//i.test(String(url || ''))) {
+      // Auth- und externe Seiten immer im normalen Browser oeffnen, nie in
+      // einem Electron-WebView ohne Discords globale Browser-Umgebung.
+      void shell.openExternal(url, { activate: true }).catch(() => {});
     }
     return { action: 'deny' };
   });
@@ -706,7 +711,9 @@ function createDiscordLoginWindow() {
       createSetupWindow();
       return;
     }
-    if (/^https?:\/\//i.test(String(url || ''))) void shell.openExternal(url).catch(() => {});
+    if (/^https?:\/\//i.test(String(url || ''))) {
+      void shell.openExternal(url, { activate: true }).catch(() => {});
+    }
   });
 
   discordLoginWindow.once('ready-to-show', () => {
@@ -731,9 +738,9 @@ async function showDiscordLoginStatus(title, message, options = {}) {
 }
 
 async function openDiscordLogin() {
-  const authWindow = await showDiscordLoginStatus(
+  await showDiscordLoginStatus(
     'Discord-Anmeldung wird vorbereitet',
-    'FHCC startet den lokalen Anmeldedienst. Das kann beim ersten Start einige Sekunden dauern.'
+    'FHCC startet den lokalen Anmeldedienst. Discord wird anschließend im Standardbrowser geöffnet.'
   );
 
   const ready = await ensureDashboard();
@@ -752,30 +759,24 @@ async function openDiscordLogin() {
   const transactionId = String(started.data?.transactionId || '');
   const verifier = String(started.data?.verifier || '');
   const authorizeUrl = String(started.data?.authorizeUrl || '');
-  if (!transactionId || !verifier || !authorizeUrl.startsWith('https://discord.com/')) {
+  let authorize;
+  try { authorize = new URL(authorizeUrl); } catch {}
+  if (!transactionId || !verifier || authorize?.protocol !== 'https:' || authorize?.hostname !== 'discord.com' || authorize.username || authorize.password) {
     const message = 'Der App-Dienst hat eine ungültige Anmeldeanfrage geliefert.';
     await showDiscordLoginStatus('Ungültige Discord-Anfrage', message, { loading: false, showSetup: true });
     return { ok: false, message };
   }
 
-  let openedInsideApp = false;
+  // Discords Web-Client erwartet globale Browser-Variablen, die ein eingebettetes
+  // Electron-WebContents nicht bereitstellt. Genau daraus entsteht der native
+  // Dialog "Global environment variables not set!". OAuth deshalb ausschliesslich
+  // im normalen Browser des Nutzers ausfuehren.
   try {
-    if (authWindow && !authWindow.isDestroyed()) {
-      await authWindow.loadURL(authorizeUrl);
-      authWindow.show();
-      authWindow.focus();
-      openedInsideApp = true;
-    }
-  } catch {}
-
-  if (!openedInsideApp) {
-    try {
-      await shell.openExternal(authorizeUrl, { activate: true });
-    } catch {
-      const message = 'Discord konnte weder im FHCC-Fenster noch im Standardbrowser geöffnet werden.';
-      await showDiscordLoginStatus('Browser konnte nicht geöffnet werden', message, { loading: false, externalUrl: authorizeUrl, showSetup: true });
-      return { ok: false, message };
-    }
+    await shell.openExternal(authorize.href, { activate: true });
+  } catch {
+    const message = 'Discord konnte nicht im Standardbrowser geöffnet werden.';
+    await showDiscordLoginStatus('Browser konnte nicht geöffnet werden', message, { loading: false, externalUrl: authorize.href, showSetup: true });
+    return { ok: false, message };
   }
 
   const deadline = Math.min(Number(started.data?.expiresAt || 0), Date.now() + 3 * 60 * 1000) || (Date.now() + 3 * 60 * 1000);
