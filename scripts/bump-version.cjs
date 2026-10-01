@@ -22,18 +22,31 @@ const next = `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
 pkg.version = next;
 fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
 
+// WICHTIG: Nur die beiden Root-Einträge tragen die App-Version.
+// Ein blindes Ersetzen aller "version": "<alte>"-Vorkommen hob auch Abhängigkeiten
+// an, deren eigene Version zufällig der App-Version entsprach – beim Sprung von
+// 4.0.1 auf 4.0.2 wurden so 14 Pakete (discord-rpc, jws, abbrev, …) falsch
+// auf 4.0.2 gesetzt und die Release-Prüfung brach.
 for (const file of [lockPath]) {
   if (!fs.existsSync(file)) continue;
-  const raw = fs.readFileSync(file, 'utf8');
-  const updated = raw
-    .replace(new RegExp(`("version"\\s*:\\s*")${escapeRegExp(current)}(")`, 'g'), `$1${next}$2`);
-  if (updated !== raw) fs.writeFileSync(file, updated, 'utf8');
+  const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let changed = false;
+  if (lock.version === current) {
+    lock.version = next;
+    changed = true;
+  }
+  if (lock.packages && lock.packages[''] && lock.packages[''].version === current) {
+    lock.packages[''].version = next;
+    changed = true;
+  }
+  if (changed) fs.writeFileSync(file, JSON.stringify(lock, null, 2) + '\n', 'utf8');
+  else console.log(`[bump-version] ${path.basename(file)}: kein Root-Eintrag mit ${current} gefunden.`);
 }
 
 // Renderer-Live-Vorschau: {version} mit der echten Version ersetzen.
 if (fs.existsSync(appPath)) {
   let appSource = fs.readFileSync(appPath, 'utf8');
-  const pattern = new RegExp(`replaceAll\\('\\{version\\}', '[^']*'\\)`);
+  const pattern = /replaceAll\('\{version\}', '[^']*'\)/;
   if (pattern.test(appSource)) {
     appSource = appSource.replace(pattern, `replaceAll('{version}', '${next}')`);
     fs.writeFileSync(appPath, appSource, 'utf8');
@@ -83,7 +96,3 @@ if (fs.existsSync(changelogPath)) {
 
 console.log(`[bump-version] ${current} -> ${next}`);
 process.exit(0);
-
-function escapeRegExp(value) {
-  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}

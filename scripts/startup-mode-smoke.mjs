@@ -23,12 +23,20 @@ const expect = (label, fn) => {
 console.log('startup-mode-smoke');
 
 // --- Normalisierung -------------------------------------------------------
-expect('Standard ist auto', () => assert.equal(DEFAULT_START_MODE, 'auto'));
+expect('Standard ist manual - ein ueberschriebener Datenordner darf den Bot nicht starten', () => assert.equal(DEFAULT_START_MODE, 'manual'));
 expect('genau zwei Modi', () => assert.deepEqual(START_MODES, ['auto', 'manual']));
 expect('manual bleibt manual', () => assert.equal(normalizeStartMode('manual'), 'manual'));
 expect('GROSSBUCHSTABEN werden akzeptiert', () => assert.equal(normalizeStartMode('MANUAL'), 'manual'));
-expect('leer ergibt Standard', () => assert.equal(normalizeStartMode(''), 'auto'));
-expect('unbekannter Wert faellt auf Standard', () => assert.equal(normalizeStartMode('quatsch'), 'auto'));
+expect('leer ergibt manual', () => assert.equal(normalizeStartMode(''), 'manual'));
+expect('unbekannter Wert faellt auf manual', () => assert.equal(normalizeStartMode('quatsch'), 'manual'));
+expect('nichts startet ohne ausdrueckliche Wahl von auto', () => {
+  assert.equal(resolveAutoStart({ freshInstall: false, botTokenConfigured: true, oauthConfigured: true }).shouldStart, false);
+});
+expect('kopierter Datenordner startet NICHT - der Umzugsfall', () => {
+  const d = resolveAutoStart({ freshInstall: false, startMode: undefined, botTokenConfigured: true, oauthConfigured: true });
+  assert.equal(d.shouldStart, false);
+  assert.equal(d.reason, 'manual-mode');
+});
 expect('isValid erkennt erlaubte Werte', () => {
   assert.equal(isValidStartMode('auto'), true);
   assert.equal(isValidStartMode('manual'), true);
@@ -87,6 +95,9 @@ expect('frisch meldet sich ehrlich zurueck', () => {
 expect('Beschreibung nennt den manuellen Modus', () => {
   assert.match(describeStartupMode({ startMode: 'manual' }), /nicht automatisch/i);
 });
+expect('Standardbeschreibung nennt ebenfalls manuellen Modus', () => {
+  assert.match(describeStartupMode({}), /nicht automatisch/i);
+});
 expect('Beschreibung nennt die frische Installation', () => {
   assert.match(describeStartupMode({ startMode: 'auto', freshInstall: true }), /Frische Installation/i);
 });
@@ -117,6 +128,11 @@ expect('das Auswahlfeld hat ein Label', () => assert.match(html, /<label for="st
 expect('beide Modi sind waehlbar', () => {
   assert.match(html, /value="auto"/);
   assert.match(html, /value="manual"/);
+});
+expect('manual steht als Standard zuerst', () => {
+  const manualAt = html.indexOf('value="manual"');
+  const autoAt = html.indexOf('value="auto"');
+  assert.ok(manualAt > -1 && manualAt < autoAt, 'Der Standard muss die erste Option des Auswahlfelds sein.');
 });
 
 const renderer = read('desktop/renderer/app.js');

@@ -8,7 +8,11 @@
 // wenn der Nutzer den Bot bewusst einrichtet und startet.
 
 const START_MODES = ['auto', 'manual'];
-const DEFAULT_START_MODE = 'auto';
+// Standard ist bewusst 'manual'. Ein ueberschriebener Datenordner (Umzug auf
+// einen anderen Rechner) sieht sonst wie eine eingerichtete Installation aus -
+// dann startet der Bot sofort und feuert die Nachhole-Embeds aller Module.
+// Sicher ist hier: nichts startet, bis der Nutzer es sagt.
+const DEFAULT_START_MODE = 'manual';
 
 // Dateien, deren Vorhandensein belegt, dass die App bereits benutzt wurde.
 // guild-configs.json wird beim ersten Bot-Login geschrieben.
@@ -23,9 +27,9 @@ function normalizeStartMode(value) {
   const candidate = String(value || '').trim().toLowerCase();
   if (candidate === 'manual') return 'manual';
   if (candidate === 'auto') return 'auto';
-  // Unbekannte Werte sind harmlos und werden auf 'manual' gezogen: Im Zweifel
+  // Alles andere - leer, unbekannt, kaputt - wird zu 'manual'. Im Zweifel
   // startet nichts, statt ungefragt einen Bot online zu schalten.
-  return candidate ? DEFAULT_START_MODE : DEFAULT_START_MODE;
+  return 'manual';
 }
 
 function isValidStartMode(value) {
@@ -63,12 +67,14 @@ function resolveAutoStart({
     return { shouldStart: true, reason: 'explicit-start', freshInstall: Boolean(freshInstall) };
   }
 
-  if (mode === 'manual') {
-    return { shouldStart: false, reason: 'manual-mode', freshInstall: Boolean(freshInstall) };
-  }
-
+  // Reihenfolge ist bewusst: frische Installation zuerst, damit die Meldung
+  // den echten Grund nennt und nicht den allgemeineren Standard.
   if (freshInstall) {
     return { shouldStart: false, reason: 'fresh-install', freshInstall: true };
+  }
+
+  if (mode === 'manual') {
+    return { shouldStart: false, reason: 'manual-mode', freshInstall: false };
   }
 
   if (!botTokenConfigured && !oauthConfigured) {
