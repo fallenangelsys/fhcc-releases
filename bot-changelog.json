@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "4.0.1",
+      "date": "2026-10-01",
+      "changes": [
+        "Bei einer frischen Installation startet der Bot nicht mehr von allein. Ohne abgeschlossene Einrichtung werden keine Discord-Nachrichten und keine Embeds gesendet - der Bot startet erst auf ausdrücklichen Befehl.",
+        "Neue Option \"Startverhalten des Bots\" unter System: \"Automatisch starten, sobald eingerichtet\" oder \"Erst manuell starten\". Die Wahl wird dauerhaft gespeichert und überlebt Neustarts und Updates.",
+        "Behoben: Die gepackte App übernahm beim Start den Bot-Token aus einem .env im Entwicklerordner. Dadurch lief auf einem frischen Rechner ein Bot mit fremden Zugangsdaten los.",
+        "Behoben: Die gepackte App kopierte beim ersten Start die Serverdaten des Entwicklerrechners in den neuen Datenordner. Eine Neuinstallation ist damit wirklich leer.",
+        "Der erzwungene Start über --start-bot bleibt unverändert möglich und überschreibt jede Einstellung.",
+        "Neuer Regressionstest startup-mode-smoke mit 40 Prüfungen, eingebunden in test:quality."
+      ]
+    },
+    {
       "version": "4.0.0",
       "date": "2026-10-01",
       "changes": [

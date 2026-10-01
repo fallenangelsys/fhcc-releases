@@ -6867,6 +6867,41 @@ async function loadUpdateCenter() {
   }
 }
 
+// ---- Startverhalten des Bots: frische Installation startet nie automatisch ----
+const startupModeSelect = document.getElementById('startup-mode-select');
+const startupModeHint = document.getElementById('startup-mode-hint');
+const startupModeSave = document.getElementById('startup-mode-save');
+
+async function loadStartupMode() {
+  if (!startupModeSelect || !api || typeof api.getStartupMode !== 'function') return;
+  try {
+    const state = await api.getStartupMode();
+    if (state && startupModeSelect) startupModeSelect.value = state.startMode || 'auto';
+    if (startupModeHint && state?.description) startupModeHint.textContent = state.description;
+  } catch {
+    if (startupModeHint) startupModeHint.textContent = 'Startverhalten konnte nicht gelesen werden.';
+  }
+}
+if (startupModeSave) {
+  startupModeSave.addEventListener('click', async function () {
+    if (!api || typeof api.setStartupMode !== 'function') {
+      return toast('Startverhalten steht in dieser Version nicht zur Verfügung.', 'error');
+    }
+    const requested = String(startupModeSelect?.value || '').trim();
+    const result = await api.setStartupMode(requested);
+    if (result && result.ok) {
+      if (startupModeSelect) startupModeSelect.value = result.startMode;
+      if (startupModeHint && result.description) startupModeHint.textContent = result.description;
+      toast(result.startMode === 'manual'
+        ? 'Gespeichert: Der Bot startet ab jetzt nur noch manuell.'
+        : 'Gespeichert: Der Bot startet automatisch, sobald er eingerichtet ist.', 'success');
+    } else {
+      toast(String(result?.error || 'Startverhalten konnte nicht gespeichert werden.'), 'error');
+    }
+  });
+}
+void loadStartupMode();
+
 // ---- Update-Kanal: privates GitHub-Release-Repository ----
 const updateRepoSave = document.getElementById('update-repo-save');
 if (updateRepoSave) {

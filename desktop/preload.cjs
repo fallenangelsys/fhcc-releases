@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('fallenHeaven', {
   setUpdateToken: (token) => ipcRenderer.invoke('app:update-token-set', { token }),
   clearUpdateToken: () => ipcRenderer.invoke('app:update-token-clear'),
   testUpdateChannel: () => ipcRenderer.invoke('app:update-channel-test'),
+  getStartupMode: () => ipcRenderer.invoke('app:startup-mode'),
+  setStartupMode: (startMode) => ipcRenderer.invoke('app:startup-mode-set', { startMode }),
   onUpdateProgress: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, payload) => callback(payload);

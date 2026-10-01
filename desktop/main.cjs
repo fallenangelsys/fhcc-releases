@@ -19,6 +19,13 @@ const {
   resolveReleaseUpdate,
   tokenHint
 } = require('./update-source.cjs');
+const {
+  DEFAULT_START_MODE,
+  describeStartupMode,
+  isValidStartMode,
+  normalizeStartMode,
+  resolveAutoStart
+} = require('./startup-mode.cjs');
 const { execFile, execFileSync, spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } = require('node:fs');
@@ -1167,7 +1174,23 @@ if (!ownsApplicationLock) {
       createSetupWindow();
     } else {
       createWindow();
-      if (process.argv.includes('--start-bot') || botTokenConfigured) void startBotFromCommandLine();
+      // Auto-Start ist an drei Bedingungen geknuepft: kein erzwungener CLI-Start,
+      // kein manueller Modus und keine frische Installation. Sonst laeuft der Bot
+      // samt Embeds los, obwohl der Nutzer ihn noch nie eingerichtet hat.
+      const decision = resolveAutoStart({
+        explicitStart: process.argv.includes('--start-bot'),
+        freshInstall: getBotSupervisor().isFreshInstall(),
+        startMode: readStartMode(),
+        botTokenConfigured,
+        oauthConfigured
+      });
+      if (decision.shouldStart) {
+        void startBotFromCommandLine();
+      } else if (decision.reason === 'fresh-install') {
+        recordMainFailure('Automatischer Start', 'Frische Installation - der Bot bleibt gestoppt, bis die Einrichtung abgeschlossen ist.');
+      } else if (decision.reason === 'manual-mode') {
+        recordMainFailure('Automatischer Start', 'Manueller Startmodus - der Bot startet erst auf ausdruecklichen Befehl.');
+      }
     }
     // Auto-Update: Alle 30 Minuten automatisch prüfen und installieren
     startAutoUpdate();
@@ -1362,6 +1385,43 @@ const writeUpdateSettings = (settings) => {
   } catch (error) {
     console.error('Update-Settings konnten nicht gespeichert werden:', error?.message || error);
   }
+};
+
+// ---------------------------------------------------------------------------
+// Startverhalten: bei frischer Installation bleibt der Bot aus und wird erst
+// nach der Einrichtung manuell gestartet. Die Wahl bleibt dauerhaft erhalten.
+// ---------------------------------------------------------------------------
+const startupSettingsFile = () => path.join(app.getPath('userData'), 'startup-settings.json');
+
+const readStartupSettings = () => {
+  try {
+    return JSON.parse(readFileSync(startupSettingsFile(), 'utf8')) || {};
+  } catch {
+    return {};
+  }
+};
+
+const writeStartupSettings = (settings) => {
+  try {
+    mkdirSync(path.dirname(startupSettingsFile()), { recursive: true });
+    writeFileSync(startupSettingsFile(), JSON.stringify(settings, null, 2), 'utf8');
+  } catch (error) {
+    console.error('Start-Einstellung konnte nicht gespeichert werden:', error?.message || error);
+  }
+};
+
+const readStartMode = () => normalizeStartMode(readStartupSettings().startMode);
+
+const describeStartupState = () => {
+  const supervisor = getBotSupervisor();
+  const freshInstall = supervisor.isFreshInstall();
+  const startMode = readStartMode();
+  return {
+    startMode,
+    freshInstall,
+    canAutoStart: !freshInstall && startMode !== 'manual',
+    description: describeStartupMode({ startMode, freshInstall })
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -1722,6 +1782,16 @@ ipcMain.handle('app:install-update', async (_event, payload) => {
 
 // Einstellungen des Update-Kanals. Der Token verlässt den Renderer nur
 // verschluesselt (safeStorage/DPAPI) und wird nie zurueckgesendet.
+ipcMain.handle('app:startup-mode', () => describeStartupState());
+ipcMain.handle('app:startup-mode-set', (_event, payload) => {
+  const requested = String(payload?.startMode || payload || '').trim().toLowerCase();
+  if (!isValidStartMode(requested)) {
+    return { ok: false, error: 'Startmodus bitte als „auto“ oder „manual“ angeben.' };
+  }
+  const startMode = normalizeStartMode(requested);
+  writeStartupSettings({ ...readStartupSettings(), startMode });
+  return { ok: true, ...describeStartupState() };
+});
 ipcMain.handle('app:update-source', () => ({
   ...describeUpdateSource({ ...readUpdateSettings(), __token: readUpdateToken() }),
   version: app.getVersion(),

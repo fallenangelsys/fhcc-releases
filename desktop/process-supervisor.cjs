@@ -17,6 +17,8 @@ const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
 
+const { detectFreshInstall } = require('./startup-mode.cjs');
+
 function redactLogValue(value) {
   return String(value || '')
     .replace(/\b(?:mfa\.)?[A-Za-z0-9_-]{15,30}\.[A-Za-z0-9_-]{5,8}\.[A-Za-z0-9_-]{20,50}\b/g, '[DISCORD-TOKEN GESCHÜTZT]')
@@ -110,10 +112,13 @@ class BotProcessSupervisor {
     mkdirSync(data, { recursive: true });
     mkdirSync(logs, { recursive: true });
 
+    // Nur im Entwicklungsmodus wird ein geerbter Datenordner uebernommen. In der
+    // gepackten App wuerde das sonst die Serverdaten des Entwicklerrechners in eine
+    // frische Installation kopieren - der Bot startete dadurch mit fremden Daten.
     const legacyData = path.join(this.projectRoot, 'data');
     let targetEmpty = true;
     try { targetEmpty = readdirSync(data).length === 0; } catch {}
-    if (targetEmpty && existsSync(legacyData)) {
+    if (!this.isPackaged && targetEmpty && existsSync(legacyData)) {
       try { cpSync(legacyData, data, { recursive: true, force: false, errorOnExist: false }); } catch {}
     }
 
@@ -140,11 +145,26 @@ class BotProcessSupervisor {
   }
 
   secretCandidates() {
+    // In der gepackten App zaehlt ausschliesslich die .env neben den Appdaten.
+    // Projektordner und ~/Documents/Discord Bot sind Entwicklungsrueckfaelle -
+    // ohne diese Einschraenkung wuerde deren DISCORD_TOKEN still eine fremde
+    // Installation starten.
+    if (this.isPackaged) return [path.join(this.app.getPath('userData'), '.env')];
     return [
       path.join(this.app.getPath('userData'), '.env'),
       path.join(this.projectRoot, '.env'),
       path.join(this.app.getPath('documents'), 'Discord Bot', '.env')
     ];
+  }
+
+  /**
+   * true, sobald die App mindestens einmal benutzt wurde. Ein frischer Start hat
+   * zwar Heartbeat- und Sitzungsdateien, aber keine Serverkonfiguration.
+   */
+  isFreshInstall() {
+    let entries = [];
+    try { entries = readdirSync(this.paths.data); } catch {}
+    return detectFreshInstall(entries);
   }
 
   ensureManagedSecrets(values = {}) {
