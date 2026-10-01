@@ -24,8 +24,31 @@ contextBridge.exposeInMainWorld('fallenHeaven', {
   exportDiagnostics: () => ipcRenderer.invoke('app:export-diagnostics'),
   openDataFolder: () => ipcRenderer.invoke('app:open-data-folder'),
   openLogFolder: () => ipcRenderer.invoke('app:open-log-folder'),
+  getUpdateSettings: () => ipcRenderer.invoke('app:update-settings'),
+  setUpdateSettings: (payload) => ipcRenderer.invoke('app:update-settings-set', payload),
+  checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+  installUpdate: () => ipcRenderer.invoke('app:install-update'),
+  getUpdateSource: () => ipcRenderer.invoke('app:update-source'),
+  setUpdateSource: (repo) => ipcRenderer.invoke('app:update-source-set', { repo }),
+  setUpdateToken: (token) => ipcRenderer.invoke('app:update-token-set', { token }),
+  clearUpdateToken: () => ipcRenderer.invoke('app:update-token-clear'),
+  testUpdateChannel: () => ipcRenderer.invoke('app:update-channel-test'),
+  onUpdateProgress: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('update-progress', listener);
+    return () => ipcRenderer.removeListener('update-progress', listener);
+  },
+  onUpdateAvailable: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('update-available', listener);
+    return () => ipcRenderer.removeListener('update-available', listener);
+  },
+  openUpdateFolder: () => ipcRenderer.invoke('app:open-update-folder'),
   apiRequest: (options) => ipcRenderer.invoke('api:request', options),
   loginDiscord: () => ipcRenderer.invoke('auth:discord-login'),
+  openSetup: () => ipcRenderer.invoke('app:open-setup'),
   logoutDiscord: () => ipcRenderer.invoke('auth:logout'),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   onCloseRequested: (callback) => {
@@ -35,6 +58,12 @@ contextBridge.exposeInMainWorld('fallenHeaven', {
     return () => ipcRenderer.removeListener('app:close-requested', listener);
   },
   confirmClose: (accepted) => ipcRenderer.send('window:close-response', accepted === true),
+  onThemeChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, theme) => callback(theme);
+    ipcRenderer.on('os:theme-changed', listener);
+    return () => ipcRenderer.removeListener('os:theme-changed', listener);
+  },
   minimize: () => ipcRenderer.send('window:minimize'),
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close')

@@ -1,6 +1,5 @@
 const defaultTimeout = (featureId, hook) => {
   if (hook === 'onClientReady') return 300_000;
-  if (featureId === 'aiChat') return 180_000;
   return 45_000;
 };
 
@@ -18,13 +17,21 @@ const contextMeta = (featureId, hook, context = {}) => ({
   command: context?.interaction?.commandName || ''
 });
 
+// Pro Hook statt pro Feature serialisieren: Eine langlaufende Operation eines
+// Hooks (z.B. onClientReady beim Start, ein API-Call in onAnyInteraction) darf
+// die Interaktions-Antworten desselben Features nicht blockieren – sonst
+// verpasst die nächste Interaktion das 3-Sekunden-Antwortfenster von Discord.
+// Innerhalb desselben Hooks bleibt die Reihenfolge erhalten (State-Sicherheit).
 const queueKeyFor = (featureId, hook, context = {}) => {
-  if (featureId !== 'aiChat' || !['onMessageCreate', 'onBotMessageCreate'].includes(hook)) return featureId;
-  const guildId = context?.message?.guildId || 'direct';
-  const channelId = context?.message?.channelId || 'unknown';
-  // AI Chat besitzt selbst eine begrenzte Kanalwarteschlange. Der Dispatcher
-  // darf davor keine zweite, unbeschränkte Schlange aufbauen.
-  return `${featureId}:${guildId}:${channelId}:${context?.message?.id || Date.now()}`;
+  const guildId = context?.guild?.id
+    || context?.message?.guildId
+    || context?.interaction?.guildId
+    || context?.thread?.guildId
+    || context?.newThread?.guildId
+    || context?.oldState?.guild?.id
+    || context?.newState?.guild?.id
+    || '';
+  return `${featureId}:${hook}:${guildId || 'global'}`;
 };
 
 export function createFeatureDispatcher({

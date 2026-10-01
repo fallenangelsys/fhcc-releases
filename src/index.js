@@ -11,7 +11,6 @@ import { promisify } from 'node:util';
 import {
   Client,
   ChannelType,
-  EmbedBuilder,
   Events,
   GatewayIntentBits,
   Partials,
@@ -21,29 +20,76 @@ import {
   ButtonStyle,
   ChannelFlagsBitField,
   Routes,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  RESTEvents
 } from 'discord.js';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
+import { saveLocalImage, readLocalImage, purgeOrphanLocalImages, materializeOutsideImageTemplate } from './runtime/localImageStore.js';
+import { persistEmbedDesign as runEmbedDesignPipeline } from './runtime/embedDesignPipeline.js';
+import { purgeEmbedAssetCache } from './runtime/embedAssetCache.js';
+import { buildStudioEmbedPayload } from './runtime/studioEmbedPayload.js';
+import { isForumLikeChannel, isThreadChannel, forumChannelRequiresTag, isSelectableTextChannel, THREAD_CHANNEL_TYPES, FORUM_LIKE_CHANNEL_TYPES, channelHasFlag } from './dashboard/channelTypes.js';
+import { discordPosition, compareDiscordNames, compareDiscordIds, dashboardChannelSortBucket, compareDiscordRoleHierarchy, compareTopLevelDashboardChannels, compareDashboardCategoryChildren, compareDashboardChannelRows, withDashboardDisplayOrder, DASHBOARD_CONFIG_CHANNEL_TYPES } from './dashboard/sorting.js';
+import { messageUrl, serializeDashboardEmbed, serializeDashboardAttachment, serializeDashboardSticker, serializeDashboardReaction, serializeDashboardComponent, serializeDashboardComponents, serializeOutsideImageAttachment } from './dashboard/serialization.js';
+import { memberActivityAt, memberMessageActivity, memberActivityKey, recordMemberActivity, ensureMemberActivityLoaded, saveMemberActivitySoon, getMemberActivityTrackingSince } from './runtime/memberActivity.js';
+import { ensureEmojiLibraryLoaded, getEmojiLibraryMapping, setEmojiLibraryMapping, localizeChannelTopicEmojis, CUSTOM_EMOJI_PATTERN } from './runtime/emojiLibrary.js';
+import { reactionRoleEmojiKey, reactionRoleEmojiInput, normalizeReactionRoleEmojiName, reactionRoleEmojiCatalog, resolveReactionRoleEmoji, normalizeReactionRoleTemplate, reactionRoleButtonEmoji, buildReactionRoleButtonRows } from './dashboard/reactionRoles.js';
+import { forumThreadHasPinnedFlag, isPinnedForumPost, forumPostTimestamp, compareDashboardForumPosts, forumThreadArchiveTimestamp, forumThreadArchiveCursor, collectDashboardForumThreads, listForumChannelPosts, serializeDashboardAuthor } from './dashboard/forumTimeline.js';
+import { isDiscordDefaultAvatarUrl, normalizeDiscordId, extractMentionIdsFromText, resolveDashboardAvatarUrl, resolveDashboardAvatarUrlWithFallback, resolveIndexedUserProfile, resolveIndexedMessageAuthor, resolveIndexedMentionProfile } from './dashboard/avatarResolution.js';
 
 import { feature as moderationFeature } from './features/moderation.js';
+import { feature as instantBanWordsFeature } from './features/instantBanWords.js';
 import { feature as welcomeFarewellFeature } from './features/welcomeFarewell.js';
 import { feature as autoresponderFeature } from './features/autoResponder.js';
-import { feature as aiChatFeature } from './features/aiChat.js';
-import { feature as customRichPresenceFeature } from './features/customRichPresence.js';
-import { feature as levelsFeature } from './features/levels.js';
+import { feature as customRichPresenceFeature, getCustomRichPresenceStatus, reconnectCustomRichPresence } from './features/customRichPresence.js';
+import {
+  feature as levelsFeature,
+  saveLevelsPanelDesign as saveLevelsPanelDesignImpl,
+  saveLevelUpInfoDesign as saveLevelUpInfoDesignImpl,
+  wipeLevelRoles as wipeLevelRolesImpl,
+  grantLevelRolesToAll as grantLevelRolesToAllImpl,
+  setMemberLevel as setMemberLevelImpl
+} from './features/levels.js';
+import { feature as botUpdatesFeature, saveBotUpdatesDesign as saveBotUpdatesDesignImpl, getLatestChangelogEntry } from './features/botUpdates.js';
+import {
+  clearSavedRolesForMember as clearSavedRolesForMemberImpl,
+  feature as roleSaverFeature,
+  getRoleSaverStatus as getRoleSaverStatusImpl,
+  getSavedRolesForMember as getSavedRolesForMemberImpl
+} from './features/roleSaver.js';
+import {
+  feature as inactiveReminderFeature,
+  saveInactiveReminderDesign as saveInactiveReminderDesignImpl,
+  runInactiveReminderScan as runInactiveReminderScanImpl,
+  runInactiveReminderScanSafe as runInactiveReminderScanSafeImpl,
+  getInactiveReminderSnapshot as getInactiveReminderSnapshotImpl,
+  deleteReminderDm as deleteReminderDmImpl,
+  deleteAllReminderDms as deleteAllReminderDmsImpl,
+  cleanupRespondedReminderDms as cleanupRespondedReminderDmsImpl,
+  sendManualReminderDm as sendManualReminderDmImpl
+} from './features/inactiveReminder.js';
 import {
   applyActivityRacePanelDesign,
   createActivityRaceRoleSet,
   feature as activityRaceFeature,
   getActivityRaceSnapshot,
   previewActivityRaceRoleSet,
+  recordActivityRaceShutdown,
   refreshActivityRace
 } from './features/activityRace.js';
 import { feature as ticketsFeature } from './features/tickets.js';
+import {
+  feature as voiceLogImportFeature,
+  getVoiceLogSnapshot as getVoiceLogSnapshotImpl,
+  runVoiceLogBackfill as runVoiceLogBackfillImpl,
+  getVoiceLogEventsPage as getVoiceLogEventsPageImpl
+} from './features/voiceLogImport.js';
 import { feature as loggingFeature } from './features/logging.js';
 import { feature as autoRoleFeature } from './features/autoRole.js';
+import { feature as roleSwapFeature } from './features/roleSwap.js';
+import { feature as countingFeature, getCountingLocks as getCountingLocksImpl, getCountingRuntimeSnapshot, getCountingStats, removeCountingLock as removeCountingLockImpl, resetCounting, saveCountingDesign as saveCountingDesignImpl, saveCountingPanelDesign as saveCountingPanelDesignImpl } from './features/counting.js';
 import {
   feature as serverTagTrackerFeature,
   getServerTagTrackerSnapshot,
@@ -74,6 +120,15 @@ import {
 } from './features/emojiManager.js';
 import { feature as voiceChatCleanerFeature, getVoiceChatCleanerSnapshot } from './features/voiceChatCleaner.js';
 import {
+  feature as tempVoiceFeature,
+  getTempVoiceSnapshot,
+  removeAllTempVoiceProfiles as removeAllTempVoiceProfilesImpl,
+  removeTempVoiceProfile as removeTempVoiceProfileImpl,
+  refreshTempVoiceInterfaces,
+  saveTempVoiceInterfaceDesign as saveTempVoiceInterfaceDesignImpl
+} from './features/tempVoice.js';
+import { feature as publicCallVoteFeature, getPublicCallVoteLocksList, getPublicCallVoteSnapshot, removePublicCallVoteLock as removePublicCallVoteLockImpl, savePublicCallVoteDesign, refreshPublicCallVoteLive } from './features/publicCallVote.js';
+import {
   createServerStructureBackup,
   feature as serverBackupFeature,
   listServerStructureBackups,
@@ -82,9 +137,13 @@ import {
 } from './features/serverBackup.js';
 import {
   feature as boostRolesFeature,
+  getBoostLedgerMemberEvents,
   getBoostStatusSnapshot,
+  getBoostTopStatus,
   importBoostActivityList,
   previewBoostActivityImport,
+  refreshBoostTopPanel,
+  saveBoostTopDesign,
   startBoostRoleReconcile,
   updateBoostBaselineMember,
   verifyBoostCount as verifyBoostCountFromDiscord
@@ -93,14 +152,21 @@ import {
   buildHeavenEconomyComponents,
   feature as heavenEconomyFeature,
   getHeavenEconomyAdminSnapshot,
+  getVipPanelStatus,
   reconcileHeavenEconomyBoostMilestones,
+  refreshVipPanels,
+  saveEconomyDmDesign as saveEconomyDmDesignImpl,
+  saveHeavenEconomyPanelDesign as saveHeavenEconomyPanelDesignImpl,
+  saveVipPanelDesign,
+  syncVipSeparatorRole,
   updateHeavenEconomyAccount
 } from './features/heavenEconomy.js';
 import { getBoostSystemIndexStatus } from './features/boostSystemIndex.js';
-import { feature as serverContextFeature, getServerSystemEvents, startServerSystemEventBackfill } from './features/serverContext.js';
-import { getServerIndexChannelPage } from './serverIndexStore.js';
+import { feature as serverContextFeature, getServerSystemScanSummary, startServerSystemEventBackfill } from './features/serverContext.js';
+import { getServerIndexChannelPage, getServerIndexCheckpoint, getServerIndexSystemEventCounts, getServerIndexSystemEvents } from './serverIndexStore.js';
 import { feature as antiraidFeature } from './features/antiraid.js';
 import { feature as memberManagementFeature, ensureMemberActivityIndex, getIndexedChannelMessageCount, getIndexedMemberIntelligence, getIndexedMemberIntelligenceStatus } from './features/memberManagement.js';
+import { feature as memberVerifyFeature, saveVerifyPanelDesign as saveVerifyPanelDesignImpl } from './features/memberVerify.js';
 import {
   defaultGuildConfig,
   featureCards as configuredFeatureCards,
@@ -113,11 +179,14 @@ import {
   getAllGuildConfigs
 } from './storage.js';
 import { migrateDataGenerationV4 } from './runtime/dataGenerationV4.js';
+import crypto from 'node:crypto';
 import { atomicWriteJson } from './runtime/atomicJsonStore.js';
 import { mountDashboard } from './dashboard.js';
-import { getLiveDiagnosticsSnapshot, recordDiagnosticError, runTrackedOperation } from './runtime/liveDiagnostics.js';
+import { getLiveDiagnosticsSnapshot, recordDiagnosticError, recordInteractionTiming, recordRateLimit, runTrackedOperation } from './runtime/liveDiagnostics.js';
 import { createFeatureDispatcher } from './runtime/featureDispatcher.js';
+import { patchInteractionForTimeoutSafety } from './runtime/interactionTimeoutGuard.js';
 import { createModuleReadinessSnapshot } from './runtime/moduleReadiness.js';
+import { resolveAvatarFromHash } from './runtime/utils.js';
 
 const resolveProjectRoot = () => {
   const configuredRoot = String(process.env.FALLEN_HEAVEN_APP_ROOT || '').trim();
@@ -150,51 +219,38 @@ const APP_VERSION = (() => {
 })();
 
 const featureCards = configuredFeatureCards;
-const FORUM_LIKE_CHANNEL_TYPES = new Set([ChannelType.GuildForum, ChannelType.GuildMedia]);
-const THREAD_CHANNEL_TYPES = new Set([ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread]);
-const isForumLikeChannel = (channel) => FORUM_LIKE_CHANNEL_TYPES.has(Number(channel?.type));
-const isThreadChannel = (channel) => Boolean(channel?.isThread?.()) || THREAD_CHANNEL_TYPES.has(Number(channel?.type));
-const channelHasFlag = (channel, flagName, fallbackValue) => {
-  const flags = channel?.flags;
-  const flagValue = Number(ChannelFlagsBitField?.Flags?.[flagName] || fallbackValue || 0);
-  if (!flags || !flagValue) return false;
-  if (typeof flags.has === 'function') {
-    try {
-      if (flags.has(flagValue) || flags.has(flagName)) return true;
-    } catch (_error) {}
-  }
-  const bitfield = Number(flags.bitfield ?? flags);
-  return Number.isFinite(bitfield) && (bitfield & flagValue) === flagValue;
-};
-const forumChannelRequiresTag = (channel) => Boolean(isForumLikeChannel(channel) && channelHasFlag(channel, 'RequireTag', 16));
-const isSelectableTextChannel = (channel) => Boolean(
-  channel
-  && channel.type !== ChannelType.GuildCategory
-  && (channel.isTextBased?.() || isForumLikeChannel(channel) || isThreadChannel(channel))
-);
 
 const features = [
   moderationFeature,
+  instantBanWordsFeature,
   welcomeFarewellFeature,
   autoresponderFeature,
-  aiChatFeature,
   customRichPresenceFeature,
   levelsFeature,
   activityRaceFeature,
   ticketsFeature,
   loggingFeature,
   autoRoleFeature,
+  roleSwapFeature,
+  countingFeature,
   serverTagTrackerFeature,
   forumCleanerFeature,
   steamWorkshopFeature,
   emojiManagerFeature,
   voiceChatCleanerFeature,
+  tempVoiceFeature,
+  publicCallVoteFeature,
   serverBackupFeature,
   boostRolesFeature,
   heavenEconomyFeature,
   serverContextFeature,
   antiraidFeature,
-  memberManagementFeature
+  memberManagementFeature,
+  memberVerifyFeature,
+  botUpdatesFeature,
+  roleSaverFeature,
+  inactiveReminderFeature,
+  voiceLogImportFeature
 ];
 
 const commands = features.flatMap((feature) => feature.commands || []);
@@ -202,18 +258,6 @@ const commands = features.flatMap((feature) => feature.commands || []);
 const app = express();
 const PORT = Number(process.env.DASHBOARD_PORT || process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(APP_ROOT, 'public');
-const FALLEN_HEAVEN_LOCAL_DOMAINS = new Set([
-  'fallen-heaven-discord-server.de',
-  'www.fallen-heaven-discord-server.de'
-]);
-const FALLEN_HEAVEN_CANONICAL_PATH = '/fallen-heaven/';
-const FALLEN_HEAVEN_LEGACY_HTML_PATHS = new Set([
-  '/fallen-heaven.html',
-  '/discord-supplied.html',
-  '/discord-original.html',
-  '/discord-supplied',
-  '/discord-original'
-]);
 const DATA_DIR = process.env.FALLEN_HEAVEN_DATA_DIR || path.join(APP_ROOT, 'data');
 const REACTION_ROLE_RULES_FILE = path.join(DATA_DIR, 'reaction-role-rules.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
@@ -225,10 +269,6 @@ const RUNTIME_DIR = path.resolve(
 );
 const BOT_LOCK_FILE = path.join(RUNTIME_DIR, 'bot.lock');
 const LOCAL_CERT_DIR = path.join(RUNTIME_DIR, 'certs');
-const LOCAL_HTTPS_PFX = path.join(LOCAL_CERT_DIR, 'fallen-heaven-local.pfx');
-const LOCAL_HTTPS_PFX_PASSWORD = process.env.LOCAL_HTTPS_PFX_PASSWORD || 'fallen-heaven-local';
-const AI_MEMORY_DIR = path.join(DATA_DIR, 'ai-memory');
-const AI_MEMORY_TOMBSTONES_FILE = path.join(AI_MEMORY_DIR, 'tombstones.json');
 const MEMBER_INTELLIGENCE_DIRS = [
   path.join(DATA_DIR, 'member-intelligence-v4'),
   path.join(DATA_DIR, 'member-intelligence-v5')
@@ -302,11 +342,13 @@ acquireSingleInstanceLock();
 process.once('exit', releaseSingleInstanceLock);
 process.once('SIGINT', () => {
   releaseSingleInstanceLock();
-  process.exit(0);
+  // Aktivitäts-Liga: Heartbeat sofort persistieren, damit das Offline-Fenster
+  // beim nächsten Start exakt bekannt ist (kein erfundener Nachhol-Zeitraum).
+  void recordActivityRaceShutdown().finally(() => process.exit(0));
 });
 process.once('SIGTERM', () => {
   releaseSingleInstanceLock();
-  process.exit(0);
+  void recordActivityRaceShutdown().finally(() => process.exit(0));
 });
 
 const client = new Client({
@@ -346,15 +388,9 @@ const persistReactionRoleRules = async () => {
   await fs.rename(temporary, REACTION_ROLE_RULES_FILE);
 };
 
+const CONFIG_CACHE_TTL_MS = 5 * 60_000;
 const configCache = new Map();
 const backupAt = new Map();
-const memberActivityAt = new Map();
-const memberMessageActivity = new Map();
-const memberActivityDataDir = path.join(process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data'), 'member-activity');
-const memberActivityDataFile = path.join(memberActivityDataDir, 'last-messages.json');
-let memberActivityLoaded = false;
-let memberActivityTrackingSince = new Date().toISOString();
-let memberActivitySaveTimer = null;
 const channelMessageCounterFile = path.join(DATA_DIR, 'channel-message-counters.json');
 const channelMessageCounters = new Map();
 const channelMessageCounterTimers = new Map();
@@ -398,55 +434,14 @@ let channelMessageCountersLoaded = false;
 let channelMessageCountersLoadPromise = null;
 let channelMessageCounterSaveTimer = null;
 let channelMessageCounterSaveChain = Promise.resolve();
-const emojiLibraryFile = path.join(DATA_DIR, 'emoji-library.json');
-const emojiLibraryDir = path.join(DATA_DIR, 'emoji-library');
-const emojiLibraryMappings = new Map();
-let emojiLibraryLoaded = false;
-let emojiLibrarySaveChain = Promise.resolve();
 let activePresenceConfig = null;
 const loopState = {
   presenceTimer: null,
   backupTimer: null
 };
 
-const memberActivityKey = (guildId, userId) => `${String(guildId || '')}:${String(userId || '')}`;
-const recordMemberActivity = (guildId, userId, timestamp = Date.now()) => {
-  if (!guildId || !userId) return;
-  memberActivityAt.set(memberActivityKey(guildId, userId), Number(timestamp || Date.now()));
-};
-
-const ensureMemberActivityLoaded = async () => {
-  if (memberActivityLoaded) return;
-  memberActivityLoaded = true;
-  try {
-    const stored = JSON.parse(await fs.readFile(memberActivityDataFile, 'utf8'));
-    memberActivityTrackingSince = String(stored.trackingSince || memberActivityTrackingSince);
-    for (const [key, value] of Object.entries(stored.members || {})) {
-      if (value && typeof value === 'object') memberMessageActivity.set(key, value);
-    }
-  } catch {
-    await fs.mkdir(memberActivityDataDir, { recursive: true }).catch(() => {});
-  }
-};
-
-const saveMemberActivitySoon = () => {
-  clearTimeout(memberActivitySaveTimer);
-  memberActivitySaveTimer = setTimeout(async () => {
-    const temporary = `${memberActivityDataFile}.tmp`;
-    const payload = JSON.stringify({
-      version: 1,
-      trackingSince: memberActivityTrackingSince,
-      updatedAt: new Date().toISOString(),
-      members: Object.fromEntries(memberMessageActivity)
-    });
-    await fs.mkdir(memberActivityDataDir, { recursive: true }).catch(() => {});
-    await fs.writeFile(temporary, payload, 'utf8').then(() => fs.rename(temporary, memberActivityDataFile)).catch(() => {});
-  }, 1200);
-};
-
 const CHANNEL_MESSAGE_COUNT_PATTERN = /(?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?=\s+versendete Nachrichten\b)/iu;
 const CHANNEL_MESSAGE_TOKEN_PATTERN = /\{chat\.count(?:\.([^}]+))?\}/giu;
-const CUSTOM_EMOJI_PATTERN = /<(a?):([a-zA-Z0-9_]{2,32}):(\d+)>/g;
 const channelMessageCounterKey = (guildId, channelId) => `${String(guildId || '')}:${String(channelId || '')}`;
 const markChannelTopicWrite = (guildId, channelId, topic) => {
   const key = channelMessageCounterKey(guildId, channelId);
@@ -489,69 +484,6 @@ const matchesRenderedCounterTemplate = (template = '', topic = '') => {
   if (!found) return false;
   expression += escapeCounterTemplatePart(String(template).slice(cursor)) + '$';
   try { return new RegExp(expression, 'u').test(String(topic || '')); } catch { return false; }
-};
-const ensureEmojiLibraryLoaded = async () => {
-  if (emojiLibraryLoaded) return;
-  try {
-    const stored = JSON.parse(await fs.readFile(emojiLibraryFile, 'utf8'));
-    for (const [key, value] of Object.entries(stored?.mappings || {})) if (value && typeof value === 'object') emojiLibraryMappings.set(key, value);
-  } catch {
-    await fs.mkdir(emojiLibraryDir, { recursive: true }).catch(() => {});
-  }
-  emojiLibraryLoaded = true;
-};
-const persistEmojiLibrary = () => {
-  const payload = JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), mappings: Object.fromEntries(emojiLibraryMappings) }, null, 2);
-  emojiLibrarySaveChain = emojiLibrarySaveChain.then(async () => {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    const temporary = `${emojiLibraryFile}.${process.pid}.tmp`;
-    await fs.writeFile(temporary, payload, 'utf8');
-    await fs.rm(emojiLibraryFile, { force: true }).catch(() => {});
-    await fs.rename(temporary, emojiLibraryFile);
-  }).catch((error) => console.warn(`[emoji-library] Bibliothek konnte nicht gespeichert werden: ${error?.message || error}`));
-  return emojiLibrarySaveChain;
-};
-const normalizeEmojiLibraryName = (name, sourceId) => {
-  const normalized = String(name || '').replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 28);
-  return `${normalized || 'fh_emoji'}_${String(sourceId).slice(-3)}`.slice(0, 32);
-};
-const localizeChannelTopicEmojis = async (guild, topic) => {
-  const sourceTopic = String(topic || '');
-  const references = [...sourceTopic.matchAll(CUSTOM_EMOJI_PATTERN)];
-  if (!references.length) return sourceTopic;
-  await ensureEmojiLibraryLoaded();
-  const botMember = guild.members.me || await guild.members.fetchMe().catch(() => null);
-  if (!botMember?.permissions.has(PermissionFlagsBits.ManageGuildExpressions)) {
-    throw new Error('Dem Bot fehlt „Ausdrücke erstellen/verwalten“, um fremde Emojis für dieses Kanalthema zu übernehmen.');
-  }
-  let localized = sourceTopic;
-  for (const match of references) {
-    const [raw, animatedFlag, originalName, sourceId] = match;
-    if (guild.emojis.cache.has(sourceId)) continue;
-    const mappingKey = `${guild.id}:${sourceId}`;
-    const mapped = emojiLibraryMappings.get(mappingKey);
-    let targetEmoji = mapped?.targetId ? guild.emojis.cache.get(String(mapped.targetId)) : null;
-    if (!targetEmoji) {
-      const animated = animatedFlag === 'a';
-      const extension = animated ? 'gif' : 'png';
-      const libraryPath = path.join(emojiLibraryDir, `${sourceId}.${extension}`);
-      let attachment;
-      try {
-        attachment = await fs.readFile(libraryPath);
-      } catch {
-        const response = await fetch(`https://cdn.discordapp.com/emojis/${sourceId}.${extension}?size=128&quality=lossless`);
-        if (!response.ok) throw new Error(`Emoji „${originalName}“ konnte nicht von Discord geladen werden (${response.status}).`);
-        attachment = Buffer.from(await response.arrayBuffer());
-        await fs.mkdir(emojiLibraryDir, { recursive: true });
-        await fs.writeFile(libraryPath, attachment);
-      }
-      targetEmoji = await guild.emojis.create({ attachment, name: normalizeEmojiLibraryName(originalName, sourceId), reason: 'Kanalthema-Emoji für FALLEN HEAVEN lokalisiert' });
-      emojiLibraryMappings.set(mappingKey, { sourceId, targetId: targetEmoji.id, name: targetEmoji.name, animated: Boolean(targetEmoji.animated), updatedAt: new Date().toISOString() });
-      await persistEmojiLibrary();
-    }
-    localized = localized.split(raw).join(`<${targetEmoji.animated ? 'a' : ''}:${targetEmoji.name}:${targetEmoji.id}>`);
-  }
-  return localized;
 };
 const formatChannelMessageCount = (value) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.max(0, Math.trunc(Number(value || 0))));
 const detectChannelMessageCount = (topic = '') => {
@@ -829,7 +761,7 @@ client.once(Events.ClientReady, () => {
     void reconcileChannelMessageCounters().catch((error) => {
       console.warn(`[channel-counter] Live-Abgleich fehlgeschlagen: ${error?.message || error}`);
     });
-  }, 30_000);
+  }, 60_000);
   setTimeout(() => void reconcileChannelMessageCounters().catch(() => {}), 4_000);
 });
 
@@ -899,20 +831,20 @@ const getCachedGuildConfig = async (guildId, guildName = 'Server') => {
   }
 
   const cached = configCache.get(id);
-  if (cached) {
-    return cached;
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
   }
 
   const cfg = await getGuildConfig(id, guildName);
   const normalized = normalizeConfig(cfg);
-  configCache.set(id, normalized);
+  configCache.set(id, { value: normalized, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
   return normalized;
 };
 
 const saveGuildConfig = async (guildId, patch = {}, options = {}) => {
   const updated = await setGuildConfig(guildId, patch, options);
   const normalized = normalizeConfig(updated);
-  configCache.set(String(guildId), normalized);
+  configCache.set(String(guildId), { value: normalized, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
   activePresenceConfig = normalized;
   void applyPresence(normalized).catch((error) => {
     console.error('[config] Presence-Aktualisierung fehlgeschlagen', error);
@@ -925,6 +857,38 @@ const saveGuildConfig = async (guildId, patch = {}, options = {}) => {
   }
   return normalized;
 };
+
+// ---------------------------------------------------------------------------
+// Zentraler Speicher-/Aktualisierungspfad für ALLE Studio-Embeds.
+// Jeder Design-Save läuft durch persistEmbedDesign:
+//   1. Config laden  2. Modul-spezifisch normalisieren (save)  3. persistieren
+//   4. Live-Refresh (refresh, immer versucht – Fehler verlieren den Save nie)
+//   5. einheitliche Antwort.
+// Damit kann kein Modul mehr „nur speichern, aber nicht aktualisieren“:
+// Der Live-Refresh ist fester Bestandteil des Pfads und wird abgewartet,
+// bevor die App ihre Bestätigung bekommt.
+// ---------------------------------------------------------------------------
+const mustGetGuild = (guildId) => {
+  const guild = client.guilds.cache.get(String(guildId || '').trim());
+  if (!guild) throw new Error('Server wurde nicht gefunden.');
+  return guild;
+};
+
+// Dünner Wrapper um den zentralen, testbaren Pipeline-Pfad: bindet die
+// Config-Verwaltung (getCachedGuildConfig + saveGuildConfig) des laufenden
+// Bots an das gemeinsame Modul. Die eigentliche Logik liegt in
+// runtime/embedDesignPipeline.js und ist dort per Smoke-Test abgesichert.
+const persistEmbedDesign = ({ guild, key = '', payload = {}, save, refresh, response } = {}) =>
+  runEmbedDesignPipeline({
+    guild,
+    key,
+    payload,
+    save,
+    refresh,
+    response,
+    getConfig: () => Promise.resolve(getCachedGuildConfig(guild.id, guild.name)),
+    persist: (patch) => saveGuildConfig(guild.id, patch)
+  });
 
 const getGuildSummaries = () => {
   return client.guilds.cache
@@ -956,158 +920,7 @@ const getByPath = (obj, keyPath) => {
     .reduce((current, key) => (current ? current[key] : undefined), obj);
 };
 
-const formatTemplateValue = (value, context = {}) => {
-  return String(value || '')
-    .replaceAll('{user}', context.userMention || '@User')
-    .replaceAll('{username}', context.username || 'Username')
-    .replaceAll('{userAvatar}', context.userAvatar || '')
-    .replaceAll('{guild}', context.guildName || 'Server')
-    .replaceAll('{level}', String(context.level || 1))
-    .replaceAll('{memberCount}', String(context.memberCount || 0));
-};
-
-const parseEmbedColor = (value) => {
-  const normalized = String(value || '#27c4e8').replace('#', '').trim();
-  const parsed = Number.parseInt(normalized, 16);
-  return Number.isFinite(parsed) ? parsed : 0x27c4e8;
-};
-
-const discordEmbedTextLength = (value) => String(value || '').length;
-
-const validateDiscordEmbedSources = (sources = []) => {
-  if (sources.length > 10) {
-    throw new Error('Discord erlaubt maximal 10 Embeds pro Nachricht.');
-  }
-
-  let totalCharacters = 0;
-  sources.forEach((embedData = {}, index) => {
-    const label = `Embed ${index + 1}`;
-    const fields = Array.isArray(embedData.fields) ? embedData.fields : [];
-    const values = [
-      ['Titel', embedData.title, 256],
-      ['Beschreibung', embedData.description, 4096],
-      ['Autor', embedData.authorName, 256],
-      ['Footer', embedData.footerText, 2048]
-    ];
-    values.forEach(([name, value, maximum]) => {
-      const length = discordEmbedTextLength(value);
-      totalCharacters += length;
-      if (length > maximum) throw new Error(`${label}: ${name} darf maximal ${maximum.toLocaleString('de-DE')} Zeichen enthalten.`);
-    });
-    if (fields.length > 25) throw new Error(`${label}: Discord erlaubt maximal 25 Felder.`);
-    fields.forEach((field = {}, fieldIndex) => {
-      const nameLength = discordEmbedTextLength(field.name);
-      const valueLength = discordEmbedTextLength(field.value);
-      totalCharacters += nameLength + valueLength;
-      if (nameLength > 256) throw new Error(`${label}, Feld ${fieldIndex + 1}: Der Name darf maximal 256 Zeichen enthalten.`);
-      if (valueLength > 1024) throw new Error(`${label}, Feld ${fieldIndex + 1}: Der Wert darf maximal 1.024 Zeichen enthalten.`);
-    });
-  });
-
-  if (totalCharacters > 6000) {
-    throw new Error('Alle Embeds zusammen dürfen maximal 6.000 Zeichen enthalten.');
-  }
-};
-
-const buildSingleEmbedPayload = (template = {}, guild) => {
-  const context = {
-    guildName: guild?.name || 'Server',
-    memberCount: guild?.memberCount || 0,
-    userMention: '@User',
-    username: 'Username',
-    userAvatar: guild?.iconURL?.({ size: 256 }) || ''
-  };
-  const embedData = template.embed || {};
-  const outsideImage = formatTemplateValue(template.outsideImageUrl || embedData.outsideImageUrl, context);
-  const outsideImageName = String(template.outsideImageName || embedData.outsideImageName || 'fallen-heaven-image.png');
-  const embed = new EmbedBuilder().setColor(parseEmbedColor(embedData.color));
-  const title = formatTemplateValue(embedData.title, context).slice(0, 256);
-  const description = formatTemplateValue(embedData.description, context).slice(0, 4096);
-  if (title) {
-    embed.setTitle(title);
-  }
-  const titleUrl = formatTemplateValue(embedData.url, context);
-  if (title && /^https?:\/\//i.test(titleUrl)) {
-    embed.setURL(titleUrl);
-  }
-  if (description) {
-    embed.setDescription(description);
-  }
-
-  const authorName = formatTemplateValue(embedData.authorName, context).slice(0, 256);
-  const authorIcon = formatTemplateValue(embedData.authorIconUrl, context);
-  if (authorName) {
-    embed.setAuthor({ name: authorName, iconURL: authorIcon || undefined });
-  }
-
-  const thumbnail = formatTemplateValue(embedData.thumbnailUrl, context);
-  const image = formatTemplateValue(embedData.imageUrl, context);
-  if (thumbnail && /^https?:\/\//i.test(thumbnail)) {
-    embed.setThumbnail(thumbnail);
-  }
-  if (image && /^https?:\/\//i.test(image)) {
-    embed.setImage(image);
-  }
-
-  const footerText = formatTemplateValue(embedData.footerText, context).slice(0, 2048);
-  const footerIcon = formatTemplateValue(embedData.footerIconUrl, context);
-  if (footerText) {
-    embed.setFooter({ text: footerText, iconURL: footerIcon || undefined });
-  }
-
-  if (embedData.timestamp) {
-    embed.setTimestamp(new Date());
-  }
-
-  const fields = Array.isArray(embedData.fields) ? embedData.fields : [];
-  const normalizedFields = fields
-    .map((field) => ({
-      name: formatTemplateValue(field?.name, context).slice(0, 256) || '\u200b',
-      value: formatTemplateValue(field?.value, context).slice(0, 1024) || '\u200b',
-      inline: Boolean(field?.inline)
-    }))
-    .slice(0, 25);
-
-  if (normalizedFields.length) {
-    embed.addFields(normalizedFields);
-  }
-
-  const contentParts = [formatTemplateValue(template.content, context)];
-  if (outsideImage && /^https?:\/\//i.test(outsideImage)) {
-    contentParts.push(outsideImage);
-  }
-
-  const dataImageMatch = outsideImage.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
-  const outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
-  if (outsideFile && outsideFile.length > 25 * 1024 * 1024) {
-    throw new Error('Das Außenbild darf maximal 25 MB groß sein.');
-  }
-  const safeFileName = outsideImageName.replace(/[^a-z0-9._-]/gi, '_').slice(-120) || 'fallen-heaven-image.png';
-
-  return {
-    content: contentParts.filter(Boolean).join('\n'),
-    embeds: [embed],
-    files: outsideFile ? [{ attachment: outsideFile, name: safeFileName }] : [],
-    attachments: template.removeOutsideImage === true || outsideFile ? [] : undefined
-  };
-};
-
-const buildEmbedPayload = (template = {}, guild) => {
-  const sources = Array.isArray(template.embeds) && template.embeds.length
-    ? template.embeds
-    : [template.embed || {}];
-  validateDiscordEmbedSources(sources);
-  const primary = buildSingleEmbedPayload({ ...template, embed: sources[0] }, guild);
-  if (primary.content.length > 2000) {
-    throw new Error('Die Nachricht über dem Embed darf einschließlich Bild-Link maximal 2.000 Zeichen enthalten.');
-  }
-  return {
-    content: primary.content,
-    embeds: sources.map((embed) => buildSingleEmbedPayload({ ...template, embed }, guild).embeds[0]),
-    files: primary.files || [],
-    attachments: primary.attachments
-  };
-};
+const buildEmbedPayload = (template = {}, guild) => buildStudioEmbedPayload(template, guild);
 
 const getTextChannel = async (guild, channelId) => {
   if (!guild || !channelId) {
@@ -1146,125 +959,6 @@ const getTextChannel = async (guild, channelId) => {
 
   return channel;
 };
-
-const dashboardOrderCollator = new Intl.Collator('de', { numeric: true, sensitivity: 'base' });
-
-const discordPosition = (entry, fallback = 0) => {
-  const value = Number(entry?.rawPosition ?? entry?.position ?? fallback);
-  return Number.isFinite(value) ? value : fallback;
-};
-
-const compareDiscordNames = (left, right) =>
-  dashboardOrderCollator.compare(String(left?.name || left?.id || ''), String(right?.name || right?.id || ''));
-
-const compareDiscordIds = (left, right) => {
-  const leftId = String(left?.id || '');
-  const rightId = String(right?.id || '');
-  if (/^\d+$/.test(leftId) && /^\d+$/.test(rightId)) {
-    const delta = BigInt(leftId) - BigInt(rightId);
-    return delta < 0n ? -1 : delta > 0n ? 1 : 0;
-  }
-  return leftId.localeCompare(rightId, 'en', { numeric: true });
-};
-
-const dashboardChannelSortBucket = (channel) => {
-  const type = Number(channel?.type);
-  if (channel?.isCategory || type === ChannelType.GuildCategory) return 0;
-  if (channel?.isThread || THREAD_CHANNEL_TYPES.has(type)) return 2;
-  if (channel?.isVoice || type === ChannelType.GuildVoice || type === ChannelType.GuildStageVoice) return 10;
-  if (channel?.isForumLike || channel?.isText || type === ChannelType.GuildText || type === ChannelType.GuildAnnouncement || type === ChannelType.GuildForum || type === ChannelType.GuildMedia) return 1;
-  return 5;
-};
-
-const compareDiscordRoleHierarchy = (left, right) => {
-  if (typeof left?.comparePositionTo === 'function') {
-    const delta = right.comparePositionTo(left);
-    if (delta) return delta;
-  }
-  const delta = discordPosition(right) - discordPosition(left);
-  if (delta) return delta;
-  return compareDiscordIds(left, right) || compareDiscordNames(left, right);
-};
-
-const compareTopLevelDashboardChannels = (left, right) => {
-  const leftPosition = discordPosition(left);
-  const rightPosition = discordPosition(right);
-  if (leftPosition !== rightPosition) return leftPosition - rightPosition;
-  return compareDiscordIds(left, right) || compareDiscordNames(left, right);
-};
-
-const compareDashboardCategoryChildren = (left, right) => {
-  const leftPosition = discordPosition(left);
-  const rightPosition = discordPosition(right);
-  if (leftPosition !== rightPosition) return leftPosition - rightPosition;
-  return compareDiscordIds(left, right) || compareDiscordNames(left, right);
-};
-
-const compareDashboardChannelRows = (left, right) => {
-  const leftTop = left.isCategory || !left.parentId ? discordPosition(left) : Number(left.categoryPosition ?? left.parentPosition ?? left.position ?? 0);
-  const rightTop = right.isCategory || !right.parentId ? discordPosition(right) : Number(right.categoryPosition ?? right.parentPosition ?? right.position ?? 0);
-  if (leftTop !== rightTop) return leftTop - rightTop;
-  if (left.isCategory && String(right.parentId || '') === String(left.id)) return -1;
-  if (right.isCategory && String(left.parentId || '') === String(right.id)) return 1;
-  const leftParent = String(left.parentId || '');
-  const rightParent = String(right.parentId || '');
-  if (leftParent !== rightParent) return leftParent.localeCompare(rightParent, 'de', { numeric: true, sensitivity: 'base' });
-  const childDelta = compareDashboardCategoryChildren(left, right);
-  if (childDelta) return childDelta;
-  if (left.isCategory !== right.isCategory) return left.isCategory ? -1 : 1;
-  if (left.isThread !== right.isThread) return left.isThread ? 1 : -1;
-  return compareDiscordIds(left, right) || compareDiscordNames(left, right);
-};
-
-const withDashboardDisplayOrder = (rows) => {
-  const uniqueRows = rows.filter((channel, index, list) => list.findIndex((entry) => entry.id === channel.id) === index);
-  const rowById = new Map(uniqueRows.map((row) => [String(row.id), row]));
-  const childrenByParent = new Map();
-  const rootRows = [];
-  const categoryRows = [];
-  const orphanRows = [];
-  for (const row of uniqueRows) {
-    if (!row.isCategory && row.parentId && rowById.has(String(row.parentId))) {
-      const key = String(row.parentId);
-      if (!childrenByParent.has(key)) childrenByParent.set(key, []);
-      childrenByParent.get(key).push(row);
-    } else if (row.isCategory) {
-      categoryRows.push(row);
-    } else if (!row.parentId) {
-      rootRows.push(row);
-    } else {
-      orphanRows.push(row);
-    }
-  }
-  for (const children of childrenByParent.values()) children.sort(compareDashboardCategoryChildren);
-  rootRows.sort(compareTopLevelDashboardChannels);
-  categoryRows.sort(compareTopLevelDashboardChannels);
-  orphanRows.sort(compareDashboardCategoryChildren);
-  const ordered = [];
-  const pushRow = (row) => {
-    if (ordered.includes(row)) return;
-    row.displayOrder = ordered.length;
-    ordered.push(row);
-  };
-  for (const row of rootRows) pushRow(row);
-  for (const row of categoryRows) {
-    pushRow(row);
-    for (const child of childrenByParent.get(String(row.id)) || []) pushRow(child);
-  }
-  for (const row of orphanRows) pushRow(row);
-  for (const row of uniqueRows.sort(compareDashboardChannelRows)) pushRow(row);
-  return ordered;
-};
-
-const DASHBOARD_CONFIG_CHANNEL_TYPES = new Set([
-  ChannelType.GuildText,
-  ChannelType.GuildVoice,
-  ChannelType.GuildCategory,
-  ChannelType.GuildAnnouncement,
-  ChannelType.GuildStageVoice,
-  ChannelType.GuildForum,
-  ChannelType.GuildMedia
-]);
 
 const refreshGuildChannels = async (guild, fresh = false) => {
   if (!fresh || !guild?.channels?.fetch) return guild?.channels?.cache;
@@ -1330,481 +1024,6 @@ const listTextChannels = async (guildId, options = {}) => {
   return withDashboardDisplayOrder(channelRows);
 };
 
-const messageUrl = (guildId, channelId, messageId) =>
-  `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
-
-const serializeDashboardEmbed = (embed) => ({
-  title: embed.title || '',
-  description: embed.description || '',
-  url: embed.url || '',
-  type: embed.type || '',
-  color: embed.hexColor || '',
-  image: embed.image?.url || '',
-  thumbnail: embed.thumbnail?.url || '',
-  author: embed.author?.name || '',
-  authorIcon: embed.author?.iconURL || '',
-  footer: embed.footer?.text || '',
-  footerIcon: embed.footer?.iconURL || '',
-  timestamp: embed.timestamp?.toISOString?.() || null,
-  fields: embed.fields?.map((field) => ({ name: field.name, value: field.value, inline: field.inline })) || []
-});
-
-const serializeDashboardAttachment = (attachment) => ({
-  id: attachment.id,
-  name: attachment.name || 'Datei',
-  url: attachment.url,
-  contentType: attachment.contentType || attachment.content_type || '',
-  size: attachment.size || 0
-});
-
-const serializeDashboardSticker = (sticker) => ({
-  id: sticker.id,
-  name: sticker.name,
-  url: sticker.url || `https://media.discordapp.net/stickers/${sticker.id}.png?size=160`,
-  previewUrl: `https://media.discordapp.net/stickers/${sticker.id}.png?size=160`,
-  format: sticker.format
-});
-
-const serializeDashboardReaction = (reaction) => ({
-  emoji: reaction.emoji.toString(),
-  id: reaction.emoji.id || '',
-  name: reaction.emoji.name || '',
-  animated: Boolean(reaction.emoji.animated),
-  identifier: reaction.emoji.identifier || reaction.emoji.toString(),
-  url: reaction.emoji.imageURL?.({ size: 64, extension: reaction.emoji.animated ? 'gif' : 'png' }) || '',
-  count: reaction.count || 0
-});
-
-const resolveAvatarFromHash = (userId, avatarHash, options = {}) => {
-  const hash = String(avatarHash || '').trim();
-  if (!userId || !hash) return null;
-  const extension = String(hash.startsWith('a_') ? 'gif' : (options.extension || 'png')).replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
-  const size = Number(options.size || 128);
-  const normalizedSize = Number.isFinite(size) && size > 0 ? Math.min(4096, Math.max(16, Math.round(size))) : 128;
-  return `https://cdn.discordapp.com/avatars/${String(userId)}/${hash}.${extension}?size=${normalizedSize}`;
-};
-
-const isDiscordDefaultAvatarUrl = (value) => {
-  const url = String(value || '').toLowerCase();
-  if (!url) return false;
-  return /https?:\/\/(?:cdn|media)\.discord(app)?\.com\/embed\/avatars\/\d+\.png/.test(url);
-};
-
-const normalizeDiscordId = (value) => {
-  const candidate = String(value || '').trim();
-  return /^\d{15,22}$/.test(candidate) ? candidate : '';
-};
-
-const extractMentionIdsFromText = (text = '') => {
-  const value = String(text || '');
-  return [...new Set([...value.matchAll(/<@!?(\d{15,22})>/g)].map((match) => match[1]).filter(Boolean))];
-};
-
-const resolveIndexedUserProfile = async (guild, userId, { allowGuildFetch = true } = {}) => {
-  const normalizedUserId = normalizeDiscordId(userId);
-  if (!normalizedUserId) {
-    return { id: '', user: null, member: null };
-  }
-  let member = guild.members.cache.get(normalizedUserId) || null;
-  let user = member?.user || client.users.cache.get(normalizedUserId) || null;
-
-  if (!member && !user && allowGuildFetch && guild && userId) {
-    member = await guild.members.fetch(normalizedUserId).catch(() => null);
-    user = member?.user || user;
-  }
-
-  if (!user) {
-    user = await client.users.fetch(normalizedUserId).catch(() => null);
-    if (!member && user?.id && guild?.id) {
-      member = await guild.members.fetch(normalizedUserId).catch(() => member);
-    }
-  }
-
-  return {
-    id: normalizedUserId,
-    user,
-    member
-  };
-};
-
-const resolveIndexedMessageAuthor = async (guild, channel, record, identityCache = new Map()) => {
-  const authorId = normalizeDiscordId(record?.authorId);
-  const cacheKey = `author:${authorId || String(record?.authorName || '').trim() || record?.id || ''}`;
-  const cached = identityCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  let identity = await resolveIndexedUserProfile(guild, authorId, { allowGuildFetch: true });
-  let liveMessage = null;
-  if (!identity.user && record?.id && channel?.messages?.fetch) {
-    liveMessage = await channel.messages.fetch(String(record.id)).catch(() => null);
-  }
-  if (!identity.user && liveMessage?.author?.id) {
-    identity = {
-      ...identity,
-      id: normalizeDiscordId(liveMessage.author.id),
-      user: liveMessage.author,
-      member: liveMessage.member || identity.member
-    };
-  }
-  const finalMember = identity.member || liveMessage?.member || null;
-  const finalUser = finalMember?.user || liveMessage?.author || identity.user || null;
-  const botUser = identity.id === normalizeDiscordId(client.user?.id);
-  const fallbackId = authorId || normalizeDiscordId(record?.userId) || normalizeDiscordId(finalUser?.id) || '';
-  let avatarUrl = null;
-  if (finalUser?.id) {
-    avatarUrl = await resolveDashboardAvatarUrlWithFallback(guild, finalMember || finalUser, { size: 128 });
-  }
-  const fallbackUsername = String(record?.authorName || finalUser?.username || '').trim() || (fallbackId ? `@${fallbackId}` : 'Unbekannt');
-  const fallbackDisplayName = String(
-    finalMember?.displayName
-    || finalUser?.globalName
-    || finalUser?.username
-    || record?.authorName
-    || ''
-  ).trim() || fallbackUsername;
-
-  const profile = {
-    id: identity.id || fallbackId,
-    username: fallbackUsername || 'Unbekannt',
-    displayName: fallbackDisplayName || 'Unbekannt',
-    avatarUrl,
-    avatar: avatarUrl,
-    fallbackAvatar: finalUser?.defaultAvatarURL || null,
-    bot: Boolean(record?.authorBot || botUser || finalUser?.bot)
-  };
-  identityCache.set(cacheKey, profile);
-  return profile;
-};
-
-const resolveIndexedMentionProfile = async (guild, mentionId, identityCache = new Map()) => {
-  const cacheKey = `mention:${normalizeDiscordId(mentionId)}`;
-  const cached = identityCache.get(cacheKey);
-  if (cached) return cached;
-
-  const identity = await resolveIndexedUserProfile(guild, mentionId, { allowGuildFetch: true });
-  const resolvedUser = identity.member?.user || identity.user || null;
-  const fallbackId = normalizeDiscordId(mentionId);
-  const profile = {
-    id: normalizeDiscordId(mentionId) || identity.id,
-    username: String(resolvedUser?.username || '').trim() || (fallbackId ? `@${fallbackId}` : ''),
-    displayName: String(identity.member?.displayName || resolvedUser?.globalName || resolvedUser?.username || '').trim() || (fallbackId ? `@${fallbackId}` : '')
-  };
-  identityCache.set(cacheKey, profile);
-  return profile;
-};
-
-const resolveDashboardAvatarUrlWithFallback = async (guild, memberOrUser, options = {}) => {
-  const base = resolveDashboardAvatarUrl(memberOrUser, options);
-  if (!guild || !isDiscordDefaultAvatarUrl(base) || !memberOrUser?.id) {
-    return base;
-  }
-
-  try {
-    const refreshed = await guild.members.fetch({ user: String(memberOrUser.id), force: true }).catch(() => null);
-    if (!refreshed) return base;
-    const candidate = resolveDashboardAvatarUrl(refreshed, options);
-    return candidate || base;
-  } catch {
-    return base;
-  }
-};
-
-const resolveDashboardAvatarUrl = (entity, options = { size: 128 }) => {
-  const user = entity?.user || entity || null;
-  if (!user?.id) return null;
-  const resolved = user.displayAvatarURL?.(options);
-  if (resolved) return String(resolved);
-  if (entity?.avatar && entity?.guild?.id) {
-    const extension = String(entity.avatar.startsWith('a_') ? 'gif' : (options.extension || 'png')).replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
-    const guildSize = Number(options.size || 128);
-    const normalizedGuildSize = Number.isFinite(guildSize) && guildSize > 0 ? Math.min(4096, Math.max(16, Math.round(guildSize))) : 128;
-    return `https://cdn.discordapp.com/guilds/${String(entity.guild.id)}/users/${String(user.id)}/avatars/${String(entity.avatar)}.${extension}?size=${normalizedGuildSize}`;
-  }
-  if (user.avatar) return resolveAvatarFromHash(user.id, user.avatar, options);
-  return user.defaultAvatarURL || null;
-};
-
-const serializeDashboardAuthor = async (guild, thread, starter) => {
-  if (starter?.author) {
-    const avatarUrl = await resolveDashboardAvatarUrlWithFallback(guild, starter.author, { size: 128 });
-    return {
-      id: starter.author.id || '',
-      username: starter.author.username || 'Unbekannt',
-      displayName: starter.member?.displayName || starter.author.globalName || starter.author.username || 'Unbekannt',
-      avatarUrl,
-      avatar: avatarUrl,
-      fallbackAvatar: starter.author.defaultAvatarURL || null,
-      bot: Boolean(starter.author.bot)
-    };
-  }
-
-  const ownerId = String(thread?.ownerId || '');
-  const member = ownerId ? guild.members.cache.get(ownerId) || await guild.members.fetch(ownerId).catch(() => null) : null;
-  const user = member?.user || null;
-  const avatarUrl = await resolveDashboardAvatarUrlWithFallback(guild, user, { size: 128 });
-  return {
-    id: ownerId,
-    username: user?.username || 'Forum',
-    displayName: member?.displayName || user?.globalName || user?.username || 'Forum-Post',
-    avatarUrl,
-    avatar: avatarUrl,
-    fallbackAvatar: user?.defaultAvatarURL || null,
-    bot: Boolean(user?.bot)
-  };
-};
-
-const FORUM_THREAD_PINNED_FLAG = Number(ChannelFlagsBitField?.Flags?.Pinned || 2);
-
-const forumThreadHasPinnedFlag = (thread) => {
-  const flags = thread?.flags;
-  if (!flags) return false;
-  if (typeof flags.has === 'function') {
-    try {
-      if (flags.has(ChannelFlagsBitField.Flags.Pinned)) return true;
-    } catch (_error) {
-      // Einige discord.js-Versionen akzeptieren nur Namen, andere nur Bitwerte.
-    }
-    try {
-      if (flags.has('Pinned')) return true;
-    } catch (_error) {
-      // Fallback auf bitfield-Prüfung darunter.
-    }
-  }
-  const bitfield = Number(flags.bitfield ?? flags);
-  return Number.isFinite(bitfield) && (bitfield & FORUM_THREAD_PINNED_FLAG) === FORUM_THREAD_PINNED_FLAG;
-};
-
-const isPinnedForumPost = (thread, starter = null) => Boolean(starter?.pinned || thread?.pinned || forumThreadHasPinnedFlag(thread));
-
-const forumPostTimestamp = (post) => Date.parse(post?.createdAt || post?.thread?.createdAt || '') || 0;
-
-const compareDashboardForumPosts = (left, right) => {
-  const pinDelta = Number(Boolean(right?.pinned || right?.thread?.pinned)) - Number(Boolean(left?.pinned || left?.thread?.pinned));
-  if (pinDelta) return pinDelta;
-  const timeDelta = forumPostTimestamp(right) - forumPostTimestamp(left);
-  if (timeDelta) return timeDelta;
-  return String(left?.name || left?.id || '').localeCompare(String(right?.name || right?.id || ''), 'de', { sensitivity: 'base' });
-};
-
-const forumThreadArchiveTimestamp = (thread) =>
-  Number(thread?.archivedTimestamp || thread?.archiveTimestamp || thread?.createdTimestamp || Date.parse(thread?.archivedAt || thread?.createdAt || '') || 0);
-
-const forumThreadArchiveCursor = (thread) => {
-  const timestamp = forumThreadArchiveTimestamp(thread);
-  if (!timestamp) return '';
-  return new Date(timestamp).toISOString();
-};
-
-const collectDashboardForumThreads = async (channel, limit, before = '') => {
-  const rows = new Map();
-  const archivedRows = [];
-  const add = (thread) => {
-    if (thread?.id && String(thread.parentId || '') === String(channel.id)) rows.set(thread.id, thread);
-  };
-  const addArchived = (thread) => {
-    add(thread);
-    if (thread?.id && String(thread.parentId || '') === String(channel.id)) archivedRows.push(thread);
-  };
-  if (!before) {
-    for (const thread of channel.threads?.cache?.values?.() || []) add(thread);
-    const active = await channel.threads.fetchActive(true).catch(() => null);
-    for (const thread of active?.threads?.values?.() || []) add(thread);
-  }
-  const archived = await channel.threads.fetchArchived({
-    type: 'public',
-    limit: Math.min(100, Math.max(1, limit)),
-    ...(before ? { before } : {})
-  }, true).catch(() => null);
-  for (const thread of archived?.threads?.values?.() || []) addArchived(thread);
-  const oldestArchived = archivedRows
-    .filter((thread) => forumThreadArchiveTimestamp(thread))
-    .sort((left, right) => forumThreadArchiveTimestamp(left) - forumThreadArchiveTimestamp(right))[0] || null;
-  const threads = [...rows.values()];
-  return { threads, hasMore: Boolean(archived?.hasMore), nextBefore: archived?.hasMore ? forumThreadArchiveCursor(oldestArchived) : null };
-};
-
-const listForumChannelPosts = async ({ guild, channel, options = {}, actorUserId = '' }) => {
-  if (channel.viewable === false) {
-    throw new Error('Der Bot darf diesen Forum-Kanal nicht sehen.');
-  }
-
-  const limit = Math.min(100, Math.max(10, Number(options.limit || 50)));
-  const before = String(options.before || '').trim();
-  const actor = actorUserId
-    ? guild.members.cache.get(String(actorUserId)) || await guild.members.fetch(String(actorUserId)).catch(() => null)
-    : null;
-  const botMember = guild.members.me || await guild.members.fetchMe().catch(() => null);
-  const actorIsOwner = actor?.id === guild.ownerId;
-  const actorCanManageChannels = actorIsOwner || Boolean(actor?.permissions.has(PermissionFlagsBits.Administrator) || actor?.permissions.has(PermissionFlagsBits.ManageChannels));
-  const botChannelPermissions = botMember ? channel.permissionsFor(botMember) : null;
-  const botCanManageChannel = Boolean(botChannelPermissions?.has(PermissionFlagsBits.ManageChannels));
-  const { threads, hasMore, nextBefore } = await collectDashboardForumThreads(channel, limit, before);
-  const availableTags = new Map(Array.from(channel.availableTags?.values?.() || channel.availableTags || []).map((tag) => [String(tag.id), tag.name || tag.id]));
-  const messages = await Promise.all(threads.map(async (thread) => {
-    const starter = await thread.fetchStarterMessage({ cache: true, force: true }).catch(() => null);
-    const author = await serializeDashboardAuthor(guild, thread, starter);
-    const pinned = isPinnedForumPost(thread, starter);
-    const tags = Array.from(thread.appliedTags || []).map((tagId) => ({
-      id: String(tagId),
-      name: availableTags.get(String(tagId)) || String(tagId)
-    }));
-    return {
-      id: thread.id,
-      name: thread.name || thread.id,
-      content: starter?.content || `Forum-Post: ${thread.name || thread.id}`,
-      type: 'forum-post',
-      createdAt: (starter?.createdAt || thread.createdAt)?.toISOString?.() || null,
-      editedAt: starter?.editedAt?.toISOString?.() || null,
-      pinned,
-      url: thread.url || messageUrl(guild.id, thread.id, thread.id),
-      canEdit: false,
-      canDelete: false,
-      author,
-      attachments: starter?.attachments?.map?.(serializeDashboardAttachment) || [],
-      embeds: starter?.embeds?.map?.(serializeDashboardEmbed) || [],
-      stickers: starter?.stickers?.map?.(serializeDashboardSticker) || [],
-      reactions: starter?.reactions?.cache?.map?.(serializeDashboardReaction) || [],
-      tags,
-      thread: {
-        id: thread.id,
-        name: thread.name || thread.id,
-        parentId: thread.parentId || channel.id,
-        archived: Boolean(thread.archived),
-        locked: Boolean(thread.locked),
-        pinned,
-        messageCount: Math.max(0, Number(thread.messageCount || 0)),
-        totalMessageSent: Math.max(0, Number(thread.totalMessageSent || 0)),
-        createdAt: thread.createdAt?.toISOString?.() || null,
-        autoArchiveDuration: Number(thread.autoArchiveDuration || 0),
-        tags
-      }
-    };
-  })).then((rows) => rows.sort(compareDashboardForumPosts));
-  return {
-    channel: {
-      id: channel.id,
-      name: channel.name || channel.id,
-      topic: channel.topic || '',
-      type: channel.type,
-      isThread: false,
-      isForumLike: true,
-      isMedia: Number(channel.type) === ChannelType.GuildMedia,
-      parentId: channel.parentId || null,
-      nsfw: Boolean(channel.nsfw),
-      rateLimitPerUser: Number(channel.rateLimitPerUser || 0),
-      editable: Boolean(actorCanManageChannels && botCanManageChannel && channel.manageable !== false),
-      supportsMessageCounter: false,
-      messageCounter: { enabled: false, template: '', preview: channel.topic || '', hasPlaceholder: false, placeholders: [] },
-      url: `https://discord.com/channels/${guild.id}/${channel.id}`
-    },
-    messages,
-    nextBefore: nextBefore || null,
-    hasMore: Boolean(hasMore),
-    storage: 'forum-posts-live',
-    fetchedAt: new Date().toISOString()
-  };
-};
-
-const serializeOutsideImageAttachment = (message) => {
-  const values = message?.attachments instanceof Map || typeof message?.attachments?.values === 'function'
-    ? [...message.attachments.values()]
-    : Array.isArray(message?.attachments)
-      ? message.attachments
-      : [];
-  const attachment = values.find((item) => /^image\/(?:png|jpeg|webp|gif)$/i.test(String(item?.contentType || item?.content_type || '')))
-    || values[0];
-  if (!attachment?.url) return null;
-  return {
-    id: String(attachment.id || ''),
-    url: String(attachment.url),
-    name: String(attachment.name || attachment.filename || 'fallen-heaven-image.png'),
-    size: Math.max(0, Number(attachment.size || 0)),
-    contentType: String(attachment.contentType || attachment.content_type || '')
-  };
-};
-
-const reactionRoleEmojiKey = (value = {}) => {
-  const raw = String(value.emoji || '').trim();
-  const mention = raw.match(/^<a?:([^:>]+):(\d+)>$/);
-  const id = String(value.emojiId || value.id || mention?.[2] || '').trim();
-  return id || String(value.emojiName || value.name || value.emoji || '').trim();
-};
-
-const reactionRoleEmojiInput = (value = {}) => {
-  const raw = String(value.emoji || '').trim();
-  const mention = raw.match(/^<a?:([^:>]+):(\d+)>$/);
-  const id = String(value.emojiId || value.id || mention?.[2] || '').trim();
-  const name = String(value.emojiName || value.name || mention?.[1] || '').trim();
-  if (id) return id;
-  return raw || name;
-};
-
-const normalizeReactionRoleEmojiName = (value) => String(value || '')
-  .trim()
-  .toLocaleLowerCase('de')
-  .replace(/[^a-z0-9äöüß_]+/g, '');
-
-const reactionRoleEmojiCatalog = async (guild) => {
-  const guildCollection = await guild.emojis.fetch().catch(() => guild.emojis.cache);
-  const applicationCollection = await client.application?.emojis?.fetch?.().catch(() => null);
-  return [
-    ...Array.from(guildCollection?.values?.() || []),
-    ...Array.from(applicationCollection?.values?.() || [])
-  ].filter((emoji, index, values) => emoji?.id && values.findIndex((entry) => entry.id === emoji.id) === index);
-};
-
-const resolveReactionRoleEmoji = async (guild, entry, catalog) => {
-  const requestedId = reactionRoleEmojiKey(entry);
-  const requestedName = normalizeReactionRoleEmojiName(entry.emojiName || entry.name || String(entry.emoji || '').match(/^<a?:([^:>]+):\d+>$/)?.[1]);
-  let resolved = catalog.find((emoji) => String(emoji.id) === String(requestedId));
-
-  if (!resolved && requestedId) {
-    await ensureEmojiLibraryLoaded();
-    const mapped = emojiLibraryMappings.get(`${guild.id}:${requestedId}`);
-    if (mapped?.targetId) resolved = catalog.find((emoji) => String(emoji.id) === String(mapped.targetId));
-  }
-
-  if (!resolved && requestedName) {
-    resolved = catalog.find((emoji) => normalizeReactionRoleEmojiName(emoji.name) === requestedName);
-  }
-
-  if (!resolved && requestedName) {
-    resolved = catalog.find((emoji) => {
-      const candidate = normalizeReactionRoleEmojiName(emoji.name);
-      return candidate && (candidate.includes(requestedName) || requestedName.includes(candidate));
-    });
-  }
-
-  if (!resolved) return {
-    input: reactionRoleEmojiInput(entry),
-    emojiId: String(entry.emojiId || ''),
-    emojiName: String(entry.emojiName || entry.emoji || ''),
-    replaced: false
-  };
-
-  return {
-    input: resolved.id,
-    emojiId: resolved.id,
-    emojiName: resolved.name,
-    animated: Boolean(resolved.animated),
-    replaced: String(resolved.id) !== String(requestedId)
-  };
-};
-
-const normalizeReactionRoleTemplate = (entries = []) => (Array.isArray(entries) ? entries : [])
-  .map((entry = {}) => ({
-    emoji: String(entry.emoji || '').trim(),
-    emojiId: String(entry.emojiId || entry.id || '').trim(),
-    emojiName: String(entry.emojiName || entry.name || '').trim(),
-    animated: Boolean(entry.animated),
-    roleId: String(entry.roleId || '').trim(),
-    exclusive: entry.exclusive !== false,
-    group: String(entry.group || 'reaction-colors').trim().slice(0, 80)
-  }))
-  .filter((entry) => reactionRoleEmojiKey(entry) && entry.roleId);
-
 const configureMessageReactionRoles = async (guild, messageOrChannel, messageOrEntries, maybeEntries = []) => {
   await loadReactionRoleRules();
   const suppliedMessage = messageOrChannel?.id && messageOrChannel?.channelId && messageOrChannel?.react
@@ -1840,13 +1059,12 @@ const configureMessageReactionRoles = async (guild, messageOrChannel, messageOrE
   const requiredPermissions = [
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.ReadMessageHistory,
-    PermissionFlagsBits.AddReactions,
     PermissionFlagsBits.ManageMessages
   ];
   if (permissions && !permissions.has(requiredPermissions)) {
-    throw new Error('Dem Bot fehlen in diesem Kanal „Kanal ansehen“, „Nachrichtenverlauf anzeigen“ oder „Reaktionen hinzufügen“.');
+    throw new Error('Dem Bot fehlen in diesem Kanal „Kanal ansehen“, „Nachrichtenverlauf anzeigen“ oder „Nachrichten verwalten“.');
   }
-  const emojiCatalog = await reactionRoleEmojiCatalog(guild);
+  const emojiCatalog = await reactionRoleEmojiCatalog(guild, client);
 
   const configured = [];
   for (const [index, entry] of normalized.entries()) {
@@ -1886,30 +1104,25 @@ const configureMessageReactionRoles = async (guild, messageOrChannel, messageOrE
     .concat(configured);
   try {
     await persistReactionRoleRules();
-    // Reaction Roles use native reactions. Preserve unrelated button rows such
-    // as a Heaven VIP function set that was attached by the Embed Studio.
+    // Studio-Rollen werden als echte Discord-Buttons verschickt. Bestehende
+    // fremde Komponenten (z. B. Heaven VIP) bleiben erhalten.
     const existingRows = (message.components || []).map((row) => row.toJSON?.() || row);
     const preservedRows = existingRows.map((row) => ({
       ...row,
       components: (row.components || []).filter((component) => !String(component.custom_id || component.customId || '').startsWith('fh_rr:'))
     })).filter((row) => row.components.length);
-    if (preservedRows.length !== existingRows.length || existingRows.some((row, index) => (row.components || []).length !== (preservedRows[index]?.components || []).length)) {
-      await message.edit({ components: preservedRows });
-    }
-    for (const rule of configured) {
-      await message.react(rule.emojiId || rule.emojiName);
-    }
+    const buttonRows = buildReactionRoleButtonRows(configured);
+    await message.edit({ components: preservedRows.concat(buttonRows) });
   } catch (error) {
     reactionRoleRules = previousRulesSnapshot;
     await persistReactionRoleRules().catch(() => {});
-    for (const rule of configured) {
-      const addedReaction = message.reactions.cache.find((reaction) => (reaction.emoji.id || reaction.emoji.name) === rule.emojiKey);
-      if (addedReaction?.me) await addedReaction.users.remove(client.user.id).catch(() => {});
-    }
-    for (const rule of previous) {
-      await message.react(rule.emojiId || rule.emojiName).catch(() => {});
-    }
-    throw new Error(`Reaction Roles konnten nicht dauerhaft angelegt werden: ${error?.message || error}`);
+    const existingRows = (message.components || []).map((row) => row.toJSON?.() || row);
+    const restoredRows = existingRows.map((row) => ({
+      ...row,
+      components: (row.components || []).filter((component) => !String(component.custom_id || component.customId || '').startsWith('fh_rr:'))
+    })).filter((row) => row.components.length).concat(buildReactionRoleButtonRows(previous));
+    await message.edit({ components: restoredRows }).catch(() => {});
+    throw new Error(`Rollen-Buttons konnten nicht dauerhaft angelegt werden: ${error?.message || error}`, { cause: error });
   }
   return configured;
 };
@@ -1979,6 +1192,12 @@ const handleReactionRoleButtonUnlocked = async (interaction) => {
   if (!interaction?.isButton?.() || !String(interaction.customId || '').startsWith('fh_rr:')) return false;
   const guild = interaction.guild;
   if (!guild) return false;
+  // Sofort bestätigen (ephemeral), bevor Mitglieder/Rollen geladen werden – die
+  // eigentliche Bestätigung kommt danach per editReply. So verstreicht die
+  // 3-Sekunden-Frist nie und die Rollen-Buttons-Nachricht bleibt unangetastet.
+  if (typeof interaction.deferReply === 'function') {
+    await interaction.deferReply({ ephemeral: true }).catch(() => null);
+  }
   await loadReactionRoleRules();
   const componentMatch = String(interaction.customId || '').match(/^fh_rr:(\d{17,20}):(\d+)$/);
   const storedRule = reactionRoleRules.find((entry) => entry.guildId === guild.id
@@ -2281,7 +1500,7 @@ const listDashboardMembers = async (guildId, options = {}) => {
     pageCount,
     filter,
     sort,
-    activityTrackingSince: memberActivityTrackingSince,
+    activityTrackingSince: getMemberActivityTrackingSince(),
     syncedMembers: guild.members.cache.size,
     guildMemberCount: guild.memberCount || 0,
     syncingMembers: Boolean(memberSync?.syncing),
@@ -2333,8 +1552,8 @@ const getMemberModerationContext = async (guild, member, actorUserId) => {
 
 const enrichMemberIntelligenceWithBoostTimeline = async (guild, member, intelligence = {}) => {
   if (!guild?.id || !member?.id) return intelligence;
-  const snapshot = await getBoostStatusSnapshot(guild).catch(() => null);
-  const boostEvents = Array.isArray(snapshot?.events) ? snapshot.events : [];
+  // Leichter Pfad: nur das Boost-Ledger des Members lesen, kein voller Server-Scan.
+  const boostEvents = await getBoostLedgerMemberEvents(guild.id, member.id).catch(() => []);
   if (!boostEvents.length) return intelligence;
 
   const displayName = member.displayName || member.user?.globalName || member.user?.username || 'Das Mitglied';
@@ -2539,362 +1758,90 @@ const moderateDashboardMember = async (guildId, userId, request = {}, actorUserI
 
 const safeStorageId = (value) => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '_');
 
-const aiMemoryUserDir = (guildId) => path.join(AI_MEMORY_DIR, safeStorageId(guildId), 'users');
-const aiMemoryUserFile = (guildId, userId) => path.join(aiMemoryUserDir(guildId), `${safeStorageId(userId)}.json`);
-const aiMemoryTombstoneKey = (guildId, userId) => `${safeStorageId(guildId)}:${safeStorageId(userId)}`;
-const aiMemoryGuildDir = (guildId) => path.join(AI_MEMORY_DIR, safeStorageId(guildId));
-
-const rewriteJsonLinesWithoutUser = async (fileName, userId) => {
-  const raw = await fs.readFile(fileName, 'utf8').catch(() => '');
-  if (!raw) return 0;
-  let removed = 0;
-  const kept = [];
-  for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let value;
-    try { value = JSON.parse(line); } catch { kept.push(line); continue; }
-    if (String(value?.userId || value?.conversationUserId || '') === String(userId)) {
-      removed += 1;
-      continue;
-    }
-    kept.push(JSON.stringify(value));
-  }
-  if (!removed) return 0;
-  const temporary = `${fileName}.purge-${process.pid}-${Date.now()}`;
-  await fs.writeFile(temporary, kept.length ? `${kept.join('\n')}\n` : '', 'utf8');
-  await fs.rename(temporary, fileName).catch(async () => {
-    await fs.rm(fileName, { force: true });
-    await fs.rename(temporary, fileName);
-  });
-  return removed;
+const normalizeStudioTemplateEmoji = (emoji = null) => {
+  if (!emoji || typeof emoji !== 'object') return undefined;
+  const result = {};
+  if (emoji.id) result.id = String(emoji.id);
+  if (emoji.name) result.name = String(emoji.name);
+  if (emoji.animated) result.animated = true;
+  return result.id || result.name ? result : undefined;
 };
 
-const readJsonFile = async (fileName, fallback = null) => {
-  try {
-    const raw = await fs.readFile(fileName, 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-};
-
-const aiMemoryIsDeleted = (tombstones, guildId, userId, memory) => {
-  const deletedAt = tombstones?.entries?.[aiMemoryTombstoneKey(guildId, userId)]?.deletedAt;
-  if (!deletedAt) return false;
-  return new Date(deletedAt).getTime() >= new Date(memory?.updatedAt || memory?.createdAt || 0).getTime();
-};
-
-const listAiMemories = async (guildId) => {
-  const dirName = aiMemoryUserDir(guildId);
-  const tombstones = await readJsonFile(AI_MEMORY_TOMBSTONES_FILE, { version: 1, entries: {} });
-  let entries = [];
-  try {
-    entries = await fs.readdir(dirName, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const memories = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) {
-      continue;
-    }
-
-    const fileName = path.join(dirName, entry.name);
-    const [memory, stat] = await Promise.all([
-      readJsonFile(fileName, null),
-      fs.stat(fileName).catch(() => null)
-    ]);
-    if (!memory) {
-      continue;
-    }
-    const userId = String(memory.userId || entry.name.replace(/\.json$/i, ''));
-    if (aiMemoryIsDeleted(tombstones, guildId, userId, memory)) continue;
-
-    memories.push({
-      userId,
-      username: String(memory.username || 'Unbekannt'),
-      displayName: String(memory.displayName || memory.username || 'Unbekannt'),
-      facts: Array.isArray(memory.facts) ? memory.facts : [],
-      messageCount: Number(memory.messageCount || 0),
-      updatedAt: memory.updatedAt || stat?.mtime?.toISOString?.() || null,
-      size: stat?.size || 0
-    });
-  }
-
-  return memories.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
-};
-
-const getAiMemory = async (guildId, userId) => {
-  const [memory, tombstones] = await Promise.all([
-    readJsonFile(aiMemoryUserFile(guildId, userId), null),
-    readJsonFile(AI_MEMORY_TOMBSTONES_FILE, { version: 1, entries: {} })
-  ]);
-  if (!memory || aiMemoryIsDeleted(tombstones, guildId, userId, memory)) {
-    return null;
-  }
-
-  return {
-    ...memory,
-    facts: Array.isArray(memory.facts) ? memory.facts : [],
-    messages: Array.isArray(memory.messages) ? memory.messages.slice(-80) : []
-  };
-};
-
-const deleteAiMemory = async (guildId, userId) => {
-  const tombstones = await readJsonFile(AI_MEMORY_TOMBSTONES_FILE, { version: 1, entries: {} });
-  tombstones.version = Math.max(1, Number(tombstones.version || 0));
-  tombstones.entries ||= {};
-  tombstones.entries[aiMemoryTombstoneKey(guildId, userId)] = {
-    guildId: String(guildId),
-    userId: String(userId),
-    deletedAt: new Date().toISOString()
-  };
-  await atomicWriteJson(AI_MEMORY_TOMBSTONES_FILE, tombstones, { backupLimit: 5 });
-  await fs.unlink(aiMemoryUserFile(guildId, userId)).catch(() => {});
-  const guildDir = aiMemoryGuildDir(guildId);
-  let channelEntries = 0;
-  let archiveEntries = 0;
-  const channelFiles = await fs.readdir(path.join(guildDir, 'channels'), { withFileTypes: true }).catch(() => []);
-  for (const entry of channelFiles) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const fileName = path.join(guildDir, 'channels', entry.name);
-    const memory = await readJsonFile(fileName, null);
-    if (!memory || !Array.isArray(memory.messages)) continue;
-    const before = memory.messages.length;
-    memory.messages = memory.messages.filter((item) => (
-      String(item?.authorId || '') !== String(userId)
-      && String(item?.conversationUserId || '') !== String(userId)
-    ));
-    channelEntries += before - memory.messages.length;
-    if (memory.messages.length !== before) {
-      memory.updatedAt = new Date().toISOString();
-      await atomicWriteJson(fileName, memory, { backupLimit: 2 });
-    }
-  }
-  const archiveFiles = await fs.readdir(path.join(guildDir, 'archive'), { withFileTypes: true }).catch(() => []);
-  for (const entry of archiveFiles) {
-    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-    archiveEntries += await rewriteJsonLinesWithoutUser(path.join(guildDir, 'archive', entry.name), userId);
-  }
-  await Promise.all(MEMBER_INTELLIGENCE_DIRS.map((directory) => fs.rm(
-    path.join(directory, safeStorageId(guildId), `${safeStorageId(userId)}.json`),
-    { force: true }
-  ).catch(() => {})));
-  return {
-    deleted: true,
-    userId: String(userId),
-    purgedChannelEntries: channelEntries,
-    purgedArchiveEntries: archiveEntries,
-    purgedDerivedProfile: true
-  };
-};
-
-const generateEmbedAssistantText = async (guildId, payload = {}) => {
-  const guild = client.guilds.cache.get(String(guildId));
-  if (!guild) throw new Error('Server wurde vom Bot nicht gefunden.');
-
-  const cfg = configCache.get(String(guildId)) || await getGuildConfig(String(guildId));
-  const ai = cfg?.aiChat || {};
-  const baseUrl = String(ai.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '').replace(/\/api$/i, '');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 75000);
-  const target = ['title', 'description', 'content'].includes(payload.target) ? payload.target : 'description';
-  const limits = { title: 256, description: 4096, content: 2000 };
-  const modes = {
-    create: 'Schreibe den Text neu anhand der Aufgabe.',
-    improve: 'Verbessere den vorhandenen Text sprachlich, ohne seine Aussage zu verändern.',
-    shorten: 'Kürze den vorhandenen Text deutlich und erhalte alle wichtigen Informationen.',
-    rewrite: 'Formuliere den vorhandenen Text vollständig neu und hochwertiger.'
-  };
-  const tones = {
-    professional: 'professionell, klar und souverän',
-    warm: 'warm, einladend und freundlich',
-    premium: 'hochwertig, selbstbewusst und modern',
-    concise: 'kurz, direkt und leicht verständlich',
-    community: 'locker, menschlich und passend für eine Discord-Community',
-    moderation: 'verbindlich, ruhig und respektvoll'
-  };
-
-  try {
-    const tagsResponse = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-    const tagsData = await tagsResponse.json().catch(() => ({}));
-    const models = Array.isArray(tagsData.models) ? tagsData.models.map((entry) => String(entry.name || entry.model || '')).filter(Boolean) : [];
-    if (!tagsResponse.ok || !models.length) throw new Error('Ollama läuft, aber es wurde kein verfügbares Modell gefunden.');
-    const configuredModel = String(ai.model || '').trim();
-    const model = models.includes(configuredModel) ? configuredModel : models[0];
-    const currentText = String(payload.currentText || '').slice(0, 6000);
-    const instruction = String(payload.instruction || '').slice(0, 800);
-    const context = payload.context && typeof payload.context === 'object' ? payload.context : {};
-    const response = await fetch(`${baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        stream: false,
-        keep_alive: '15m',
-        messages: [
-          {
-            role: 'system',
-            content: `Du bist der professionelle deutsche Text-Assistent für den Discord-Server ${guild.name}. Antworte ausschließlich mit dem fertigen Text, ohne Einleitung, Erklärung, Anführungszeichen oder Markdown-Codeblock. Schreibe grammatikalisch einwandfreies Deutsch und mische keine Sprachen. Erfinde keine Serverdaten. Bewahre Discord-Platzhalter wie {user}, {guild}, {level} und Channel-Mentions unverändert. Das Ergebnis darf maximal ${limits[target]} Zeichen lang sein.`
-          },
-          {
-            role: 'user',
-            content: [
-              modes[payload.mode] || modes.create,
-              `Ziel: ${target}.`,
-              `Stil: ${tones[payload.tone] || tones.professional}.`,
-              instruction ? `Aufgabe: ${instruction}` : '',
-              currentText ? `Vorhandener Text:\n${currentText}` : '',
-              context.title ? `Kontext-Titel: ${String(context.title).slice(0, 256)}` : '',
-              context.description && target !== 'description' ? `Kontext-Beschreibung: ${String(context.description).slice(0, 1200)}` : '',
-              context.content && target !== 'content' ? `Kontext-Nachricht: ${String(context.content).slice(0, 600)}` : ''
-            ].filter(Boolean).join('\n\n')
+const normalizeStudioTemplateComponents = (rows = []) => (Array.isArray(rows) ? rows : [])
+  .map((row = {}) => {
+    const components = (Array.isArray(row.components) ? row.components : [])
+      .map((component = {}) => {
+        const type = Number(component.type || 2);
+        const customId = String(component.customId || component.custom_id || '').slice(0, 100);
+        const label = String(component.label || '').slice(0, 80);
+        const url = String(component.url || '').slice(0, 512);
+        const base = {
+          type,
+          disabled: Boolean(component.disabled)
+        };
+        const emoji = normalizeStudioTemplateEmoji(component.emoji);
+        if (emoji) base.emoji = emoji;
+        if (type === 2) {
+          if (url) {
+            base.style = 5;
+            base.url = url;
+          } else if (customId) {
+            base.style = Math.min(4, Math.max(1, Number(component.style || 2)));
+            base.custom_id = customId;
+          } else {
+            return null;
           }
-        ],
-        options: {
-          temperature: payload.mode === 'shorten' ? 0.35 : 0.65,
-          top_p: 0.9,
-          num_predict: target === 'title' ? 100 : 750
+          if (label) base.label = label;
+          return base;
         }
-      })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(String(data?.error || 'Ollama hat den Text nicht erstellt.'));
-    let text = String(data?.message?.content || data?.response || '')
-      .replace(/<think>[\s\S]*?<\/think>/gi, '')
-      .replace(/^```(?:markdown|text)?\s*/i, '')
-      .replace(/```$/i, '')
-      .trim();
-    if (!text) throw new Error('Ollama hat einen leeren Vorschlag zurückgegeben.');
-    if (text.length > limits[target]) {
-      const clipped = text.slice(0, limits[target]);
-      const boundary = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('! '), clipped.lastIndexOf('? '), clipped.lastIndexOf('\n'));
-      text = (boundary > Math.floor(limits[target] * 0.55) ? clipped.slice(0, boundary + 1) : clipped).trim();
-    }
-    return { text, model, target, characters: text.length };
-  } catch (error) {
-    if (error?.name === 'AbortError') throw new Error('Ollama hat zu lange gebraucht. Prüfe das Modell und versuche es erneut.');
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
-const normalizeSkinRecipeColor = (value, fallback) => {
-  const color = String(value || '').trim();
-  return /^#[0-9a-f]{6}$/i.test(color) ? color.toUpperCase() : fallback;
-};
-
-const normalizeSkinAssistantRecipe = (value = {}, payload = {}) => {
-  const source = value && typeof value === 'object' ? value : {};
-  const styles = ['modern', 'fantasy', 'cyber', 'streetwear', 'minimal'];
-  const archetypes = ['hoodie', 'armor', 'jacket', 'robe', 'suit', 'adventurer'];
-  const patterns = ['clean', 'stripes', 'panels', 'runes', 'gradient', 'asymmetric'];
-  const requestedStyle = styles.includes(payload.style) ? payload.style : 'modern';
-  return {
-    name: String(source.name || 'AI Entwurf').replace(/[<>]/g, '').trim().slice(0, 38) || 'AI Entwurf',
-    style: styles.includes(source.style) ? source.style : requestedStyle,
-    archetype: archetypes.includes(source.archetype) ? source.archetype : 'jacket',
-    pattern: patterns.includes(source.pattern) ? source.pattern : 'panels',
-    detail: payload.detail === 'rich' || payload.detail === 'clean' ? payload.detail : 'balanced',
-    palette: {
-      primary: normalizeSkinRecipeColor(source.palette?.primary, '#20243D'),
-      secondary: normalizeSkinRecipeColor(source.palette?.secondary, '#5865F2'),
-      accent: normalizeSkinRecipeColor(source.palette?.accent, '#8FE8FF'),
-      skin: normalizeSkinRecipeColor(source.palette?.skin, '#B97A56'),
-      hair: normalizeSkinRecipeColor(source.palette?.hair, '#261A19'),
-      eyes: normalizeSkinRecipeColor(source.palette?.eyes, '#75D9FF')
-    },
-    hood: Boolean(source.hood),
-    mask: Boolean(source.mask),
-    gloves: source.gloves !== false,
-    boots: source.boots !== false,
-    glowing: Boolean(source.glowing),
-    summary: String(source.summary || 'AI-gestützter Minecraft-Skin-Entwurf').replace(/[<>]/g, '').trim().slice(0, 160)
-  };
-};
-
-const generateSkinAssistantRecipe = async (guildId, payload = {}) => {
-  const guild = client.guilds.cache.get(String(guildId));
-  if (!guild) throw new Error('Server wurde vom Bot nicht gefunden.');
-  const prompt = String(payload.prompt || '').trim().slice(0, 500);
-  if (prompt.length < 3) throw new Error('Beschreibe den gewünschten Skin etwas genauer.');
-
-  const cfg = configCache.get(String(guildId)) || await getGuildConfig(String(guildId));
-  const ai = cfg?.aiChat || {};
-  const baseUrl = String(ai.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '').replace(/\/api$/i, '');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 75000);
-
-  try {
-    const tagsResponse = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-    const tagsData = await tagsResponse.json().catch(() => ({}));
-    const models = Array.isArray(tagsData.models) ? tagsData.models.map((entry) => String(entry.name || entry.model || '')).filter(Boolean) : [];
-    if (!tagsResponse.ok || !models.length) throw new Error('Ollama läuft, aber es wurde kein verfügbares Modell gefunden.');
-    const configuredModel = String(ai.model || '').trim();
-    const model = models.includes(configuredModel) ? configuredModel : models[0];
-    const style = ['modern', 'fantasy', 'cyber', 'streetwear', 'minimal'].includes(payload.style) ? payload.style : 'automatisch';
-    const detail = ['rich', 'balanced', 'clean'].includes(payload.detail) ? payload.detail : 'balanced';
-    const response = await fetch(`${baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        stream: false,
-        keep_alive: '15m',
-        messages: [
-          {
-            role: 'system',
-            content: 'Du bist ein professioneller Minecraft-Skin-Art-Director. Übersetze die Idee in genau ein JSON-Objekt, ohne Markdown und ohne weiteren Text. Erlaubte Felder: name, style (modern|fantasy|cyber|streetwear|minimal), archetype (hoodie|armor|jacket|robe|suit|adventurer), pattern (clean|stripes|panels|runes|gradient|asymmetric), palette mit primary/secondary/accent/skin/hair/eyes als sechsstellige HEX-Farben, hood, mask, gloves, boots, glowing als Boolean sowie summary. Denke wie ein Skin-Studio: 64x64-UV-Layout, Classic/Slim-lesbare Silhouette, Base-Layer plus echte Outer-Layer-Details für Haare, Kapuze, Jacke, Schulterpads oder Highlights. Erzeuge keine flachen Rechteckflächen, sondern starke Kontraste, Pixel-Schattierung, kleine Highlights und eine harmonische Palette, die im Minecraft-Launcher lesbar bleibt.'
-          },
-          {
-            role: 'user',
-            content: `Skin-Idee: ${prompt}\nGewünschter Stil: ${style}\nDetailgrad: ${detail}\nServer-Kontext: ${guild.name}`
-          }
-        ],
-        options: {
-          temperature: 0.68,
-          top_p: 0.9,
-          num_predict: 360
+        if (!customId) return null;
+        base.custom_id = customId;
+        if (component.placeholder) base.placeholder = String(component.placeholder || '').slice(0, 150);
+        if (component.minValues !== undefined || component.min_values !== undefined) base.min_values = Math.min(25, Math.max(0, Number(component.minValues ?? component.min_values) || 0));
+        if (component.maxValues !== undefined || component.max_values !== undefined) base.max_values = Math.min(25, Math.max(1, Number(component.maxValues ?? component.max_values) || 1));
+        if (Array.isArray(component.options)) {
+          base.options = component.options.slice(0, 25).map((option = {}) => {
+            const normalized = {
+              label: String(option.label || '').slice(0, 100),
+              value: String(option.value || '').slice(0, 100)
+            };
+            if (!normalized.label || !normalized.value) return null;
+            if (option.description) normalized.description = String(option.description || '').slice(0, 100);
+            const optionEmoji = normalizeStudioTemplateEmoji(option.emoji);
+            if (optionEmoji) normalized.emoji = optionEmoji;
+            if (option.default) normalized.default = true;
+            return normalized;
+          }).filter(Boolean);
         }
+        return base;
       })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(String(data?.error || 'Ollama hat keinen Skin-Entwurf erstellt.'));
-    const text = String(data?.message?.content || data?.response || '')
-      .replace(/<think>[\s\S]*?<\/think>/gi, '')
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/```$/i, '')
-      .trim();
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Ollama hat keinen gültigen Skin-Entwurf geliefert.');
-    const recipe = normalizeSkinAssistantRecipe(JSON.parse(jsonMatch[0]), payload);
-    return { recipe, model, provider: 'ollama' };
-  } catch (error) {
-    if (error?.name === 'AbortError') throw new Error('Ollama hat zu lange gebraucht. Der lokale Smart-Generator kann trotzdem verwendet werden.');
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-};
+      .filter(Boolean)
+      .slice(0, 5);
+    return components.length ? { type: Number(row.type || 1), components } : null;
+  })
+  .filter(Boolean)
+  .slice(0, 5);
 
-const buildStudioMessagePayload = async (guild, template = {}) => {
-  const payload = buildEmbedPayload(template, guild);
+const applyStudioTemplateComponents = async (guild, payload, template = {}) => {
   const componentSet = String(template.componentSet || 'none').trim();
   if (componentSet === 'heavenEconomy') {
     const guildConfig = await getCachedGuildConfig(guild.id, guild.name);
     if (!guildConfig?.heavenEconomy?.enabled) {
       throw new Error('Das Funktionsset „Heaven VIP & Coins“ kann erst angehängt werden, wenn das Modul aktiviert ist.');
     }
-    payload.components = buildHeavenEconomyComponents();
+    payload.components = buildHeavenEconomyComponents(guildConfig);
   } else if (componentSet !== 'none' && componentSet !== '') {
     throw new Error('Das ausgewählte Embed-Funktionsset ist nicht verfügbar.');
   } else {
-    payload.components = [];
+    payload.components = normalizeStudioTemplateComponents(template.studioComponents || template.components);
   }
+  return componentSet || 'none';
+};
+
+const buildStudioMessagePayload = async (guild, template = {}) => {
+  template = await materializeOutsideImageTemplate(template);
+  const payload = await buildEmbedPayload(template, guild);
+  const componentSet = await applyStudioTemplateComponents(guild, payload, template);
   return { payload, componentSet: componentSet || 'none' };
 };
 
@@ -2903,25 +1850,15 @@ const sendGuildEmbed = async (guildId, template = {}) => {
   if (!guild) {
     throw new Error('Server wurde vom Bot nicht gefunden.');
   }
+  template = await materializeOutsideImageTemplate(template);
 
   const channel = await getTextChannel(guild, template.channelId);
   if (!channel) {
     throw new Error('Textkanal wurde nicht gefunden oder ist nicht beschreibbar.');
   }
 
-  const payload = buildEmbedPayload(template, guild);
-  const componentSet = String(template.componentSet || 'none').trim();
-  if (componentSet === 'heavenEconomy') {
-    const guildConfig = await getCachedGuildConfig(guild.id, guild.name);
-    if (!guildConfig?.heavenEconomy?.enabled) {
-      throw new Error('Das Funktionsset „Heaven VIP & Coins“ kann erst angehängt werden, wenn das Modul aktiviert ist.');
-    }
-    payload.components = buildHeavenEconomyComponents();
-  } else if (componentSet !== 'none' && componentSet !== '') {
-    throw new Error('Das ausgewählte Embed-Funktionsset ist nicht verfügbar.');
-  } else {
-    payload.components = [];
-  }
+  const payload = await buildEmbedPayload(template, guild);
+  const componentSet = await applyStudioTemplateComponents(guild, payload, template);
   const message = await sendMessageToChannel(guild, channel, payload);
   const reactionRoles = await configureMessageReactionRoles(guild, message, template.reactionRoles || []);
   return {
@@ -2939,25 +1876,15 @@ const editGuildEmbed = async (guildId, template = {}) => {
   if (!guild) {
     throw new Error('Server wurde vom Bot nicht gefunden.');
   }
+  template = await materializeOutsideImageTemplate(template);
 
   const channel = await getTextChannel(guild, template.channelId);
   if (!channel || !template.messageId) {
     throw new Error('Textkanal oder Message-ID fehlt.');
   }
 
-  const payload = buildEmbedPayload(template, guild);
-  const componentSet = String(template.componentSet || 'none').trim();
-  if (componentSet === 'heavenEconomy') {
-    const guildConfig = await getCachedGuildConfig(guild.id, guild.name);
-    if (!guildConfig?.heavenEconomy?.enabled) {
-      throw new Error('Das Funktionsset „Heaven VIP & Coins“ kann erst angehängt werden, wenn das Modul aktiviert ist.');
-    }
-    payload.components = buildHeavenEconomyComponents();
-  } else if (componentSet !== 'none' && componentSet !== '') {
-    throw new Error('Das ausgewählte Embed-Funktionsset ist nicht verfügbar.');
-  } else {
-    payload.components = [];
-  }
+  const payload = await buildEmbedPayload(template, guild);
+  const componentSet = await applyStudioTemplateComponents(guild, payload, template);
   const updated = await editMessageInChannel(guild, channel, template.messageId, payload);
   const reactionRoles = await configureMessageReactionRoles(guild, updated, template.reactionRoles || []);
   return {
@@ -3142,60 +2069,39 @@ const getGuildStats = async (guildId) => {
   };
 };
 
-const MANAGEMENT_SYSTEM_EVENT_INDEX_LIMIT = 100_000;
-const MANAGEMENT_SYSTEM_EVENT_CACHE_MS = 30_000;
-const managementSystemEventCache = new Map();
+const SYSTEM_EVENT_FILTERS = new Set(['all', 'membership', 'boosts', 'channel', 'stage', 'safety', 'subscriptions', 'other']);
 
-const managementSystemEventCategory = (event) => {
-  const eventType = String(event?.type || '');
-  return String(event?.metadata?.category
-    || (eventType.startsWith('boost_') ? 'boosts' : '')
-    || (eventType.startsWith('member_') ? 'membership' : '')
-    || 'other');
-};
-
+// Systemereignisse komplett serverseitig: SQL-Keyset-Paginierung über die
+// partiellen Indizes (kein 30s-Vollcache, kein Materialisieren von bis zu
+// 100k Ereignissen im Speicher). Kategorie-Zähler kommen aus COUNT-Abfragen
+// auf den schmalen Indizes statt aus einer JS-Interation aller Ereignisse.
 const getDashboardSystemEventPage = async (guild, options = {}, managementConfig = null) => {
   if (!guild?.id) return null;
   startServerSystemEventBackfill(guild, managementConfig || {});
-  const cacheKey = String(guild.id);
-  const cached = managementSystemEventCache.get(cacheKey);
-  let fullFeed;
-  if (options.refresh !== true && cached && Date.now() - cached.loadedAt < MANAGEMENT_SYSTEM_EVENT_CACHE_MS) {
-    fullFeed = cached.feed;
-  } else {
-    fullFeed = await getServerSystemEvents({
-      guildId: guild.id,
-      maxEntries: MANAGEMENT_SYSTEM_EVENT_INDEX_LIMIT,
-      retentionDays: 0
-    }).catch(() => ({
-      events: [],
-      scan: {},
-      summary: { total: 0, boosts: 0, joins: 0, ended: 0 }
-    }));
-    fullFeed.events = Array.isArray(fullFeed.events) ? fullFeed.events : [];
-    fullFeed.events.sort((left, right) => Number(right.ts || Date.parse(right.createdAt || '') || 0) - Number(left.ts || Date.parse(left.createdAt || '') || 0));
-    managementSystemEventCache.set(cacheKey, { loadedAt: Date.now(), feed: fullFeed });
-  }
-
-  const allowedFilters = new Set(['all', 'membership', 'boosts', 'channel', 'stage', 'safety', 'subscriptions', 'other']);
   const requestedFilter = String(options.filter || 'all');
-  const filter = allowedFilters.has(requestedFilter) ? requestedFilter : 'all';
+  const filter = SYSTEM_EVENT_FILTERS.has(requestedFilter) ? requestedFilter : 'all';
   const pageSize = Math.min(100, Math.max(10, Number(options.pageSize || 25)));
-  const allEvents = fullFeed.events;
-  const categories = allEvents.reduce((result, event) => {
-    const category = managementSystemEventCategory(event);
-    result[category] = Number(result[category] || 0) + 1;
-    return result;
-  }, {});
-  const filteredEvents = filter === 'all'
-    ? allEvents
-    : allEvents.filter((event) => managementSystemEventCategory(event) === filter);
-  const pageCount = Math.max(1, Math.ceil(filteredEvents.length / pageSize));
-  const page = Math.min(pageCount - 1, Math.max(0, Number(options.page || 0)));
-  const events = filteredEvents
-    .slice(page * pageSize, page * pageSize + pageSize)
-    .map((source) => ({ ...source, metadata: { ...(source.metadata || {}) } }));
+  const beforeCreatedAt = String(options.beforeCreatedAt || '').trim() || null;
+  const beforeMessageId = String(options.beforeMessageId || '').trim() || null;
 
+  const [summary, filteredCount, scan, indexedPage] = await Promise.all([
+    getServerIndexSystemEventCounts({ guildId: guild.id }).catch(() => ({ total: 0, boosts: 0, joins: 0, ended: 0, categories: {} })),
+    getServerIndexSystemEventCounts({ guildId: guild.id, category: filter }).catch(() => ({ total: 0 })),
+    getServerSystemScanSummary(guild.id).catch(() => ({})),
+    // pageSize+1 abfragen: das zusätzliche Element dient NUR der hasMore-
+    // Bestimmung, damit eine exakt volle letzte Seite nicht fälschlich als
+    // „hat mehr“ erscheint.
+    getServerIndexSystemEvents({
+      guildId: guild.id,
+      limit: pageSize + 1,
+      category: filter,
+      beforeCreatedAt,
+      beforeMessageId
+    }).catch(() => [])
+  ]);
+
+  const rawPage = Array.isArray(indexedPage) ? indexedPage : [];
+  const events = rawPage.slice(0, pageSize).map((source) => ({ ...source, metadata: { ...(source.metadata || {}) } }));
   for (const event of events) {
     const member = event.userId ? guild.members.cache.get(String(event.userId)) : null;
     const profileName = member?.user?.globalName || member?.user?.username || member?.displayName || event.userName || '';
@@ -3227,30 +2133,30 @@ const getDashboardSystemEventPage = async (guild, options = {}, managementConfig
     }
   }
 
+  const oldest = events.length ? events[events.length - 1] : null;
+  const totals = summary || {};
   return {
     events,
-    scan: fullFeed.scan || {},
+    scan: scan || {},
     summary: {
-      total: allEvents.length,
-      filteredTotal: filteredEvents.length,
-      boosts: Number(categories.boosts || 0),
-      joins: allEvents.filter((event) => event.type === 'member_joined').length,
-      ended: allEvents.filter((event) => event.type === 'boost_ended' || event.type === 'member_left').length,
-      categories
+      total: Number(totals.total || 0),
+      boosts: Number(totals.boosts || 0),
+      joins: Number(totals.joins || 0),
+      ended: Number(totals.ended || 0),
+      categories: totals.categories || {}
     },
     pagination: {
-      page,
       pageSize,
-      pageCount,
-      total: filteredEvents.length,
-      overallTotal: allEvents.length,
-      filter
+      filter,
+      total: Number(filteredCount?.total || 0),
+      hasMore: rawPage.length > pageSize,
+      next: oldest ? { beforeCreatedAt: oldest.createdAt, beforeMessageId: oldest.messageId } : null
     },
     window: {
-      limit: MANAGEMENT_SYSTEM_EVENT_INDEX_LIMIT,
+      limit: pageSize,
       returned: events.length,
-      indexed: allEvents.length,
-      truncated: allEvents.length >= MANAGEMENT_SYSTEM_EVENT_INDEX_LIMIT
+      indexed: Number(totals.total || 0),
+      truncated: false
     }
   };
 };
@@ -3466,95 +2372,175 @@ const listGuildMessages = async (guildId, channelId, options = {}) => {
   const messageCounter = await getChannelMessageCounterState(guild, channel);
   const limit = Math.min(100, Math.max(10, Number(options.limit || 50)));
   const requestedPage = Math.max(0, Math.trunc(Number(options.page) || 0));
+
+  const serializeLiveChannelMessage = (message) => ({
+    id: String(message.id || ''),
+    content: String(message.content || ''),
+    type: Number(message.type || 0),
+    createdAt: message.createdAt?.toISOString?.() || null,
+    editedAt: message.editedAt?.toISOString?.() || null,
+    pinned: Boolean(message.pinned),
+    url: message.url || messageUrl(guild.id, channel.id, message.id),
+    canEdit: Boolean(client.user?.id && message.author?.id === client.user.id),
+    canDelete: Boolean(actorCanManageMessages && (message.author?.id === client.user?.id || botCanManageMessages)),
+    author: {
+      id: String(message.author?.id || ''),
+      username: String(message.author?.username || ''),
+      displayName: String(message.member?.displayName || message.author?.globalName || message.author?.username || message.author?.id || '').trim() || 'Unbekannt',
+      avatarUrl: message.member?.displayAvatarURL?.({ size: 128 }) || message.author?.displayAvatarURL?.({ size: 128 }) || message.author?.defaultAvatarURL || null,
+      avatar: message.member?.displayAvatarURL?.({ size: 128 }) || message.author?.displayAvatarURL?.({ size: 128 }) || message.author?.defaultAvatarURL || null,
+      fallbackAvatar: message.author?.defaultAvatarURL || null,
+      bot: Boolean(message.author?.bot)
+    },
+    mentions: message.mentions?.users?.map((user) => ({
+      id: user.id,
+      username: String(user.username || '').trim() || (user.id ? `@${user.id}` : ''),
+      displayName: message.mentions?.members?.get?.(user.id)?.displayName || user.globalName || user.username || (user.id ? `@${user.id}` : '')
+    })) || [],
+    attachments: message.attachments.map(serializeDashboardAttachment),
+    embeds: message.embeds.map(serializeDashboardEmbed),
+    stickers: message.stickers.map(serializeDashboardSticker),
+    reactions: message.reactions.cache.map(serializeDashboardReaction),
+    components: serializeDashboardComponents(message)
+  });
+
+  const requestedMessageId = String(options.messageId || '').trim();
+  if (/^\d{15,25}$/.test(requestedMessageId)) {
+    const message = await channel.messages.fetch({ message: requestedMessageId, force: true }).catch(() => null);
+    if (!message) throw new Error('Nachricht wurde nicht gefunden oder ist nicht mehr lesbar.');
+    return {
+      channel: {
+        id: channel.id,
+        name: channel.name || channel.id,
+        topic: channel.topic || '',
+        type: channel.type,
+        isThread: Boolean(channel.isThread?.()),
+        isForumLike: false,
+        isMedia: false,
+        parentId: channel.parentId || null,
+        nsfw: Boolean(channel.nsfw),
+        rateLimitPerUser: Number(channel.rateLimitPerUser || 0),
+        editable: Boolean(!channel.isThread?.() && actorCanManageChannels && botCanManageChannel),
+        supportsMessageCounter: true,
+        messageCounter,
+        url: `https://discord.com/channels/${guild.id}/${channel.id}`
+      },
+      messages: [serializeLiveChannelMessage(message)],
+      nextBefore: null,
+      hasMore: false,
+      storage: 'live-message',
+      pagination: null,
+      fetchedAt: new Date().toISOString()
+    };
+  }
+
+  const buildIndexedChannelResponse = async (indexed, storage) => {
+    const authorCache = new Map();
+    const messages = await Promise.all(indexed.rows.map(async (record) => {
+      const sourceEmbeds = Array.isArray(record.embeds) ? record.embeds : [];
+      const content = String(record.content || '');
+      const mentionIds = extractMentionIdsFromText(content);
+      const author = await resolveIndexedMessageAuthor(guild, channel, record, client, authorCache);
+      const canEdit = Boolean(record.id && author?.id && client.user?.id && author.id === client.user.id);
+      const canDelete = Boolean(actorCanManageMessages && (author?.id === client.user?.id || botCanManageMessages));
+      return {
+        id: String(record.id || ''),
+        content,
+        type: Number(record.type || 0),
+        createdAt: record.createdAt || null,
+        editedAt: record.editedAt || null,
+        pinned: Boolean(record.pinned),
+        url: messageUrl(guild.id, channel.id, record.id),
+        canEdit: canEdit,
+        canDelete: canDelete,
+        author,
+        mentions: await Promise.all(mentionIds.map(async (mentionId) => {
+          const mention = await resolveIndexedMentionProfile(guild, mentionId, client, authorCache);
+          return {
+            id: mention.id,
+            username: mention.username || '',
+            displayName: mention.displayName || ''
+          };
+        })),
+        attachments: Array.isArray(record.attachments)
+          ? record.attachments.map((attachment) => ({
+            id: String(attachment.id || ''),
+            name: attachment.name || 'Datei',
+            url: attachment.url || '',
+            contentType: attachment.contentType || attachment.content_type || attachment.type || '',
+            size: Number(attachment.size || 0)
+          }))
+          : [],
+        embeds: sourceEmbeds.map((embed) => ({
+          title: embed.title || '', description: embed.description || '', url: embed.url || '', type: embed.type || '',
+          color: embed.color || '', image: embed.image || '', thumbnail: embed.thumbnail || '',
+          author: typeof embed.author === 'string' ? embed.author : embed.author?.name || '',
+          authorIcon: embed.author?.iconURL || embed.authorIcon || '',
+          footer: typeof embed.footer === 'string' ? embed.footer : embed.footer?.text || '',
+          footerIcon: embed.footer?.iconURL || embed.footerIcon || '', timestamp: embed.timestamp || null,
+          fields: Array.isArray(embed.fields) ? embed.fields : []
+        })),
+        stickers: (Array.isArray(record.stickers) ? record.stickers : []).map((sticker) => ({
+          ...sticker,
+          url: sticker.url || `https://media.discordapp.net/stickers/${sticker.id}.png?size=160`,
+          previewUrl: sticker.previewUrl || `https://media.discordapp.net/stickers/${sticker.id}.png?size=160`
+        })),
+        reactions: Array.isArray(record.reactions) ? record.reactions : [],
+        components: Array.isArray(record.components) ? record.components : []
+      };
+    }));
+    return {
+      channel: {
+        id: channel.id,
+        name: channel.name || channel.id,
+        topic: channel.topic || '',
+        type: channel.type,
+        isThread: Boolean(channel.isThread?.()),
+        isForumLike: false,
+        isMedia: false,
+        parentId: channel.parentId || null,
+        nsfw: Boolean(channel.nsfw),
+        rateLimitPerUser: Number(channel.rateLimitPerUser || 0),
+        editable: Boolean(!channel.isThread?.() && actorCanManageChannels && botCanManageChannel),
+        supportsMessageCounter: true,
+        messageCounter,
+        url: `https://discord.com/channels/${guild.id}/${channel.id}`
+      },
+      messages,
+      nextBefore: indexed.nextBefore || null,
+      hasMore: Boolean(indexed.hasMore),
+      storage,
+      pagination: storage === 'server-index-pages' ? {
+        page: indexed.page,
+        pageSize: indexed.pageSize,
+        totalMessages: indexed.totalMessages,
+        totalPages: indexed.totalPages,
+        complete: indexed.complete,
+        updatedAt: indexed.updatedAt
+      } : null,
+      fetchedAt: new Date().toISOString()
+    };
+  };
+
   if (requestedPage) {
     const indexed = await getServerIndexChannelPage({ guildId: guild.id, channelId: channel.id, page: requestedPage, pageSize: limit });
     if (indexed.totalMessages > 0) {
-      const authorCache = new Map();
-      const messages = await Promise.all(indexed.rows.map(async (record) => {
-        const content = String(record.content || '');
-        const mentionIds = extractMentionIdsFromText(content);
-        const author = await resolveIndexedMessageAuthor(guild, channel, record, authorCache);
-        const canEdit = Boolean(record.id && author?.id && client.user?.id && author.id === client.user.id);
-        const canDelete = Boolean(actorCanManageMessages && (author?.id === client.user?.id || botCanManageMessages));
-        return {
-          id: String(record.id || ''),
-          content,
-          type: Number(record.type || 0),
-          createdAt: record.createdAt || null,
-          editedAt: record.editedAt || null,
-          pinned: Boolean(record.pinned),
-          url: messageUrl(guild.id, channel.id, record.id),
-          canEdit: canEdit,
-          canDelete: canDelete,
-          author,
-          mentions: await Promise.all(mentionIds.map(async (mentionId) => {
-            const mention = await resolveIndexedMentionProfile(guild, mentionId, authorCache);
-            return {
-              id: mention.id,
-              username: mention.username || '',
-              displayName: mention.displayName || ''
-            };
-          })),
-          attachments: Array.isArray(record.attachments)
-            ? record.attachments.map((attachment) => ({
-              id: String(attachment.id || ''),
-              name: attachment.name || 'Datei',
-              url: attachment.url || '',
-              contentType: attachment.contentType || attachment.content_type || attachment.type || '',
-              size: Number(attachment.size || 0)
-            }))
-            : [],
-          embeds: (Array.isArray(record.embeds) ? record.embeds : []).map((embed) => ({
-            title: embed.title || '', description: embed.description || '', url: embed.url || '', type: embed.type || '',
-            color: embed.color || '', image: embed.image || '', thumbnail: embed.thumbnail || '',
-            author: typeof embed.author === 'string' ? embed.author : embed.author?.name || '',
-            authorIcon: embed.author?.iconURL || embed.authorIcon || '',
-            footer: typeof embed.footer === 'string' ? embed.footer : embed.footer?.text || '',
-            footerIcon: embed.footer?.iconURL || embed.footerIcon || '', timestamp: embed.timestamp || null,
-            fields: Array.isArray(embed.fields) ? embed.fields : []
-          })),
-          stickers: (Array.isArray(record.stickers) ? record.stickers : []).map((sticker) => ({
-            ...sticker,
-            url: sticker.url || `https://media.discordapp.net/stickers/${sticker.id}.png?size=160`,
-            previewUrl: sticker.previewUrl || `https://media.discordapp.net/stickers/${sticker.id}.png?size=160`
-          })),
-          reactions: Array.isArray(record.reactions) ? record.reactions : []
-        };
-      }));
-      return {
-        channel: {
-          id: channel.id,
-          name: channel.name || channel.id,
-          topic: channel.topic || '',
-          type: channel.type,
-          isThread: Boolean(channel.isThread?.()),
-          isForumLike: false,
-          isMedia: false,
-          parentId: channel.parentId || null,
-          nsfw: Boolean(channel.nsfw),
-          rateLimitPerUser: Number(channel.rateLimitPerUser || 0),
-          editable: Boolean(!channel.isThread?.() && actorCanManageChannels && botCanManageChannel),
-          supportsMessageCounter: true,
-          messageCounter,
-          url: `https://discord.com/channels/${guild.id}/${channel.id}`
-        },
-        messages,
-        nextBefore: null,
-        hasMore: false,
-        storage: 'server-index-pages',
-        pagination: {
-          page: indexed.page,
-          pageSize: indexed.pageSize,
-          totalMessages: indexed.totalMessages,
-          totalPages: indexed.totalPages,
-          complete: indexed.complete,
-          updatedAt: indexed.updatedAt
-        },
-        fetchedAt: new Date().toISOString()
-      };
+      return buildIndexedChannelResponse(indexed, 'server-index-pages');
     }
   }
-  const before = String(options.before || '').trim();
+  // Keyset-Pfad: „Ältere Nachrichten laden“ im Kanalindex ohne COUNT/OFFSET.
+  // Nur für reguläre Textkanäle (Threads/Forums bleiben am Live-Discord-Fetch).
+  const beforeCursor = String(options.before || '').trim();
+  if (beforeCursor && !channel.isThread?.() && !isForumLikeChannel(channel)) {
+    const checkpoint = await getServerIndexCheckpoint(guild.id, channel.id);
+    if (checkpoint && Number(checkpoint.indexed_count || 0) > 0) {
+      const indexed = await getServerIndexChannelPage({ guildId: guild.id, channelId: channel.id, beforeMessageId: beforeCursor, pageSize: limit });
+      if (indexed.rows.length) {
+        return buildIndexedChannelResponse(indexed, 'server-index-cursor');
+      }
+    }
+  }
+  const before = beforeCursor;
   const after = String(options.after || '').trim();
   const fetched = await channel.messages.fetch({ limit, ...(before ? { before } : after ? { after } : {}) }).catch((error) => {
     throw new Error(`Nachrichten konnten nicht gelesen werden: ${error?.message || 'Discord verweigert den Zugriff.'}`);
@@ -3627,7 +2613,8 @@ const listGuildMessages = async (guildId, channelId, options = {}) => {
         identifier: reaction.emoji.identifier || reaction.emoji.toString(),
         url: reaction.emoji.imageURL?.({ size: 64, extension: reaction.emoji.animated ? 'gif' : 'png' }) || '',
         count: reaction.count || 0
-      }))
+      })),
+      components: serializeDashboardComponents(message)
       };
     }));
 
@@ -3993,42 +2980,12 @@ const getBotProcessUsage = () => {
   };
 };
 
-const checkOllamaStatus = async () => {
-  const cfg = Array.from(configCache.values()).find((entry) => entry?.aiChat?.enabled !== false);
-  const ai = cfg?.aiChat || {};
-  const baseUrl = String(ai.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '').replace(/\/api$/i, '');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1600);
-
-  try {
-    const response = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-    const data = await response.json().catch(() => ({}));
-    const models = Array.isArray(data.models) ? data.models : [];
-    return {
-      online: response.ok,
-      url: baseUrl,
-      model: String(ai.model || models[0]?.name || models[0]?.model || 'Nicht gewählt'),
-      installedModels: models.length
-    };
-  } catch {
-    return {
-      online: false,
-      url: baseUrl,
-      model: String(ai.model || 'Nicht gewählt'),
-      installedModels: 0
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
 const getLiveStatus = async () => {
   const botProcess = getBotProcessUsage();
   const totalMemory = os.totalmem();
   const freeMemory = os.freemem();
   const usedMemory = Math.max(0, totalMemory - freeMemory);
   const configs = Array.from(configCache.values());
-  const activeAiConfig = configs.find((entry) => entry?.aiChat?.enabled !== false)?.aiChat || {};
   const enabledModules = configs.reduce((sum, cfg) => {
     return sum + featureCards.filter((feature) => getByPath(cfg, `${feature.id}.enabled`) !== false).length;
   }, 0);
@@ -4059,15 +3016,11 @@ const getLiveStatus = async () => {
       processMemoryBytes: botProcess.memoryBytes
     },
     botProcess,
-    ai: await checkOllamaStatus(),
-    webSearch: {
-      enabled: activeAiConfig.webSearchEnabled === true,
-      mode: activeAiConfig.webSearchEnabled === true ? 'Web zuerst' : 'Aus'
-    },
     modules: {
       enabled: enabledModules,
       total: totalModules
     },
+    richPresence: getCustomRichPresenceStatus(),
     serverTime: new Date().toISOString()
   };
 };
@@ -4130,7 +3083,7 @@ const getGuildModuleReadiness = async (guildId) => {
 };
 
 const aiOperationalStatusCache = new Map();
-const getAiOperationalStatus = async (guildId) => {
+const getOperationalStatus = async (guildId) => {
   const key = String(guildId || '');
   const cached = aiOperationalStatusCache.get(key);
   if (cached && Date.now() - cached.at < 5_000) return cached.value;
@@ -4162,7 +3115,8 @@ const getPresenceStatus = (value) => {
 };
 
 const applyPresence = async (cfg = null) => {
-  const first = cfg || activePresenceConfig || configCache.values().next().value || {};
+  const cachedEntry = configCache.values().next().value || null;
+  const first = cfg || activePresenceConfig || cachedEntry?.value || {};
   const statusMessage = first?.general?.statusMessage || 'Discord Bot aktiv';
   const statusType = getPresenceActivityType(first?.general?.statusType);
   const onlineStatus = getPresenceStatus(first?.general?.onlineStatus);
@@ -4233,7 +3187,8 @@ client.once(Events.ClientReady, async () => {
   console.log(`Bot aktiv als ${client.user.tag}`);
 
   await Promise.all(Array.from(client.guilds.cache.values()).map((guild) => getCachedGuildConfig(guild.id, guild.name)));
-  activePresenceConfig = configCache.values().next().value || null;
+  const firstCachedEntry = configCache.values().next().value || null;
+  activePresenceConfig = firstCachedEntry?.value || null;
   await registerSlashCommands();
   await applyPresence();
   for (const guild of client.guilds.cache.values()) {
@@ -4248,6 +3203,15 @@ client.once(Events.ClientReady, async () => {
   loopState.backupTimer = setInterval(() => {
     runAutoBackups().catch(() => {});
   }, 30_000);
+
+  // Lokale Bild-/Asset-Caches regelmäßig aufräumen: Studio-Bilder nach 7 Tagen,
+  // der Embed-Asset-Cache nach 30 Tagen (alte Dateien von gelöschten Designs).
+  setInterval(() => {
+    Promise.all([
+      purgeOrphanLocalImages({ retentionDays: 7 }).catch(() => 0),
+      purgeEmbedAssetCache({ retentionDays: 30 }).catch(() => 0)
+    ]).catch(() => {});
+  }, 24 * 60 * 60 * 1000);
 });
 
 client.on(Events.GuildCreate, async (guild) => {
@@ -4410,7 +3374,7 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  await trackChannelMessageCount(message).catch((error) => {
+  void trackChannelMessageCount(message).catch((error) => {
     console.warn(`[channel-counter] Nachricht konnte nicht gezählt werden: ${error?.message || error}`);
   });
 
@@ -4424,7 +3388,7 @@ client.on(Events.MessageCreate, async (message) => {
     cfg,
     client,
     guild: message.guild,
-    getAiOperationalStatus: () => getAiOperationalStatus(message.guildId)
+    getOperationalStatus: () => getOperationalStatus(message.guildId)
   };
   if (message.author?.bot) {
     await dispatchHook('onBotMessageCreate', context);
@@ -4479,10 +3443,11 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
 });
 
 client.on(Events.AutoModerationActionExecution, async (execution) => {
+  console.log(`[index] AutoModerationActionExecution: userId=${execution?.userId}, action=${execution?.action?.type}, ruleId=${execution?.ruleId}, content=${String(execution?.content || '').slice(0, 100)}`);
   const guild = execution?.guild;
-  if (!guild) return;
+  if (!guild) { console.log('[index] Kein guild im execution – überspringe'); return; }
   const cfg = await getCachedGuildConfig(guild.id, guild.name);
-  if (!cfg) return;
+  if (!cfg) { console.log('[index] Kein cfg für guild', guild.id); return; }
   await dispatchHook('onAutoModerationActionExecution', {
     execution,
     cfg,
@@ -4590,35 +3555,63 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (await handleReactionRoleButton(interaction).catch(async (error) => {
-    recordDiagnosticError?.('reaction-role-button', error);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: 'Die Rolle konnte gerade nicht aktualisiert werden. Bitte versuche es erneut.', ephemeral: true }).catch(() => {});
+  const interactionStartedAt = Date.now();
+  patchInteractionForTimeoutSafety(interaction);
+  try {
+    if (await handleReactionRoleButton(interaction).catch(async (error) => {
+      recordDiagnosticError?.('reaction-role-button', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: 'Die Rolle konnte gerade nicht aktualisiert werden. Bitte versuche es erneut.', ephemeral: true }).catch(() => {});
+      }
+      return true;
+    })) return;
+    // DM-Interaktionen (z. B. Buttons der Inaktivitäts-Erinnerung, die per DM
+    // an Mitglieder gehen) haben KEIN interaction.guildId – die Server-ID steht
+    // dann im customId (fh-inactive:<aktion>:<guildId>:<userId>). Ohne diese
+    // Auflösung würden DM-Buttons nie verarbeitet: kein Feedback, „Knöpfe
+    // funktionieren nicht“.
+    const guildId = interaction.guildId
+      || String(interaction.customId || '').split(':')[2]
+      || '';
+    if (!guildId) {
+      return;
     }
-    return true;
-  })) return;
-  if (!interaction.guildId) {
-    return;
+
+    const cfg = await getCachedGuildConfig(guildId, interaction.guild?.name || 'Server');
+    if (!cfg) {
+      return;
+    }
+
+    const context = {
+      interaction,
+      cfg,
+      client,
+      guild: interaction.guild
+    };
+
+    if (interaction.isChatInputCommand()) {
+      await dispatchHook('onInteractionCreate', context);
+      return;
+    }
+
+    await dispatchHook('onAnyInteraction', context);
+  } finally {
+    // Timing-Telemetrie: Wann wurde die Interaktion bestätigt (Discords
+    // 3-Sekunden-Frist) und wie lange lief der Handler? Verspätete Acker und
+    // langsame Handler landen in der Live-Diagnose (interactions-Block), damit
+    // Blockaden sichtbar werden, bevor „Fallen-Heaven hat nicht rechtzeitig
+    // reagiert“ gemeldet wird.
+    const ackLatencyMs = interaction.__fhAckedAt ? interaction.__fhAckedAt - interactionStartedAt : null;
+    recordInteractionTiming({
+      type: interaction.isChatInputCommand?.() ? 'slash'
+        : interaction.isModalSubmit?.() ? 'modal'
+          : interaction.isButton?.() ? 'button'
+            : typeof interaction.isAnySelectMenu === 'function' && interaction.isAnySelectMenu() ? 'select' : 'other',
+      customId: String(interaction.customId || interaction.commandName || '').slice(0, 80),
+      ackLatencyMs,
+      handlerMs: Date.now() - interactionStartedAt
+    });
   }
-
-  const cfg = await getCachedGuildConfig(interaction.guildId, interaction.guild?.name || 'Server');
-  if (!cfg) {
-    return;
-  }
-
-  const context = {
-    interaction,
-    cfg,
-    client,
-    guild: interaction.guild
-  };
-
-  if (interaction.isChatInputCommand()) {
-    await dispatchHook('onInteractionCreate', context);
-    return;
-  }
-
-  await dispatchHook('onAnyInteraction', context);
 });
 
 client.on(Events.Error, (error) => {
@@ -4626,56 +3619,72 @@ client.on(Events.Error, (error) => {
   console.error('Discord client error', error);
 });
 
+// Rate-Limit-Telemetrie: discord.js wartet Rate-Limits automatisch ab, aber
+// ohne Beobachtung bleibt unsichtbar, WO Request-Spam entsteht. Jeder
+// RateLimited-Event (Route, Methode, Wartezeit, global/local) wird in der
+// Live-Diagnose erfasst, damit die Ursache reduziert werden kann.
+client.rest?.on?.(RESTEvents.RateLimited, (info) => {
+  recordRateLimit(info);
+  try {
+    const route = String(info?.route || info?.path || 'unbekannt');
+    const method = String(info?.method || 'GET').toUpperCase();
+    const waitMs = Math.round(Number(info?.timeout || info?.retryAfter || 0));
+    console.warn(`[discord-rest] Rate-Limit ${method} ${route}${info?.global ? ' (global)' : ''} – warte ${waitMs} ms`);
+  } catch {}
+});
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cookieParser());
 app.use(express.json({ limit: '40mb' }));
 
-const isFallenHeavenLocalDomain = (req) => {
-  const hostHeader = String(req.headers.host || req.get?.('host') || req.hostname || '').toLowerCase();
-  const hostname = hostHeader.split(',')[0].trim().replace(/:\d+$/, '');
-  return FALLEN_HEAVEN_LOCAL_DOMAINS.has(hostname);
-};
-
-app.get('/', (req, res, next) => {
-  if (!isFallenHeavenLocalDomain(req)) {
-    return next();
-  }
-
-  return res.sendFile(path.join(PUBLIC_DIR, 'fallen-heaven', 'index.html'));
-});
-
-app.get('/fallen-heaven/', (_req, res) => {
-  return res.sendFile(path.join(PUBLIC_DIR, 'fallen-heaven', 'index.html'));
-});
-
-app.get(['/fallen-heaven', ...FALLEN_HEAVEN_LEGACY_HTML_PATHS], (_req, res) => {
-  return res.redirect(302, FALLEN_HEAVEN_CANONICAL_PATH);
-});
-
 app.use('/public', express.static(PUBLIC_DIR));
 app.use(express.static(PUBLIC_DIR));
+
+// Timing-sicherer Token-Vergleich (konstante Laufzeit, kein früher Abbruch).
+const controlTokenMatches = (expectedToken, suppliedToken) => {
+  if (!expectedToken || !suppliedToken) return false;
+  const expected = Buffer.from(String(expectedToken));
+  const supplied = Buffer.from(String(suppliedToken));
+  if (expected.length !== supplied.length) return false;
+  return crypto.timingSafeEqual(expected, supplied);
+};
 
 const requireDesktopApp = (req, res, next) => {
   const expectedToken = String(process.env.FALLEN_HEAVEN_CONTROL_TOKEN || '');
   const suppliedToken = String(req.get('x-fallen-heaven-control') || '');
-  if (req.get('x-fallen-heaven-app') !== 'desktop-control-v2' || !expectedToken || suppliedToken !== expectedToken) {
+  if (req.get('x-fallen-heaven-app') !== 'desktop-control-v2' || !controlTokenMatches(expectedToken, suppliedToken)) {
     return res.status(403).json({ ok: false, message: 'Nur die lokale FALLEN-HEAVEN-App darf diese Aktion ausführen.' });
   }
   res.set('x-fallen-heaven-instance', String(process.env.FALLEN_HEAVEN_INSTANCE_ID || 'unknown'));
   return next();
 };
 
+// Health-Endpoint: Loopback-Erlaubnis bleibt für botctl (CLI ohne Token), da er
+// nur unkritische Prozess-/Statusdaten liefert.
 const requireDesktopProbe = (req, res, next) => {
   const expectedToken = String(process.env.FALLEN_HEAVEN_CONTROL_TOKEN || '');
   const suppliedToken = String(req.get('x-fallen-heaven-control') || '');
   const remoteAddress = String(req.socket?.remoteAddress || '');
   const isLoopback = remoteAddress === '::1' || remoteAddress === '127.0.0.1' || remoteAddress === '::ffff:127.0.0.1';
   const appMarkerValid = req.get('x-fallen-heaven-app') === 'desktop-control-v2';
-  const tokenValid = Boolean(expectedToken && suppliedToken === expectedToken);
+  const tokenValid = controlTokenMatches(expectedToken, suppliedToken);
   if (!appMarkerValid || (!tokenValid && !isLoopback)) {
     return res.status(403).json({ ok: false, message: 'Nur die lokale FALLEN-HEAVEN-App darf Diagnosedaten lesen.' });
   }
   res.set('x-fallen-heaven-instance', String(process.env.FALLEN_HEAVEN_INSTANCE_ID || 'external-local-runtime'));
+  return next();
+};
+
+// Sensible Daten (Guild-Configs, Live-Diagnose): Token IMMER verlangen – auch
+// von Loopback. Der Marker-Header allein ist von jedem lokalen Prozess
+// fälschbar und reicht nicht als Zugriffsschutz.
+const requireDesktopSecure = (req, res, next) => {
+  const expectedToken = String(process.env.FALLEN_HEAVEN_CONTROL_TOKEN || '');
+  const suppliedToken = String(req.get('x-fallen-heaven-control') || '');
+  if (req.get('x-fallen-heaven-app') !== 'desktop-control-v2' || !controlTokenMatches(expectedToken, suppliedToken)) {
+    return res.status(403).json({ ok: false, message: 'Nur die lokale FALLEN-HEAVEN-App darf diese Daten lesen.' });
+  }
+  res.set('x-fallen-heaven-instance', String(process.env.FALLEN_HEAVEN_INSTANCE_ID || 'unknown'));
   return next();
 };
 
@@ -4703,9 +3712,10 @@ app.get('/api/app/health', requireDesktopProbe, (_req, res) => {
   });
 });
 
-app.get('/api/app/diagnostics', requireDesktopProbe, async (_req, res) => {
+app.get('/api/app/diagnostics', requireDesktopSecure, async (_req, res) => {
   try {
     const liveDiagnostics = await getLiveDiagnosticsSnapshot({ client, featureDispatch: featureDispatcher.getSnapshot() });
+    liveDiagnostics.counting = getCountingRuntimeSnapshot();
     return res.json({ ok: true, liveDiagnostics });
   } catch (error) {
     recordDiagnosticError('Live-Diagnose', error, { source: 'desktop-api' });
@@ -4716,13 +3726,13 @@ app.get('/api/app/diagnostics', requireDesktopProbe, async (_req, res) => {
   }
 });
 
-app.get('/api/app/guild/:guildId/forum-cleaner', requireDesktopProbe, (req, res) => {
+app.get('/api/app/guild/:guildId/forum-cleaner', requireDesktopSecure, (req, res) => {
   const guild = client.guilds.cache.get(String(req.params.guildId || ''));
   if (!guild) return res.status(404).json({ ok: false, error: 'Server wurde nicht gefunden.' });
   return res.json({ ok: true, status: getForumCleanerSnapshot(guild.id) });
 });
 
-app.get('/api/app/guild/:guildId/emoji-rename-preview', requireDesktopProbe, async (req, res) => {
+app.get('/api/app/guild/:guildId/emoji-rename-preview', requireDesktopSecure, async (req, res) => {
   try {
     const guild = client.guilds.cache.get(String(req.params.guildId || ''));
     if (!guild) return res.status(404).json({ ok: false, error: 'Server wurde nicht gefunden.' });
@@ -4868,12 +3878,95 @@ mountDashboard(app, {
   listDashboardMembers,
   getServerTagTrackerStatus: async (guildId) => getServerTagTrackerSnapshot(guildId),
   getVoiceChatCleanerStatus: async (guildId) => getVoiceChatCleanerSnapshot(guildId),
+  getTempVoiceStatus: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || '')) || null;
+    return getTempVoiceSnapshot(guildId, guild);
+  },
+  removeTempVoiceProfile: async (guildId, userId) => removeTempVoiceProfileImpl(guildId, userId),
+  removeAllTempVoiceProfiles: async (guildId) => removeAllTempVoiceProfilesImpl(guildId),
+  saveTempVoiceInterfaceDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'tempVoice',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveTempVoiceInterfaceDesignImpl({
+        guild,
+        conf: cfg?.tempVoice,
+        template: payload.template || payload
+      });
+      return {
+        patch: { tempVoice: { ...cfg.tempVoice, interfaceDesign: result.design } },
+        result: { design: result.design }
+      };
+    },
+    refresh: async ({ guild, cfg, result }) => {
+      result.refresh = await refreshTempVoiceInterfaces(guild, cfg.tempVoice);
+    }
+  }),
+  getPublicCallVoteStatus: async (guildId) => getPublicCallVoteSnapshot(guildId),
+  getPublicCallVoteLocks: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) return { locks: [] };
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return getPublicCallVoteLocksList(guild, cfg?.publicCallVote || {});
+  },
+  removePublicCallVoteLock: async (guildId, userId = '') => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    return removePublicCallVoteLockImpl({ guild, guildId: guild.id, userId });
+  },
+  savePublicCallVoteDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'publicCallVote',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await savePublicCallVoteDesign({
+        guild,
+        conf: cfg?.publicCallVote,
+        section: payload.section,
+        template: payload.template
+      });
+      return {
+        patch: { publicCallVote: { ...cfg.publicCallVote, design: result.normalizedDesign } },
+        result: { design: result.normalizedDesign, section: result.section }
+      };
+    },
+    // Live-Embeds (Panels + laufende Abstimmungen) sofort mit dem neuen Design
+    // editieren – bevor die Dashboard-Antwort zurückkommt.
+    refresh: async ({ guild, cfg }) => {
+      await refreshPublicCallVoteLive({ guild, conf: cfg.publicCallVote });
+    }
+  }),
+  getGuildVoiceChannel: async (guildId, channelId) => {
+    const guild = client.guilds.cache.get(String(guildId));
+    return guild?.channels?.cache?.get(String(channelId)) || null;
+  },
   getForumCleanerStatus: async (guildId) => getForumCleanerSnapshot(guildId),
   scanForumCleaner: async (guildId) => {
     const guild = client.guilds.cache.get(String(guildId || ''));
     if (!guild) throw new Error('Server wurde nicht gefunden.');
     const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
     return queueForumDeepScan({ guild, conf: cfg?.forumCleaner, source: 'manualDashboard' });
+  },
+  wipeLevelRoles: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return wipeLevelRolesImpl(guild, cfg);
+  },
+  grantLevelRolesToAll: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return grantLevelRolesToAllImpl(guild, cfg);
+  },
+  setMemberLevel: async (guildId, userId, level) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const member = await guild.members.fetch(String(userId || '')).catch(() => null);
+    if (!member) throw new Error('Mitglied wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return setMemberLevelImpl({ guild, member, cfg, level: Number(level) });
   },
   getSteamWorkshopStatus: async (guildId) => getSteamWorkshopSnapshot(guildId),
   syncSteamWorkshop: async (guildId) => {
@@ -4882,22 +3975,29 @@ mountDashboard(app, {
     const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
     return syncSteamWorkshop({ guild, conf: cfg?.steamWorkshop, source: 'manualDashboard' });
   },
-  saveSteamWorkshopDesign: async (guildId, payload = {}) => {
-    const guild = client.guilds.cache.get(String(guildId || ''));
-    if (!guild) throw new Error('Server wurde nicht gefunden.');
-    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+  saveSteamWorkshopDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'steamWorkshop',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
     const template = payload?.template && typeof payload.template === 'object' ? payload.template : payload;
     const embeds = Array.isArray(template?.embeds) && template.embeds.length ? template.embeds : [template?.embed || {}];
     if (embeds.length !== 1) throw new Error('Der Workshop-Katalog verwendet genau ein Embed pro Mod.');
     const sourceEmbed = embeds[0] || {};
     const sourceOutsideImage = String(template?.outsideImageUrl || '').trim();
-    const dataImageMatch = sourceOutsideImage.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
-    const outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
+    const dataImageMatch = sourceOutsideImage.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
+    let outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
     if (sourceOutsideImage.startsWith('data:') && !outsideFile) {
       throw new Error('Das ausgewählte Workshop-Banner ist keine gültige PNG-, JPG-, WEBP- oder GIF-Datei.');
     }
     if (!outsideFile && sourceOutsideImage && !/^https?:\/\/[^\s]+$/i.test(sourceOutsideImage)) {
       throw new Error('Workshop-Banner: Bitte eine vollständige HTTP(S)-Bildadresse oder eine Bilddatei verwenden.');
+    }
+    if (!outsideFile && template?.outsideImageAttachment?.localAsset === true) {
+      const local = await readLocalImage(template.outsideImageAttachment);
+      if (!local) throw new Error('Das lokale Workshop-Banner wurde nicht gefunden. Bitte wähle es erneut aus.');
+      outsideFile = local.buffer;
+      template.outsideImageName = local.name;
     }
     const fields = Array.isArray(sourceEmbed.fields) ? sourceEmbed.fields : [];
     const reservedFields = cfg.steamWorkshop?.showRating !== false ? 1 : 0;
@@ -4943,12 +4043,13 @@ mountDashboard(app, {
         fields
       }
     };
-    const saved = await saveGuildConfig(guild.id, {
-      steamWorkshop: { ...cfg.steamWorkshop, design }
-    });
-    const result = await applySteamWorkshopDesign({ guild, conf: saved.steamWorkshop, design });
-    return { config: saved.steamWorkshop, sync: result.sync };
-  },
+    const result = await applySteamWorkshopDesign({ guild, conf: cfg.steamWorkshop, design });
+    return {
+      patch: { steamWorkshop: { ...cfg.steamWorkshop, design } },
+      result: { sync: result.sync }
+    };
+  }
+  }),
   saveSteamWorkshopItemDesign: async (guildId, workshopId, payload = {}) => {
     const guild = client.guilds.cache.get(String(guildId || ''));
     if (!guild) throw new Error('Server wurde nicht gefunden.');
@@ -4960,11 +4061,17 @@ mountDashboard(app, {
     if (embeds.length !== 1) throw new Error('Ein Workshop-Post verwendet genau ein Embed.');
     const sourceEmbed = embeds[0] || {};
     const sourceOutsideImage = String(template?.outsideImageUrl || '').trim();
-    const dataImageMatch = sourceOutsideImage.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
-    const outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
+    const dataImageMatch = sourceOutsideImage.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
+    let outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
     if (sourceOutsideImage.startsWith('data:') && !outsideFile) throw new Error('Das individuelle Workshop-Banner ist keine gültige PNG-, JPG-, WEBP- oder GIF-Datei.');
     if (!outsideFile && sourceOutsideImage && !/^https?:\/\/[^\s]+$/i.test(sourceOutsideImage)) {
       throw new Error('Individuelles Workshop-Banner: Bitte eine vollständige HTTP(S)-Bildadresse oder eine Bilddatei verwenden.');
+    }
+    if (!outsideFile && template?.outsideImageAttachment?.localAsset === true) {
+      const local = await readLocalImage(template.outsideImageAttachment);
+      if (!local) throw new Error('Das lokale Workshop-Banner wurde nicht gefunden. Bitte wähle es erneut aus.');
+      outsideFile = local.buffer;
+      template.outsideImageName = local.name;
     }
     const fields = Array.isArray(sourceEmbed.fields) ? sourceEmbed.fields : [];
     const reservedFields = cfg.steamWorkshop?.showRating !== false ? 1 : 0;
@@ -5040,6 +4147,27 @@ mountDashboard(app, {
     if (!guild) throw new Error('Server wurde nicht gefunden.');
     return getActivityRaceSnapshot(guild);
   },
+  getCountingStats: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    return getCountingStats(guild);
+  },
+  getCountingLocks: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) return { locks: [] };
+    return getCountingLocksImpl(guild);
+  },
+  removeCountingLock: async (guildId, userId = '') => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    return removeCountingLockImpl({ guild, userId });
+  },
+  resetCounting: async (guildId, actorId = '') => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return resetCounting({ guild, cfg, actorId });
+  },
   previewActivityRaceRoles: async (guildId, payload = {}) => {
     const guild = client.guilds.cache.get(String(guildId || ''));
     if (!guild) throw new Error('Server wurde nicht gefunden.');
@@ -5061,18 +4189,70 @@ mountDashboard(app, {
     const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
     return refreshActivityRace({ guild, conf: { ...cfg.activityRace, generalTimezone: cfg.general?.timezone } });
   },
-  saveActivityRaceDesign: async (guildId, payload = {}) => {
-    const guild = client.guilds.cache.get(String(guildId || ''));
-    if (!guild) throw new Error('Server wurde nicht gefunden.');
-    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+  saveActivityRaceDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'activityRace',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
     const template = payload?.template && typeof payload.template === 'object' ? payload.template : payload;
+    const requestedSection = String(payload?.section || template?.section || '');
     const embeds = Array.isArray(template?.embeds) && template.embeds.length ? template.embeds : [template?.embed || {}];
+    if (requestedSection === 'ping-info') {
+      if (embeds.length > 10) throw new Error('Discord erlaubt maximal 10 Embeds pro Nachricht.');
+      const sourceOutsideImage = String(template?.outsideImageUrl || '').trim();
+      let outsideImageAttachment = template?.outsideImageAttachment && typeof template.outsideImageAttachment === 'object'
+        ? template.outsideImageAttachment
+        : null;
+      if (/^data:image\//i.test(sourceOutsideImage)) {
+        outsideImageAttachment = await saveLocalImage({
+          dataUrl: sourceOutsideImage,
+          name: String(template?.outsideImageName || 'activity-race-ping-info.png')
+        });
+      }
+      if (template?.removeOutsideImage === true) outsideImageAttachment = null;
+      const pingInfoDesign = {
+        content: String(template?.content || '').slice(0, 2000),
+        outsideImageUrl: /^data:image\//i.test(sourceOutsideImage) ? '' : sourceOutsideImage.slice(0, 2048),
+        outsideImageName: String(template?.outsideImageName || outsideImageAttachment?.name || '').slice(0, 120),
+        outsideImageSize: Math.max(0, Number(template?.outsideImageSize || outsideImageAttachment?.size || 0)),
+        outsideImageAttachment,
+        embeds: embeds.slice(0, 10).map((embed) => ({
+          title: String(embed?.title || '').slice(0, 256),
+          url: String(embed?.url || '').slice(0, 2048),
+          description: String(embed?.description || '').slice(0, 4096),
+          color: String(embed?.color || '#6fd8ff').slice(0, 16),
+          authorName: String(embed?.authorName || '').slice(0, 256),
+          authorIconUrl: String(embed?.authorIconUrl || '').slice(0, 2048),
+          thumbnailUrl: String(embed?.thumbnailUrl || '').slice(0, 2048),
+          imageUrl: String(embed?.imageUrl || '').slice(0, 2048),
+          footerText: String(embed?.footerText || '').slice(0, 2048),
+          footerIconUrl: String(embed?.footerIconUrl || '').slice(0, 2048),
+          timestamp: embed?.timestamp === true,
+          fields: (Array.isArray(embed?.fields) ? embed.fields : []).slice(0, 25).map((field) => ({
+            name: String(field?.name || '').slice(0, 256),
+            value: String(field?.value || '').slice(0, 1024),
+            inline: field?.inline === true
+          }))
+        }))
+      };
+      await buildStudioEmbedPayload(await materializeOutsideImageTemplate(pingInfoDesign), guild);
+      return {
+        patch: { activityRace: { ...cfg.activityRace, panelChannelId: String(template?.channelId || cfg.activityRace?.panelChannelId || ''), pingInfoDesign } },
+        result: { panel: null, refreshPingInfo: true }
+      };
+    }
     if (embeds.length !== 1) throw new Error('Die Aktivitäts-Liga verwendet genau ein automatisch aktualisiertes Embed.');
     const sourceEmbed = embeds[0] || {};
     const sourceOutsideImage = String(template?.outsideImageUrl || '').trim();
-    const dataImageMatch = sourceOutsideImage.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
-    const outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
+    const dataImageMatch = sourceOutsideImage.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
+    let outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
     if (sourceOutsideImage.startsWith('data:') && !outsideFile) throw new Error('Das ausgewählte Außenbild ist keine gültige PNG-, JPG-, WEBP- oder GIF-Datei.');
+    if (!outsideFile && template?.outsideImageAttachment?.localAsset === true) {
+      const local = await readLocalImage(template.outsideImageAttachment);
+      if (!local) throw new Error('Das lokale Außenbild wurde nicht gefunden. Bitte wähle es erneut aus.');
+      outsideFile = local.buffer;
+      template.outsideImageName = local.name;
+    }
     if (!outsideFile && !template?.outsideImageAttachment && sourceOutsideImage
       && String(template?.content || '').length + sourceOutsideImage.length + 1 > 2_000) {
       throw new Error('Nachricht und Außenbild-Link dürfen zusammen maximal 2.000 Zeichen enthalten.');
@@ -5118,23 +4298,35 @@ mountDashboard(app, {
         fields: Array.isArray(sourceEmbed.fields) ? sourceEmbed.fields : []
       }
     };
+    const section = ['weekly', 'monthly'].includes(requestedSection) ? requestedSection : 'daily';
     const result = await applyActivityRacePanelDesign({
       guild,
       conf: { ...cfg.activityRace, generalTimezone: cfg.general?.timezone },
       panelDesign,
+      section,
       panelChannelId: template?.channelId || cfg.activityRace?.panelChannelId,
       outsideFile,
       outsideFileName: template?.outsideImageName,
       removeOutsideImage: template?.removeOutsideImage === true
     });
-    const activityRace = {
-      ...cfg.activityRace,
-      panelChannelId: result.panelChannelId,
-      panelDesign: result.panelDesign
+    const designKey = result.panelDesignKey;
+    return {
+      patch: {
+        activityRace: {
+          ...cfg.activityRace,
+          panelChannelId: result.panelChannelId,
+          [designKey]: result.panelDesign
+        }
+      },
+      result: { panel: result.panel }
     };
-    const saved = await saveGuildConfig(guild.id, { activityRace });
-    return { config: saved.activityRace, panel: result.panel };
   },
+    refresh: async ({ guild, cfg, result }) => {
+      if (!result.refreshPingInfo) return;
+      const refreshed = await refreshActivityRace({ guild, conf: { ...cfg.activityRace, generalTimezone: cfg.general?.timezone } });
+      result.panel = refreshed.panel;
+    }
+  }),
   previewEmojiRename: async (guildId, payload = {}) => {
     const guild = client.guilds.cache.get(String(guildId || ''));
     if (!guild) throw new Error('Server wurde nicht gefunden.');
@@ -5183,6 +4375,34 @@ mountDashboard(app, {
       actorId
     });
   },
+  getBoostTopStatus: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id));
+    return getBoostTopStatus(guild, cfg?.boostRoles);
+  },
+  refreshBoostTopPanel: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id));
+    return refreshBoostTopPanel({ guild, conf: cfg?.boostRoles });
+  },
+  saveBoostTopDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'boostTop',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveBoostTopDesign({ guild, conf: cfg?.boostRoles, template: payload.template, channelId: payload.channelId });
+      const patch = { boostRoles: { ...cfg.boostRoles, boostTopChannelId: result.channelId, boostTopTemplate: result.template } };
+      if (payload.boostTopPlaceName1) patch.boostRoles.boostTopPlaceName1 = String(payload.boostTopPlaceName1).slice(0, 256);
+      if (payload.boostTopPlaceName2) patch.boostRoles.boostTopPlaceName2 = String(payload.boostTopPlaceName2).slice(0, 256);
+      if (payload.boostTopPlaceName3) patch.boostRoles.boostTopPlaceName3 = String(payload.boostTopPlaceName3).slice(0, 256);
+      return {
+        patch,
+        result: { panel: result.panel }
+      };
+    }
+  }),
   getHeavenEconomyAdmin: async (guildId, options = {}) => {
     const guild = client.guilds.cache.get(String(guildId || ''));
     if (!guild) throw new Error('Server wurde nicht gefunden.');
@@ -5201,27 +4421,352 @@ mountDashboard(app, {
     const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
     return reconcileHeavenEconomyBoostMilestones({ guild, cfg, actorId, refreshMembers: true, source: 'manual' });
   },
+  getVipPanelStatus: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return getVipPanelStatus(guild, cfg);
+  },
+  refreshVipPanels: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return refreshVipPanels({ guild, cfg });
+  },
+  saveVipPanelDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'vipPanel',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveVipPanelDesign({
+        guild,
+        cfg,
+        template: payload.template,
+        channelId: payload.channelId || payload.template?.channelId
+      });
+      return {
+        patch: { heavenEconomy: { ...cfg.heavenEconomy, vipPanelChannelId: result.channelId, vipPanelTemplate: result.template } },
+        result: { panels: result.panels }
+      };
+    }
+  }),
+  saveHeavenEconomyPanelDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'economyPanel',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveHeavenEconomyPanelDesignImpl({
+        guild,
+        cfg,
+        template: payload.template,
+        channelId: payload.channelId || payload.template?.channelId
+      });
+      return {
+        patch: { heavenEconomy: { ...cfg.heavenEconomy, panelChannelId: result.channelId, panelTemplate: result.template } },
+        result: { liveUpdated: result.liveUpdated, messageId: result.messageId, refreshError: result.refreshError }
+      };
+    }
+  }),
+  saveEconomyDmDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'economyDm',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveEconomyDmDesignImpl({
+        guild,
+        cfg,
+        section: payload.section,
+        template: payload.template
+      });
+      return {
+        patch: { heavenEconomy: { ...cfg.heavenEconomy, dmDesigns: result.normalizedDesign } },
+        result: { design: result.normalizedDesign, section: result.section }
+      };
+    }
+  }),
+  syncVipSeparatorRole: (guildId) => (async () => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return syncVipSeparatorRole({ guild, cfg });
+  })(),
+  saveVerifyPanelDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'verifyPanel',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveVerifyPanelDesignImpl({
+        guild,
+        cfg,
+        template: payload.template || payload
+      });
+      return {
+        patch: {
+          memberVerify: {
+            ...cfg.memberVerify,
+            panelChannelId: result.channelId || cfg.memberVerify?.panelChannelId,
+            panelTemplate: result.template
+          }
+        },
+        result: { panel: result.panel }
+      };
+    }
+  }),
+  saveLevelsPanelDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'levelsPanel',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveLevelsPanelDesignImpl({
+        guild,
+        cfg,
+        template: payload.template || payload
+      });
+      return {
+        patch: {
+          levels: {
+            ...cfg.levels,
+            levelRolesPanelChannelId: result.channelId || cfg.levels?.levelRolesPanelChannelId,
+            panelDesign: result.panelDesign
+          }
+        },
+        result: {
+          panel: result.panel ? { id: String(result.panel.id || ''), channelId: String(result.panel.channelId || '') } : null,
+          status: result.status || null
+        }
+      };
+    }
+  }),
+  saveCountingPanelDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'countingPanel',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveCountingPanelDesignImpl({
+        guild,
+        cfg,
+        template: payload.template || payload
+      });
+      return {
+        patch: {
+          counting: {
+            ...cfg.counting,
+            statusChannelId: result.channelId || cfg.counting?.statusChannelId,
+            panelDesign: result.panelDesign
+          }
+        },
+        result: {
+          panel: result.panel ? { id: String(result.panel.id || ''), channelId: String(result.panel.channelId || '') } : null,
+          status: result.status || null
+        }
+      };
+    }
+  }),
+  saveCountingDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'countingDm',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveCountingDesignImpl({
+        guild,
+        conf: cfg,
+        section: payload.section,
+        template: payload.template
+      });
+      return {
+        patch: { counting: { ...cfg.counting, dmDesigns: result.normalizedDesign } },
+        result: { design: result.normalizedDesign, section: result.section }
+      };
+    }
+  }),
+  saveLevelUpInfoDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'levelUpInfo',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveLevelUpInfoDesignImpl({
+        guild,
+        cfg,
+        template: payload.template || payload
+      });
+      const templates = Array.isArray(cfg.embeds?.templates) ? cfg.embeds.templates : [];
+      return {
+        patch: {
+          embeds: {
+            ...(cfg.embeds || {}),
+            templates: templates.some((entry) => entry?.id === 'level-up-info')
+              ? templates.map((entry) => entry?.id === 'level-up-info' ? { ...entry, ...result.design } : entry)
+              : templates.concat([result.design])
+          },
+          // Kanal gewählt → Info-Embed automatisch aktivieren (wie beim
+          // Bot-Updates-Panel), damit die Nachricht wirklich erscheint.
+          levels: {
+            ...(cfg.levels || {}),
+            ...(result.status?.autoEnabled === true ? { levelUpInfoEnabled: true } : {}),
+            ...(result.status?.channelId ? { levelUpInfoChannelId: result.status.channelId } : {})
+          }
+        },
+        result: { status: result.status || null }
+      };
+    },
+    response: (saved, result) => ({ config: saved.embeds, levels: saved.levels, ...result })
+  }),
+  uploadStudioImage: async (guildId, payload = {}) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const attachment = await saveLocalImage({
+      dataUrl: String(payload?.dataUrl || payload?.outsideImageUrl || ''),
+      name: String(payload?.name || 'bild.png')
+    });
+    return { attachment };
+  },
+  saveBotUpdatesDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'botUpdates',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveBotUpdatesDesignImpl({
+        guild,
+        cfg,
+        template: payload.template || payload,
+        // Der Renderer schickt den Kanal in template.channelId – beide Stellen akzeptieren.
+        channelId: payload.channelId || payload.template?.channelId || ''
+      });
+      return {
+        patch: {
+          botUpdates: {
+            ...cfg.botUpdates,
+            channelId: result.channelId || cfg.botUpdates?.channelId || '',
+            enabled: cfg.botUpdates?.enabled === true || Boolean(result.channelId),
+            design: result.design || cfg.botUpdates?.design || null
+          }
+        },
+        result: { panel: result.panel, changelog: getLatestChangelogEntry()?.changes || [], status: result.status || null }
+      };
+    }
+  }),
   verifyBoostCount: async (guildId, payload = {}, actorId = '') => {
     const guild = client.guilds.cache.get(String(guildId || ''));
     if (!guild) throw new Error('Server wurde nicht gefunden.');
     const cfg = await Promise.resolve(getCachedGuildConfig(guild.id));
     return verifyBoostCountFromDiscord({ guild, conf: cfg?.boostRoles, userId: payload.userId, actorId });
   },
+  getInactiveReminderStatus: async (guildId, { page = 0, pageSize = 25 } = {}) => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    const snapshot = getInactiveReminderSnapshotImpl(guild.id, cfg, { page: Number(page) || 0, pageSize: Number(pageSize) || 25 });
+    // Einträge mit echtem Avatar + Anzeigenamen anreichern (wie Mitgliederliste)
+    // – nur aus dem Gateway-Cache, keine REST-Calls.
+    const members = guild.members?.cache || new Map();
+    snapshot.entries = (snapshot.entries || []).map((entry) => {
+      const member = members.get(String(entry.userId));
+      const user = member?.user || null;
+      let avatarUrl = '';
+      if (user?.avatar) avatarUrl = `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64`;
+      else if (user?.displayAvatarURL) { try { avatarUrl = user.displayAvatarURL({ size: 64 }); } catch {} }
+      return {
+        ...entry,
+        avatarUrl,
+        displayName: member?.displayName || entry.username || 'Mitglied'
+      };
+    });
+    return snapshot;
+  },
+  cleanupInactiveReminderDms: async (guildId) => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return cleanupRespondedReminderDmsImpl({ guild, cfg });
+  },
+  sendManualInactiveReminder: async (guildId, userId = '') => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return sendManualReminderDmImpl({ guild, userId: String(userId || '').trim(), conf: cfg });
+  },
+  runInactiveReminderScan: async (guildId, actorId = '') => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    // Legacy-Endpunkt bleibt kompatibel, ist aber sicher nur noch eine Vorschau.
+    // Echter Versand läuft ausschließlich über /send mit expliziten userIds.
+    return runInactiveReminderScanImpl({ guild, conf: cfg, source: 'legacy-preview', dryRun: true });
+  },
+  runInactiveReminderPreview: async (guildId, actorId = '') => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    // Vorschau (dryRun): liest nur, sendet NICHTS und verändert keine Daten.
+    // Bewusst OHNE Single-Flight – darf auch während eines laufenden Scans
+    // einen unverfälschten Blick auf die Kandidaten liefern.
+    return runInactiveReminderScanImpl({ guild, conf: cfg, source: 'preview', dryRun: true });
+  },
+  runInactiveReminderSend: async (guildId, actorId = '', userIds = []) => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    const ids = (Array.isArray(userIds) ? userIds : []).map((id) => String(id)).filter(Boolean);
+    if (!ids.length) return { status: 'ok', sent: 0, candidates: 0, skipped: 0, message: 'Keine Mitglieder ausgewählt.' };
+    // Versand nur für die ausdrücklich ausgewählten IDs, pro Server serialisiert.
+    return runInactiveReminderScanSafeImpl({ guild, conf: cfg, source: 'manual-selected', userIds: ids });
+  },
+  saveInactiveReminderDesign: (guildId, payload = {}) => persistEmbedDesign({
+    guild: mustGetGuild(guildId),
+    key: 'inactiveReminder',
+    payload,
+    save: async ({ guild, cfg, payload }) => {
+      const result = await saveInactiveReminderDesignImpl({
+        guild,
+        conf: cfg,
+        template: payload.template || payload
+      });
+      return {
+        patch: { inactiveReminder: { ...cfg.inactiveReminder, dmDesign: result.normalizedDesign } },
+        result: { design: result.normalizedDesign, section: result.section }
+      };
+    }
+  }),
+  deleteReminderDm: async (guildId, userId = '') => {
+    const guild = mustGetGuild(guildId);
+    return deleteReminderDmImpl({ guild, userId, client });
+  },
+  deleteAllReminderDms: async (guildId) => {
+    const guild = mustGetGuild(guildId);
+    return deleteAllReminderDmsImpl({ guild, client });
+  },
+  getRoleSaverStatus: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return getRoleSaverStatusImpl(guild, cfg);
+  },
+  getVoiceLogImportStatus: async (guildId) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return getVoiceLogSnapshotImpl(guild.id, cfg);
+  },
+  runVoiceLogBackfill: async (guildId) => {
+    const guild = mustGetGuild(guildId);
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    return runVoiceLogBackfillImpl({ guild, conf: cfg, source: 'manual' });
+  },
+  getVoiceLogEvents: async (guildId, options) => {
+    const guild = client.guilds.cache.get(String(guildId || ''));
+    if (!guild) throw new Error('Server wurde nicht gefunden.');
+    const cfg = await Promise.resolve(getCachedGuildConfig(guild.id, guild.name));
+    const channelId = cfg?.voiceLogImport?.channelId || cfg?.voiceLogImport?.effectiveChannelId || '';
+    if (!channelId) return { events: [], cursor: null, hasMore: false };
+    return getVoiceLogEventsPageImpl(guild.id, channelId, options);
+  },
+  getSavedRolesForMember: async (guildId, userId) => getSavedRolesForMemberImpl(guildId, userId),
+  clearSavedRolesForMember: async (guildId, userId) => clearSavedRolesForMemberImpl(guildId, userId),
   getDashboardMember,
   getMemberIntelligenceStatus,
   moderateDashboardMember,
   getDashboardRole,
   updateDashboardRole,
-  generateEmbedAssistantText,
-  generateSkinAssistantRecipe,
   sendGuildEmbed,
   editGuildEmbed,
   createGuildThread,
-  listAiMemories,
-  getAiMemory,
-  deleteAiMemory,
-  getLiveStatus,
-  isDiscordReady: () => client.isReady(),
+    getLiveStatus,
+    getCustomRichPresenceStatus,
+    reconnectCustomRichPresence,
+    isDiscordReady: () => client.isReady(),
   systemActions: {
     status: getSystemStatus,
     start: startSystem,
@@ -5256,43 +4801,7 @@ const startHttpListener = (port, label) => {
   return server;
 };
 
-const startHttpsListener = (port, label) => {
-  if (!existsSync(LOCAL_HTTPS_PFX)) {
-    console.log(`HTTPS nicht aktiv: Zertifikat fehlt (${LOCAL_HTTPS_PFX}).`);
-    console.log('Fuehre setup-fallen-heaven-https.ps1 aus, um https://www.fallen-heaven-discord-server.de/ zu aktivieren.');
-    return null;
-  }
-
-  const server = https.createServer(
-    {
-      pfx: readFileSync(LOCAL_HTTPS_PFX),
-      passphrase: LOCAL_HTTPS_PFX_PASSWORD
-    },
-    app
-  );
-
-  server.listen(port, () => {
-    console.log(`${label} erreichbar: https://localhost${Number(port) === 443 ? '' : `:${port}`}`);
-  });
-
-  server.on('error', (error) => {
-    console.error(`${label} HTTPS Port ${port} konnte nicht gestartet werden:`, error?.message || error);
-  });
-
-  return server;
-};
-
 startHttpListener(PORT, 'Dashboard');
-
-const PUBLIC_WEB_PORT = Number(process.env.PUBLIC_WEB_PORT || 0);
-if (PUBLIC_WEB_PORT && PUBLIC_WEB_PORT !== PORT) {
-  startHttpListener(PUBLIC_WEB_PORT, 'FALLEN HEAVEN Webseite');
-}
-
-const PUBLIC_HTTPS_PORT = Number(process.env.PUBLIC_HTTPS_PORT || 0);
-if (PUBLIC_HTTPS_PORT) {
-  startHttpsListener(PUBLIC_HTTPS_PORT, 'FALLEN HEAVEN sichere Webseite');
-}
 
 const bootstrap = async () => {
   const dataMigration = await migrateDataGenerationV4();

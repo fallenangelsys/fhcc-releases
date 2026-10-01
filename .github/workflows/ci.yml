@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Quality Gate
+        run: node scripts/quality-gate.cjs
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Unit Tests
+        run: npx vitest run
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Lint
+        run: npx eslint src/ desktop/renderer/app-editor.js desktop/renderer/module-config-inputs.js desktop/renderer/counting-panel.js desktop/renderer/inactive-reminder-panel.js desktop/renderer/levels-panel.js
+        continue-on-error: true
+
+  smoke-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        suite:
+          - channel-order
+          - feature-dispatcher
+          - reaction-role-buttons
+          - workspace-forum-timeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Smoke Test - ${{ matrix.suite }}
+        run: node scripts/${{ matrix.suite }}-smoke.mjs

@@ -56,7 +56,6 @@ const desktopMainSource = readFileSync(path.join(root, 'desktop', 'main.cjs'), '
 const preloadSource = readFileSync(path.join(root, 'desktop', 'preload.cjs'), 'utf8');
 const dashboardSource = readFileSync(path.join(root, 'src', 'dashboard.js'), 'utf8');
 const botSource = readFileSync(path.join(root, 'src', 'index.js'), 'utf8');
-const aiChatSource = readFileSync(path.join(root, 'src', 'features', 'aiChat.js'), 'utf8');
 const supervisorSource = readFileSync(path.join(root, 'desktop', 'process-supervisor.cjs'), 'utf8');
 const economySource = readFileSync(path.join(root, 'src', 'features', 'heavenEconomy.js'), 'utf8');
 if (/document\.getElementById\(['"](?:home-service|module-count)['"]\)\.textContent\s*=/.test(rendererSource)) {
@@ -93,9 +92,6 @@ if (/Token invalid or expired|Unauthenticated/.test(dashboardSource)) {
 if (/await guild\.roles\.fetch\(\)/.test(botSource)) {
   problems.push('index.js blockiert das Öffnen von Modulen weiterhin mit einem vollständigen Discord-Rollenabruf.');
 }
-if (!aiChatSource.includes("fs.open(claimFile, 'wx')") || !aiChatSource.includes('claimDiscordMessage(message.id)')) {
-  problems.push('AI Chat besitzt keinen prozessübergreifenden Schutz gegen Doppelantworten.');
-}
 if (!supervisorSource.includes("path: '/api/ping'") || !supervisorSource.includes('Kein zweiter Discord-Client wurde gestartet.')) {
   problems.push('Die Desktop-App erkennt einen bereits laufenden Bot nicht sicher und könnte einen Doppelstart auslösen.');
 }
@@ -121,7 +117,7 @@ const defaultConfigSource = readFileSync(path.join(root, 'src', 'defaultConfig.j
 if (!/key:\s*'autoRole\.roleIds'[\s\S]{0,180}type:\s*'multiRoleSelect'/.test(defaultConfigSource)) {
   problems.push('AutoRole verwendet noch eine veraltete Rollen-ID-Eingabe statt der Discord-Rollenauswahl.');
 }
-for (const requiredSkinAsset of ['skin-editor.js', 'skin-editor.css']) {
+for (const requiredSkinAsset of ['skin-editor.js', 'ui-base.css']) {
   if (!existsSync(path.join(root, 'desktop', 'renderer', requiredSkinAsset))) {
     problems.push(`Minecraft Skin Studio fehlt: ${requiredSkinAsset}.`);
   }

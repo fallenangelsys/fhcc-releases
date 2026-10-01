@@ -147,18 +147,10 @@
       .fh-preboot-bar i { width: 100%; transform: none; }
     }
   </style>
-  <link rel="stylesheet" href="styles.css?v=3.9.66">
-<link rel="stylesheet" href="live-diagnostics.css">
-<link rel="stylesheet" href="live-diagnostics-v2.css" data-live-diagnostics-v2>
-  <link rel="stylesheet" href="public-pages.css">
-  <link rel="stylesheet" href="member-intelligence-v2.css">
-  <link rel="stylesheet" href="modern-ui-v5.css">
-  <link rel="stylesheet" href="discord-reference-v7.css?v=3.9.66">
-  <link rel="stylesheet" href="discord-reference-v8.css?v=3.9.66">
-  <link rel="stylesheet" href="skin-editor.css?v=3.9.66">
-  <link rel="stylesheet" href="ui-quality-v9.css?v=3.9.66">
-  <link rel="stylesheet" href="server-management-v2.css?v=3.9.66">
-</head>
+<link rel="stylesheet" href="ui-base.css?v=3.9.289" data-live-diagnostics-v2>
+  <link rel="stylesheet" href="ui-aurora.css?v=3.9.289">
+  <link rel="stylesheet" href="ui-system.css?v=3.9.289">
+  </head>
 <body data-theme="dark" class="auth-restoring">
   <div class="app-shell">
     <header class="titlebar">
@@ -245,6 +237,7 @@
           <span><b>Mit Discord fortfahren</b><small>Sicher über OAuth2 verbinden</small></span>
           <svg class="login-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"></path></svg>
         </button>
+        <button id="open-secure-setup" class="access-setup-trigger" type="button"><svg viewBox="0 0 24 24" aria-hidden="true" width="14" height="14"><path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-5"></path></svg>Sichere Einrichtung öffnen</button>
         <div class="access-session-state">
           <span><i></i><b id="login-session-status">Gespeicherte Sitzung wird geprüft</b></span>
           <small>Gespeicherte Sitzungen werden beim Start geprüft und sonst erneuert.</small>
@@ -258,48 +251,7 @@
     </section>
 
     <main class="main-stage">
-      <div class="public-nav-backdrop" aria-hidden="true"></div>
 
-      <header class="public-nav" aria-label="Hauptnavigation">
-        <button class="public-brand" data-public-target="home" aria-label="FALLEN HEAVEN">
-          <img src="assets/fallen-heaven-app-icon.png" alt="">
-          <span>FALLEN HEAVEN</span>
-        </button>
-        <nav class="public-links">
-          <button class="public-link" data-login="true">Dashboard</button>
-          <div class="nav_dd w-dropdown">
-            <button class="nav_dd_trigger w-dropdown-toggle" aria-expanded="false">Community <svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg></button>
-            <div class="nav_dd_list is-discover w-dropdown-list">
-              <div class="dropdown-panel">
-                <div class="dropdown-group"><p>Ressourcen</p><button data-public-target="community">Server verwalten</button><button data-public-target="members">Member Intelligence</button><button data-public-target="ai">AI Chat</button></div>
-                <img class="dropdown-decor is-discover" src="assets/discord-nav-newspaper.webp" alt="">
-              </div>
-            </div>
-          </div>
-          <div class="nav_dd w-dropdown">
-            <button class="nav_dd_trigger w-dropdown-toggle" aria-expanded="false">Sicherheit <svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg></button>
-            <div class="nav_dd_list is-safety w-dropdown-list">
-              <div class="dropdown-panel dropdown-grid">
-                <div class="dropdown-group"><p>Schutz</p><button data-public-target="antiraid">Anti-Raid</button><button data-public-target="moderation">Moderation</button><button data-public-target="logs">Audit-Logs</button></div>
-                <div class="dropdown-group"><p>Zugriff</p><button data-public-target="permissions">Owner-Prüfung</button><button data-public-target="community">Server verwalten</button><button data-public-target="service">Bot-Service</button></div>
-                <img class="dropdown-decor is-safety" src="assets/discord-nav-egg.webp" alt="">
-              </div>
-            </div>
-          </div>
-          <div class="nav_dd w-dropdown">
-            <button class="nav_dd_trigger w-dropdown-toggle" aria-expanded="false">Tools <svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg></button>
-            <div class="nav_dd_list is-tools w-dropdown-list">
-              <div class="dropdown-panel dropdown-grid">
-                <div class="dropdown-group"><p>Content</p><button data-public-target="embeds">Embed Studio</button><button data-public-target="threads">Threads</button><button data-public-target="templates">Vorlagen</button></div>
-                <div class="dropdown-group"><p>System</p><button data-public-target="system">Systemstatus</button><button data-public-target="logs">Protokolle</button></div>
-                <img class="dropdown-decor is-tools" src="assets/discord-nav-clyde.webp" alt="">
-              </div>
-            </div>
-          </div>
-          <button class="public-link" data-public-target="support">Support</button>
-        </nav>
-        <button id="public-discord-login" class="button primary compact" data-login="true">Dashboard Login</button>
-      </header>
 
       <header class="app-nav" aria-label="Dashboard Navigation">
         <button class="app-brand" data-view="center">
@@ -324,179 +276,62 @@
         </div>
       </header>
 
-      <section class="view active" id="home-view">
-        <div class="home-canvas">
-          <div class="emoji-sky" aria-hidden="true">
-            <span style="--emoji-x:8%;--emoji-y:18%;--emoji-size:30px;--emoji-delay:-2s;--emoji-duration:11s;--emoji-depth:.35">✨</span>
-            <span style="--emoji-x:18%;--emoji-y:72%;--emoji-size:42px;--emoji-delay:-7s;--emoji-duration:15s;--emoji-depth:.55">💜</span>
-            <span style="--emoji-x:37%;--emoji-y:11%;--emoji-size:34px;--emoji-delay:-4s;--emoji-duration:13s;--emoji-depth:.42">🪽</span>
-            <span style="--emoji-x:56%;--emoji-y:78%;--emoji-size:38px;--emoji-delay:-9s;--emoji-duration:16s;--emoji-depth:.6">🌙</span>
-            <span style="--emoji-x:72%;--emoji-y:14%;--emoji-size:46px;--emoji-delay:-5s;--emoji-duration:14s;--emoji-depth:.7">🔮</span>
-            <span style="--emoji-x:86%;--emoji-y:63%;--emoji-size:34px;--emoji-delay:-1s;--emoji-duration:12s;--emoji-depth:.48">⚡</span>
-            <span style="--emoji-x:93%;--emoji-y:28%;--emoji-size:40px;--emoji-delay:-8s;--emoji-duration:17s;--emoji-depth:.65">👑</span>
-            <span style="--emoji-x:29%;--emoji-y:88%;--emoji-size:32px;--emoji-delay:-6s;--emoji-duration:12s;--emoji-depth:.4">🛡️</span>
-          </div>
-          <div class="home-stars" aria-hidden="true">
-            <img src="assets/original-star-lg.svg" alt=""><img src="assets/original-star-md.svg" alt=""><img src="assets/original-star-sm.svg" alt=""><img src="assets/original-star-md.svg" alt=""><img src="assets/original-star-sm.svg" alt="">
-          </div>
-          <img class="float-art art-one" src="assets/discord-nav-egg.webp" alt="">
-          <img class="float-art art-two" src="assets/discord-nav-newspaper.webp" alt="">
-          <img class="float-art art-three" src="assets/discord-nav-clyde.webp" alt="">
-          <img class="float-art art-four" src="assets/original-party-wumpus.gif" alt="">
-          <div class="home-inner">
-            <div class="home-copy">
-              <p class="eyebrow">FALLEN HEAVEN CONTROL CENTER</p>
-              <h1>DEIN SERVER.<br><span>DEINE WELT.</span></h1>
-              <p class="home-lead">Eine native Kommandozentrale für deinen Discord-Bot, deine Community, lokale AI und professionelle Inhalte.</p>
-              <div class="home-actions">
-                <button id="hero-login" class="button light" data-login="true">Mit Discord anmelden</button>
-                <button class="button glass" data-login="true">Server auswählen</button>
-              </div>
-              <div class="home-trust"><span><i></i>Nur berechtigte Server</span><span><i></i>Lokale Daten</span><span><i></i>Kein Webhook nötig</span></div>
-            </div>
-            <div class="home-visual">
-              <div class="visual-glow"></div>
-              <img class="visual-background" src="assets/fallen-heaven-bg.png" alt="FALLEN HEAVEN">
-              <div class="visual-console">
-                <div class="visual-console-head"><span><i></i> LIVE CONTROL</span><b>FALLEN HEAVEN</b></div>
-                <div class="visual-stat"><span>Bot Service</span><strong id="home-service">Status wird geprüft</strong></div>
-                <div class="visual-stat"><span>Module</span><strong><b id="module-count">9</b> Systeme</strong></div>
-                <div class="visual-bars"><i></i><i></i><i></i><i></i><i></i></div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="home-story">
-          <section class="story-section">
-            <div class="story-media ai-demo">
-              <div class="demo-topbar"><span><i></i><i></i><i></i></span><b>FALLEN HEAVEN AI</b><small>LOKAL · OLLAMA</small></div>
-              <div class="ai-chat-row user"><img src="assets/fallen-heaven-avatar.png" alt=""><p>Was gibt es Neues auf unserem Server?</p></div>
-              <div class="ai-chat-row bot"><img src="assets/fallen-heaven-icon.png" alt=""><p>Heute sind 34 neue Mitglieder dazugekommen. Das Event startet um 20 Uhr und ich habe die wichtigsten Infos kurz zusammengefasst.</p></div>
-              <div class="ai-memory-line"><span></span><div><b>Persönliche Erinnerung aktiv</b><small>Getrennt pro Nutzer und lokal gespeichert</small></div></div>
-              <img class="story-float story-egg" src="assets/discord-nav-egg.webp" alt="">
-            </div>
-            <div class="story-copy"><p class="eyebrow">LOKALE INTELLIGENZ</p><h2>AI, die deine Community wirklich kennt.</h2><p>Antwortstil, Persönlichkeit, Erinnerungen und Websuche steuerst du direkt in der App. Gespräche bleiben lokal und getrennt pro Nutzer.</p><button class="button light" data-login="true">AI Center öffnen</button></div>
-          </section>
-
-          <section class="story-section reverse">
-            <div class="story-media embed-demo">
-              <div class="demo-topbar"><span><i></i><i></i><i></i></span><b>EMBED STUDIO</b><small>LIVE PREVIEW</small></div>
-              <div class="embed-demo-message"><img src="assets/fallen-heaven-icon.png" alt=""><div><div class="embed-demo-author"><b>FALLEN HEAVEN</b><span>APP</span><small>Heute um 20:26</small></div><p>Ein neues Event beginnt.</p><div class="embed-demo-card"><i></i><div><small>FALLEN HEAVEN COMMUNITY</small><h3>Midnight Gathering</h3><p>Trefft euch heute Abend im Event-Channel. Rollen, Zeiten und Regeln findest du direkt hier.</p><div><b>START</b><span>20:00 Uhr</span><b>KANAL</b><span>#midnight-event</span></div></div></div></div></div>
-              <img class="story-float story-cube" src="assets/discord-nav-cube.webp" alt="">
-            </div>
-            <div class="story-copy"><p class="eyebrow">CONTENT & EMBEDS</p><h2>Nachrichten, die sich nach deinem Server anfühlen.</h2><p>Erstelle Embeds mit Live-Vorschau, sende sie ohne Webhook und lade jede Bot-Nachricht später wieder zum Bearbeiten.</p><button class="button light" data-login="true">Embed Studio öffnen</button></div>
-          </section>
-
-          <section class="story-section">
-            <div class="story-media security-demo">
-              <div class="security-ring ring-one"></div><div class="security-ring ring-two"></div>
-              <img src="assets/fallen-heaven-icon.png" alt="FALLEN HEAVEN">
-              <div class="security-card card-a"><span></span><div><b>Anti-Raid</b><small>Schutz aktiv</small></div></div>
-              <div class="security-card card-b"><span></span><div><b>Moderation</b><small>Filter bereit</small></div></div>
-              <div class="security-card card-c"><span></span><div><b>Audit-Logs</b><small>Live verbunden</small></div></div>
-              <img class="story-float story-clyde" src="assets/discord-nav-clyde.webp" alt="">
-            </div>
-            <div class="story-copy"><p class="eyebrow">SICHERHEIT & KONTROLLE</p><h2>Dein Server bleibt ruhig, auch wenn es draußen laut wird.</h2><p>Anti-Raid, Moderation, Warnsystem, Logs und Rechteprüfung arbeiten zusammen. Jede Einstellung bleibt verständlich und pro Server getrennt.</p><button class="button light" data-login="true">Module konfigurieren</button></div>
-          </section>
-
-          <section class="story-section reverse">
-            <div class="story-media control-demo">
-              <img class="control-bg" src="assets/fallen-heaven-bg.png" alt="">
-              <div class="control-window"><div class="demo-topbar"><span><i></i><i></i><i></i></span><b>CONTROL CENTER</b><small>LIVE</small></div><div class="control-stats"><article><small>BOT SERVICE</small><b>ONLINE</b><span class="online"></span></article><article><small>MODULE</small><b>9 AKTIV</b><span></span></article><article><small>SERVER</small><b>VERBUNDEN</b><span class="online"></span></article></div><div class="control-chart"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
-              <img class="story-float story-wumpus" src="assets/original-wumpus.webp" alt="">
-            </div>
-            <div class="story-copy"><p class="eyebrow">NATIVE WINDOWS-APP</p><h2>Ein Ort für alles, was deinen Bot antreibt.</h2><p>Starten, stoppen, neu starten, Module verwalten und Systemmeldungen prüfen. Ohne Browser-Chaos und ohne doppelte Prozesse.</p><button class="button light" data-login="true">Dashboard Login</button></div>
-          </section>
-        </div>
-
-        <div class="home-bottom">
-          <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10V6l-8-3Z"></path></svg></span><div><b>Sicherer Zugriff</b><p>Nur Owner, Administratoren und Nutzer mit „Server verwalten“ sehen das Dashboard.</p></div></article>
-          <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"></path></svg></span><div><b>Professionelle Inhalte</b><p>Embeds, Threads und gesendete Nachrichten direkt mit dem Bot verwalten.</p></div></article>
-          <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3"></path></svg></span><div><b>Live Control</b><p>Bot-Service, Module, AI und Systemstatus in einer stabilen Windows-App.</p></div></article>
-        </div>
-        <section id="public-feature-hub" class="public-feature-hub">
-          <div class="public-feature-head"><div><p class="eyebrow">FALLEN HEAVEN SUITE</p><h2>ENTDECKE DAS<br>CONTROL CENTER.</h2></div><p>Sieh dir die wichtigsten Bereiche an, bevor du Discord verbindest. Nur die deutlich markierten Login-Schaltflächen starten die Anmeldung.</p></div>
-          <div class="public-feature-grid">
-            <article id="public-community" data-public-feature-card="community"><span>COMMUNITY</span><h3>Serververwaltung</h3><p>Kanäle, Rollen, Events, Booster und Mitglieder in einer gemeinsamen Live-Ansicht.</p><b>Kanäle · Rollen · Boosts</b></article>
-            <article id="public-members" data-public-feature-card="members"><span>INTELLIGENCE</span><h3>Member Intelligence</h3><p>Belegte Interessen, Aktivität, Timeline und sichere Moderation mit Originalnachweisen.</p><b>Profile · Evidenz · Timeline</b></article>
-            <article id="public-ai" data-public-feature-card="ai"><span>LOKAL + WEB</span><h3>FALLEN HEAVEN AI</h3><p>Lokale Ollama-AI mit User Memory, Serverindex und gezielter Websuche nur für externe Fragen.</p><b>Memory · Kontext · Recherche</b></article>
-            <article id="public-antiraid" data-public-feature-card="antiraid"><span>SICHERHEIT</span><h3>Anti-Raid</h3><p>Erkennt Massenbeitritte, schützt sensible Aktionen und dokumentiert Entscheidungen.</p><b>Erkennung · Limits · Schutz</b></article>
-            <article id="public-moderation" data-public-feature-card="moderation"><span>MODERATION</span><h3>Kontrollierte Aktionen</h3><p>Timeouts, Rollen, Kick und Ban respektieren Discord-Hierarchie und Owner-Schutz.</p><b>Rollen · Timeout · Audit</b></article>
-            <article id="public-logs" data-public-feature-card="logs"><span>NACHWEIS</span><h3>Audit & Protokolle</h3><p>Wichtige Bot-, Moderations- und Systemaktionen bleiben nachvollziehbar.</p><b>Logs · Verlauf · Diagnose</b></article>
-            <article id="public-permissions" data-public-feature-card="permissions"><span>ZUGRIFF</span><h3>Discord Owner-Prüfung</h3><p>Die App zeigt ausschließlich Server, auf denen Bot und Account echte Verwaltungsrechte besitzen.</p><b>OAuth · Rechte · Isolation</b></article>
-            <article id="public-service" data-public-feature-card="service"><span>BOT SERVICE</span><h3>Start, Stopp & Neustart</h3><p>Ein zentraler Prozessmanager verhindert Doppelstarts und zeigt jede laufende Aktion sichtbar an.</p><b>Status · Prozess · Recovery</b></article>
-            <article id="public-embeds" data-public-feature-card="embeds"><span>CONTENT</span><h3>Embed Studio</h3><p>Nachrichten, mehrere Embeds, Bilder und Vorlagen mit Live-Vorschau direkt per Bot senden.</p><b>Editor · Vorschau · Versand</b></article>
-            <article id="public-threads" data-public-feature-card="threads"><span>THREADS</span><h3>Thread Control</h3><p>Bestehende Threads ansprechen oder neue Threads samt Startnachricht erstellen.</p><b>Erstellen · Senden · Bearbeiten</b></article>
-            <article id="public-templates" data-public-feature-card="templates"><span>WORKFLOW</span><h3>Professionelle Vorlagen</h3><p>Willkommen, Level-Up, Regeln und Ankündigungen wiederverwendbar speichern.</p><b>Templates · Entwürfe · Versionen</b></article>
-            <article id="public-system" data-public-feature-card="system"><span>SYSTEM</span><h3>Health Center</h3><p>Bot, Dashboard, Ollama und Hintergrundjobs mit verständlichem Live-Status.</p><b>Health · Jobs · Diagnose</b></article>
-            <article id="public-support" data-public-feature-card="support"><span>SUPPORT</span><h3>Hilfe ohne Sackgasse</h3><p>Diagnoseinformationen, Discord-Support und klare Hinweise für typische Probleme.</p><b>Hilfe · Community · Status</b></article>
-          </div>
-        </section>
-        <div id="login-bridge" class="landing-access login-bridge">
-          <div><p class="eyebrow">GESCHÜTZTER ZUGRIFF</p><h2>Bereit für dein Control Center?</h2><p>Discord prüft einmalig deinen Account. Danach werden nur erlaubte Server geladen.</p></div>
-          <button id="bridge-login" class="button primary">Discord verbinden</button>
-        </div>
-        <section class="home-final">
-          <div><p class="eyebrow">FALLEN HEAVEN</p><h2>DEIN SERVER WARTET.</h2><p>Verbinde Discord und öffne dein persönliches Control Center.</p><button class="button light" data-login="true">Jetzt anmelden</button></div>
-          <img src="assets/original-footer.webp" alt="">
-        </section>
-        <span id="home-service-dot" class="signal-dot" hidden></span>
-      </section>
-
       <section class="view dashboard-view" id="center-view">
-        <div class="page-head">
-          <div><p class="eyebrow">CONTROL CENTER</p><h1>Willkommen zurück.</h1><p>Bot-Service, Server und Systeme auf einen Blick.</p></div>
-          <div class="page-head-actions">
-            <label id="guild-picker" class="select-field" hidden><span>Aktiver Server</span><select id="guild-select"></select></label>
-            <span class="live-status"><i id="control-dot" class="status-dot"></i><span><small>DISCORD BOT</small><b id="bot-state">Wird geprüft</b></span></span>
+        <header class="fh-console-head">
+          <div class="fh-console-title">
+            <p class="eyebrow">FALLEN HEAVEN / CONTROL CENTER</p>
+            <h1>Command Deck.</h1>
+            <p>Starte den Bot, kontrolliere Module, erstelle Content und behalte dein System im Blick.</p>
           </div>
-        </div>
-        <section id="workspace-portal" class="workspace-portal" hidden aria-labelledby="workspace-portal-title">
-          <div class="workspace-portal-head">
-            <div>
-              <p class="eyebrow">STARTBEREICH</p>
-              <h2 id="workspace-portal-title">Wähle deinen Arbeitsbereich.</h2>
-              <p>Nach dem Login startest du klar getrennt in Minecraft-Werkzeuge oder Discord-Verwaltung. Keine leere Startfläche, keine versteckten Server.</p>
+          <div class="fh-console-actions">
+            <label id="guild-picker" class="select-field fh-guild-pick" hidden><span>Aktiver Server</span><select id="guild-select"></select></label>
+            <span class="fh-bot-state"><i id="control-dot" class="status-dot"></i><span><small>DISCORD BOT</small><b id="bot-state">Wird geprüft</b></span></span>
+          </div>
+        </header>
+
+        <section id="workspace-portal" class="fh-server-strip" hidden aria-labelledby="workspace-portal-title">
+          <h2 id="workspace-portal-title" class="sr-only">Wähle deinen Arbeitsbereich.</h2>
+          <div class="fh-server-strip-top">
+            <div class="fh-mode-switch" role="group" aria-label="Arbeitsbereich wechseln">
+              <button type="button" class="fh-mode-btn" data-workspace-open="minecraft"><span aria-hidden="true">◆</span>Minecraft</button>
+              <button type="button" class="fh-mode-btn" data-workspace-open="discord"><span aria-hidden="true">●</span>Discord</button>
             </div>
-            <div class="workspace-portal-status">
-              <span><b id="workspace-server-count">0</b><small>Server verfügbar</small></span>
-              <span><b id="workspace-current-server">Kein Server</b><small>Aktive Auswahl</small></span>
+            <div class="fh-server-strip-status">
+              <span class="fh-count"><b id="workspace-server-count">0</b> Server verfügbar</span>
+              <span class="fh-current"><b id="workspace-current-server">Kein Server</b></span>
             </div>
           </div>
-          <div class="workspace-choice-grid">
-            <button type="button" class="workspace-bubble minecraft" data-workspace-open="minecraft">
-              <span class="workspace-bubble-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="36" height="36"><path d="M12 2.5 20.5 7.5 12 12.5 3.5 7.5Z" fill="#6abf4c"/><path d="M3.5 7.5 12 12.5 12 21.5 3.5 16.5Z" fill="#7e5230"/><path d="M20.5 7.5 12 12.5 12 21.5 20.5 16.5Z" fill="#96613a"/><path d="M12 4.6 17.9 8 12 11.4 6.1 8Z" fill="rgba(255,255,255,.16)"/><path d="M12 2.5 20.5 7.5 12 12.5 3.5 7.5 12 2.5M20.5 7.5v9l-8.5 5v-9M3.5 7.5v9l8.5 5v-9" fill="none" stroke="rgba(255,255,255,.4)" stroke-width=".9" stroke-linejoin="round"/></svg></span>
-              <span class="workspace-bubble-copy"><small>MINECRAFT</small><b>Minecraft Modules</b><em>Skin Studio, Layer, KI-Rezepte und Export</em></span>
-              <i aria-hidden="true"></i>
-            </button>
-            <button type="button" class="workspace-bubble discord" data-workspace-open="discord">
-              <span class="workspace-bubble-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="36" height="36" fill="#fff"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span>
-              <span class="workspace-bubble-copy"><small>DISCORD</small><b>Discord Control</b><em>Server auswählen, Module, Rollen und Inhalte verwalten</em></span>
-              <i aria-hidden="true"></i>
-            </button>
-          </div>
-          <div id="workspace-guilds" class="workspace-guilds">
-            <div class="workspace-guilds-head"><span>Discord Server</span><small>Wähle einen Server, danach öffnet sich die Verwaltung.</small></div>
+          <div id="workspace-guilds" class="fh-server-strip-grid">
             <div id="workspace-server-grid" class="workspace-server-grid"></div>
           </div>
         </section>
-        <div class="dashboard-grid">
-          <article class="command-card">
-            <div class="command-art"></div>
-            <div class="command-content"><p class="eyebrow">BOT SERVICE</p><h2 id="service-headline">Bereit für deinen Befehl.</h2><p id="bot-detail">Status wird geladen.</p><div class="service-controls"><button class="button success" data-action="start">Starten</button><button class="button secondary" data-action="restart">Neustarten</button><button class="button danger" data-action="stop">Stoppen</button></div></div>
+
+        <div class="fh-metrics">
+          <article class="fh-metric"><span>BOT ENGINE</span><strong id="engine-label">OFFLINE</strong><small id="engine-copy">Kein aktiver Bot-Prozess</small></article>
+          <article class="fh-metric"><span>AKTIVE MODULE</span><strong id="module-stat">9</strong><small>Systeme für diesen Server</small></article>
+          <article class="fh-metric"><span>GESPEICHERTE INHALTE</span><strong id="draft-stat">0</strong><small>Entwürfe und Bot-Nachrichten</small></article>
+          <article class="fh-metric"><span>SYSTEMSTATUS</span><strong id="status-label">IDLE</strong><small>Letzte Live-Abfrage</small></article>
+        </div>
+
+        <div class="fh-main">
+          <article class="fh-service">
+            <div class="fh-card-head"><p class="eyebrow">BOT SERVICE</p><span class="fh-live-dot"><i></i> KONTROLLE</span></div>
+            <h2 id="service-headline">Dein Bot ist im Einsatz.</h2>
+            <p id="bot-detail">Status wird geladen.</p>
+            <div class="service-controls fh-service-controls">
+              <button class="button success" data-action="start">Starten</button>
+              <button class="button secondary" data-action="restart">Neustarten</button>
+              <button class="button danger" data-action="stop">Stoppen</button>
+            </div>
           </article>
-          <article class="metric-card"><span>BOT ENGINE</span><strong id="engine-label">OFFLINE</strong><small id="engine-copy">Kein aktiver Bot-Prozess</small></article>
-          <article class="metric-card"><span>AKTIVE MODULE</span><strong id="module-stat">9</strong><small>Systeme für diesen Server</small></article>
-          <article class="metric-card"><span>GESPEICHERTE INHALTE</span><strong id="draft-stat">0</strong><small>Entwürfe und Bot-Nachrichten</small></article>
-          <article class="metric-card"><span>SYSTEMSTATUS</span><strong id="status-label">IDLE</strong><small>Letzte Live-Abfrage</small></article>
-          <article class="quick-card">
-            <div class="card-head"><div><p class="eyebrow">BEREICHE</p><h3>Direkt öffnen</h3></div></div>
+          <article class="fh-quick">
+            <div class="fh-card-head"><div><p class="eyebrow">BEREICHE</p><h3>Direkt öffnen</h3></div></div>
             <button data-view="modules"><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z"></path></svg></span><span><b>Module</b><small>Systeme konfigurieren</small></span><em>→</em></button>
             <button data-view="studio"><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg></span><span><b>Embed Studio</b><small>Nachrichten erstellen</small></span><em>→</em></button>
             <button data-view="system"><span class="feature-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v5l3 2"></path></svg></span><span><b>System</b><small>Logs und Prozesse</small></span><em>→</em></button>
           </article>
-          <article class="timeline-card">
-            <div class="card-head"><div><p class="eyebrow">LIVE ACTIVITY</p><h3>App-Timeline</h3></div><span class="timeline-live"><i></i> LIVE</span></div>
+          <article class="fh-timeline">
+            <div class="fh-card-head"><div><p class="eyebrow">LIVE ACTIVITY</p><h3>App-Timeline</h3></div><span class="timeline-live"><i></i> LIVE</span></div>
             <div id="timeline" class="timeline" aria-live="polite"></div>
             <div class="timeline-footer"><span><i></i> Automatisch synchronisiert</span><small>alle 15 Sekunden</small></div>
           </article>
@@ -613,20 +448,20 @@
               <div class="discord-channel"><span>#</span><b id="preview-channel-name">preview</b><small>LIVE-VORSCHAU</small></div>
               <div class="discord-message-preview"><img class="discord-preview-avatar" src="assets/fallen-heaven-icon.png" alt=""><div class="discord-preview-body"><div class="discord-preview-head"><strong>FALLEN HEAVEN</strong><span>APP</span><time>Heute</time></div><p id="preview-content" class="discord-preview-content">Willkommen bei FALLEN HEAVEN.</p><img id="preview-outside-image" class="outside-message-image" src="" alt="" hidden><div id="embed-preview" class="embed-preview legacy-embed-preview"><span class="embed-line"></span><div class="embed-content"><div id="preview-author" class="embed-author" hidden><img id="preview-author-icon" src="" alt=""><span id="preview-author-name"></span></div><h3 id="preview-title">Willkommen in FALLEN HEAVEN</h3><p id="preview-description">Schön, dass du da bist.</p><div id="preview-fields" class="embed-fields"></div><img id="preview-image" class="embed-image" src="" alt="" hidden><div class="embed-footer"><img id="preview-footer-icon" src="assets/fallen-heaven-icon.png" alt=""><span id="preview-signature">FALLEN HEAVEN</span><time id="preview-timestamp">Heute</time></div><img id="preview-thumbnail" class="embed-thumbnail" src="" alt="" hidden></div></div><div id="preview-extra-embeds" class="legacy-embed-preview"></div><div id="preview-embed-stack" class="preview-embed-stack"></div><div id="preview-function-set" class="preview-function-set" hidden></div><div id="preview-reaction-roles" class="preview-reaction-roles" hidden></div></div></div>
             </div>
-            <article class="history-card"><div class="card-head"><div><p class="eyebrow">GESPEICHERT</p><h3>Entwürfe & Nachrichten</h3></div></div><div id="draft-list" class="draft-list"></div></article>
           </section>
           <section class="studio-editor">
-            <div class="form-section studio-ai-assistant"><div class="form-section-title"><span>AI</span><div><b>Text-Assistent</b><small>Lokale Ollama-Unterstützung für professionelle Discord-Texte</small></div><i class="studio-ai-local">LOKAL · PRIVAT</i></div><div class="studio-ai-grid"><label>Aktion<select id="studio-ai-mode"><option value="create">Neu schreiben</option><option value="improve">Vorhandenen Text verbessern</option><option value="shorten">Kürzen und präzisieren</option><option value="rewrite">Komplett neu formulieren</option></select></label><label>Ziel<select id="studio-ai-target"><option value="description">Embed-Beschreibung</option><option value="title">Embed-Titel</option><option value="content">Nachricht über dem Embed</option></select></label><label>Stil<select id="studio-ai-tone"><option value="professional">Professionell</option><option value="warm">Warm und einladend</option><option value="premium">Premium und hochwertig</option><option value="concise">Kurz und direkt</option><option value="community">Locker und menschlich</option><option value="moderation">Klar und verbindlich</option></select></label><label class="full">Aufgabe oder Stichpunkte<textarea id="studio-ai-instruction" maxlength="800" rows="3" placeholder="Zum Beispiel: Begrüße neue Mitglieder, verweise auf die Regeln und wünsche viel Spaß."></textarea></label><div class="studio-ai-actions full"><p id="studio-ai-status">Der Assistent verändert nichts, bis du das Ergebnis übernimmst.</p><button id="studio-ai-generate" class="button primary" type="button">Text erstellen</button></div><label class="full studio-ai-result">Vorschlag<textarea id="studio-ai-output" maxlength="4096" rows="5" placeholder="Der AI-Vorschlag erscheint hier."></textarea></label><div class="studio-ai-actions full"><span id="studio-ai-result-count">0 Zeichen</span><div><button id="studio-ai-append" class="button secondary" type="button" disabled>Anhängen</button><button id="studio-ai-apply" class="button secondary" type="button" disabled>Ersetzen</button></div></div></div></div>
+
             <div class="studio-toolbar"><div id="template-row" class="template-row"><button data-template="welcome" class="active">Willkommen</button><button data-template="level">Level Up</button><button data-template="notice">Ankündigung</button><button data-template="rules">Regeln</button><button data-template="activityRace" class="studio-automation-template">Aktivitäts-Liga</button><button data-template="steamWorkshop" class="studio-automation-template">Steam Workshop</button></div><button id="clear-content" class="text-button">Leeren</button></div>
-            <section id="studio-special-template" class="studio-special-template" hidden><div><span>AUTOMATISCHE VORLAGE</span><strong data-studio-special-title>Aktivitäts-Liga</strong><small data-studio-special-detail>Du bearbeitest hier direkt die Live-Vorlage des Moduls. Ranglisten, Zeitraum und Navigation setzt der Bot weiterhin automatisch ein.</small></div><div class="studio-special-placeholders" data-studio-special-placeholders><code>{server}</code><code>{period}</code><code>{status}</code><code>{completion}</code><code>{range}</code><code>{nextEvaluation}</code></div><button id="studio-special-back" class="button secondary" type="button">Normales Embed</button></section>
+            <section id="studio-special-template" class="studio-special-template" hidden><div><span>AUTOMATISCHE VORLAGE</span><strong data-studio-special-title>Aktivitäts-Liga</strong><small data-studio-special-detail>Du bearbeitest hier direkt die Live-Vorlage des Moduls. Ranglisten, Zeitraum und Navigation setzt der Bot weiterhin automatisch ein.</small></div><div class="studio-special-placeholders" data-studio-special-placeholders><code>{server}</code><code>{period}</code><code>{status}</code><code>{completion}</code><code>{range}</code><code>{nextEvaluation}</code></div><div id="studio-pcv-section-wrap" class="studio-pcv-section-wrap" hidden><span>BEREICH</span><label for="studio-pcv-section" aria-label="Zu bearbeitende Call-Moderations-Sektion wählen"><select id="studio-pcv-section"></select></label></div><button id="studio-special-back" class="button secondary" type="button">Normales Embed</button></section>
             <div class="form-section"><div class="form-section-title"><span>→</span><div><b>Ziel & Nachricht</b><small>Wohin der Bot senden soll</small></div></div><div class="form-grid"><label class="full">Kanal<select id="studio-channel"><option value="">Nach dem Login Kanal auswählen</option></select></label><label class="full studio-message-field"><span class="studio-field-heading"><span>Nachricht über dem Embed</span><button id="studio-emoji-open" class="studio-emoji-trigger" type="button"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="M8.5 14.5c1.8 2 5.2 2 7 0M9 9.5h.01M15 9.5h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg><span>Emojis</span></button></span><textarea id="studio-content" maxlength="2000" rows="3">Willkommen bei FALLEN HEAVEN.</textarea></label><div class="full studio-file-field"><span>Bild außerhalb vom Embed</span><input id="studio-outside-image" type="hidden"><input id="studio-outside-image-name" type="hidden"><input id="studio-outside-image-size" type="hidden"><input id="studio-outside-image-file" class="studio-native-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"><div class="studio-file-picker"><label for="studio-outside-image-file" class="button secondary">Bild vom PC auswählen</label><div><strong id="studio-outside-image-label">Kein Bild ausgewählt</strong><small id="studio-outside-image-meta">PNG, JPG, WEBP oder GIF · maximal 25 MB</small></div><button id="studio-outside-image-remove" class="text-button" type="button" disabled>Entfernen</button></div></div></div></div>
 <div id="studio-emoji-picker" class="message-emoji-layer" hidden><button class="message-emoji-backdrop" type="button" data-emoji-close aria-label="Emoji-Auswahl schließen"></button><section class="message-emoji-dialog" role="dialog" aria-modal="true" aria-labelledby="message-emoji-title"><header><div><span>FALLEN HEAVEN ASSETS</span><h3 id="message-emoji-title">Emoji-Bibliothek</h3><p>Standard-, Bot- und Server-Emojis direkt auswählen.</p></div><button class="message-emoji-close" type="button" data-emoji-close aria-label="Schließen">×</button></header><div class="message-emoji-tools"><label><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg><input id="studio-emoji-search" type="search" autocomplete="off" placeholder="Emoji suchen ..."></label><span id="studio-emoji-count">0 Emojis</span></div><nav id="studio-emoji-filters" class="message-emoji-filters" aria-label="Emoji-Filter"><button class="active" type="button" data-emoji-filter="all">Alle</button><button type="button" data-emoji-filter="unicode">Standard</button><button type="button" data-emoji-filter="application">Bot-Emojis</button><button type="button" data-emoji-filter="guild">Server-Emojis</button><button type="button" data-emoji-filter="animated">Animiert</button><button type="button" data-emoji-filter="recent">Zuletzt verwendet</button></nav><div id="studio-emoji-grid" class="message-emoji-grid" aria-live="polite"><div class="message-emoji-empty">Emojis werden geladen ...</div></div><footer><span><i></i> Ein Klick fügt das Emoji an der Cursorposition ein.</span><kbd>ESC</kbd></footer></section></div>
             <div class="form-section"><div class="form-section-title"><span>◆</span><div><b>Embed-Inhalt</b><small>Alle Embeds bleiben in ihrer echten Reihenfolge untereinander</small></div></div><div class="studio-toolbar"><div><strong id="studio-embed-count">1/10 Embeds</strong><div id="studio-embed-tabs" class="template-row"></div></div><div class="inline-actions"><button id="remove-studio-embed" class="button secondary" type="button" disabled>Embed entfernen</button><button id="add-studio-embed" class="button secondary" type="button">Embed hinzufügen</button></div></div><div id="studio-limit-status" class="studio-limit-status" role="status" aria-live="polite"><span><small>Nachricht</small><b>0 / 2.000</b></span><span><small>Embed-Zeichen</small><b>0 / 6.000</b></span><span><small>Embeds</small><b>1 / 10</b></span><span><small>Felder aktiv</small><b>0 / 25</b></span></div><div id="studio-embed-stack" class="studio-embed-stack" aria-label="Embeds untereinander bearbeiten"></div><div class="active-embed-editor-label"><span>AKTIVER EMBED</span><b>Vollständige Einstellungen</b></div><div class="form-grid"><label class="full">Titel<input id="studio-title" maxlength="256" value="Willkommen in FALLEN HEAVEN"></label><label class="full">Titel-Link URL<input id="studio-url" placeholder="https://..."></label><label class="full">Beschreibung<textarea id="studio-description" maxlength="4096" rows="6">Schön, dass du da bist.</textarea></label><label>Akzentfarbe<input id="studio-color" type="color" value="#8b82ff"></label><label>Footer<input id="studio-signature" maxlength="2048" value="FALLEN HEAVEN"></label><label>Autor<input id="studio-author-name" maxlength="256" placeholder="optional"></label><label>Autor-Icon URL<input id="studio-author-icon" placeholder="https://..."></label><label>Thumbnail URL<input id="studio-thumbnail" placeholder="https://..."></label><label>Großes Bild URL<input id="studio-image" placeholder="https://..."></label><label>Footer-Icon URL<input id="studio-footer-icon" placeholder="https://..."></label><label class="check-field"><input id="studio-timestamp" type="checkbox" checked><span>Zeitstempel anzeigen</span></label></div></div>
             <div class="form-section"><div class="form-section-title"><span>＋</span><div><b>Embed-Felder</b><small>Zusätzliche Informationsblöcke</small></div></div><div id="studio-fields" class="studio-fields"></div><button id="add-embed-field" class="button secondary">Feld hinzufügen</button></div>
-            <div class="form-section studio-function-set"><div class="form-section-title"><span>⚡</span><div><b>Komplettes Funktionsset</b><small>Ein fertiges Bot-System direkt unter dieses Embed hängen</small></div><i id="studio-function-set-status" class="studio-ai-local">KEIN SET</i></div><div class="studio-function-set-grid"><label>Interaktive Funktion<select id="studio-component-set"><option value="none">Kein Funktionsset</option><option value="heavenEconomy">Heaven VIP & Coins</option></select></label><article id="studio-function-set-card"><span>FH</span><div><b>Heaven VIP & Coins</b><small>Konto, VIP-Shop, Geschenke, Coin-Kauf, Boost-Fortschritt, Vorteile und Verwaltung als vollständiges Button-Set.</small></div><em>2 BUTTON-REIHEN</em></article></div><p class="reaction-role-note">Das Set verwendet dein vorhandenes Heaven-Economy-Modul und dieselben sicheren Konten, Rollen und Transaktionen. Es entstehen keine getrennten Daten.</p></div>
-            <div class="form-section reaction-role-studio"><div class="form-section-title"><span>◎</span><div><b>Reaction Roles</b><small>Optional zusätzlich einzelne Emoji-Rollen anlegen</small></div><i id="studio-reaction-role-count" class="studio-ai-local">0 Reaktionen</i></div><p class="reaction-role-note">Bestehende Server-Emojis werden über ihre Discord-ID exakt wiederverwendet. Bei „Nur eine Rolle“ muss die aktuelle Reaktion zuerst abgewählt werden, bevor eine andere Rolle gewählt werden kann.</p><div id="studio-reaction-role-list" class="studio-reaction-role-list"></div><button id="add-studio-reaction-role" class="button secondary" type="button">Reaktion hinzufügen</button></div>
+            <div class="form-section studio-function-set"><div class="form-section-title"><span>⚡</span><div><b>Komplettes Funktionsset</b><small>Ein fertiges Bot-System direkt unter dieses Embed hängen</small></div><i id="studio-function-set-status" class="studio-chip">KEIN SET</i></div><div class="studio-function-set-grid"><label>Interaktive Funktion<select id="studio-component-set"><option value="none">Kein Funktionsset</option><option value="heavenEconomy">Heaven VIP & Coins</option></select></label><article id="studio-function-set-card"><span>FH</span><div><b>Heaven VIP & Coins</b><small>Konto, VIP-Shop, Geschenke, Coin-Kauf, Boost-Fortschritt, Vorteile und Verwaltung als vollständiges Button-Set.</small></div><em>2 BUTTON-REIHEN</em></article></div><p class="reaction-role-note">Das Set verwendet dein vorhandenes Heaven-Economy-Modul und dieselben sicheren Konten, Rollen und Transaktionen. Es entstehen keine getrennten Daten.</p></div>
+            <div class="form-section reaction-role-studio"><div class="form-section-title"><span>◎</span><div><b>Rollen-Buttons</b><small>Funktionale Emoji-Buttons für Rollen anlegen</small></div><i id="studio-reaction-role-count" class="studio-chip">0 Buttons</i></div><p class="reaction-role-note">Bestehende Server-Emojis werden über ihre Discord-ID exakt wiederverwendet. Bei „Nur eine Rolle“ darf jedes Mitglied aus dieser Nachricht nur eine der Rollen gleichzeitig besitzen.</p><div id="studio-reaction-role-list" class="studio-reaction-role-list"></div><button id="add-studio-reaction-role" class="button secondary" type="button">Button hinzufügen</button></div>
             <div class="form-section thread-section"><div class="form-section-title"><span>↳</span><div><b>Neuen Thread erstellen</b><small>Direkt mit Startnachricht</small></div></div><div class="form-grid"><label>Parent-Channel<select id="thread-parent-channel"><option value="">Kanal auswählen</option></select></label><label>Thread-Name<input id="thread-name" maxlength="100" placeholder="Diskussion"></label><label class="full">Startnachricht<textarea id="thread-message" maxlength="2000" rows="3"></textarea></label></div><div class="inline-actions"><p id="thread-status">Der neue Thread wird automatisch als Ziel ausgewählt.</p><button id="create-thread" class="button secondary">Thread erstellen</button></div></div>
             <div class="studio-sendbar"><button id="copy-content" class="button secondary">JSON kopieren</button><button id="edit-studio-message" class="button secondary" disabled>Nachricht bearbeiten</button><button id="send-studio-message-secondary" class="button primary">Mit Bot senden</button></div>
+            <details class="studio-drafts-panel"><summary><span><p class="eyebrow">GESPEICHERT</p><h3>Entwürfe & Nachrichten</h3></span><em>aufklappen · einzelne Einträge löschbar</em></summary><div id="draft-list" class="draft-list"></div></details>
           </section>
         </div>
       </section>
@@ -638,7 +473,6 @@
             <div class="skin-file-actions">
               <button id="skin-import" type="button"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"></path></svg>Skin hochladen</button>
               <button id="skin-reset" type="button"><svg viewBox="0 0 24 24"><path d="M5 8a8 8 0 1 1-1 8m1-8V3m0 5h5"></path></svg>Neu anfangen</button>
-              <button id="skin-ai-open" class="skin-ai-open" type="button"><svg viewBox="0 0 24 24"><path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3Zm6 10 .9 2.6 2.6.9-2.6.9L18 20l-.9-2.6-2.6-.9 2.6-.9L18 13Z"></path></svg>AI Skin</button>
             </div>
             <div class="skin-mode-switch" role="tablist" aria-label="Editoransicht">
               <button class="active" type="button" data-skin-mode="3d" role="tab" aria-selected="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 9 8-4.5M12 12 4 7.5M12 12v9"></path></svg>3D</button>
@@ -703,19 +537,8 @@
             </main>
 
             <aside class="skin-inspector">
-              <header class="skin-inspector-tabs"><button class="active" type="button">Optionen</button><span>SKIN LAB</span></header>
+              <header class="skin-inspector-tabs"><button class="active" type="button">Optionen</button></header>
               <div class="skin-inspector-scroll">
-                <section id="skin-ai-creator" class="skin-inspector-section skin-ai-creator">
-                  <div class="skin-inspector-title"><span>AI SKIN CREATOR</span><small>LOKAL · ZERSTÖRUNGSFREI</small></div>
-                  <label class="skin-ai-prompt"><span>Beschreibe deinen Skin</span><textarea id="skin-ai-prompt" rows="3" maxlength="500" placeholder="z. B. dunkler Cyber-Samurai mit violetten Neonlinien und Kapuze"></textarea></label>
-                  <div class="skin-ai-options">
-                    <label><span>Stil</span><select id="skin-ai-style"><option value="auto">Automatisch</option><option value="modern">Modern</option><option value="fantasy">Fantasy</option><option value="cyber">Cyber</option><option value="streetwear">Streetwear</option><option value="minimal">Minimal</option></select></label>
-                    <label><span>Details</span><select id="skin-ai-detail"><option value="balanced">Ausgewogen</option><option value="rich">Viele Details</option><option value="clean">Clean</option></select></label>
-                  </div>
-                  <button id="skin-ai-generate" class="skin-ai-generate" type="button"><svg viewBox="0 0 24 24"><path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3Zm6 10 .9 2.6 2.6.9-2.6.9L18 20l-.9-2.6-2.6-.9 2.6-.9L18 13Z"></path></svg><span>AI-Entwurf erzeugen</span></button>
-                  <p id="skin-ai-status" class="skin-ai-status"><i></i>Ollama analysiert Idee, UV-Flächen und Overlay. Ohne laufende AI übernimmt der lokale Layer-Generator.</p>
-                </section>
-
                 <section class="skin-inspector-section">
                   <div class="skin-inspector-title"><span>MODELL</span><small id="skin-model-detection">WIRD ERKANNT</small></div>
                   <div class="skin-model-switch"><button class="active" type="button" data-skin-model="auto">Auto</button><button type="button" data-skin-model="classic">Classic</button><button type="button" data-skin-model="slim">Slim</button></div>
@@ -771,7 +594,8 @@
     <article class="system-health-card"><span>App Release</span><strong id="system-app-version">–</strong><p>Installierte native Desktop-Version</p></article>
     <article class="system-health-card"><span>Bot Service</span><strong id="system-bot-state">Wird geprüft</strong><p>Supervisor, Prozess und Discord-Verbindung</p></article>
     <article class="system-health-card"><span>Secret-Schutz</span><strong id="system-security-state">Wird geprüft</strong><p>Nur Schutzstatus, niemals geheime Werte</p></article>
-    <article class="system-health-card"><span>Lokale Daten</span><strong id="system-storage-total">–</strong><p>Index, Kontext, Memory, Logs und Backups</p></article>
+    <article class="system-health-card"><span>Lokale Daten</span><strong id="system-storage-total">–</strong><p>Index, Logs und Backups</p></article>
+    <article class="system-health-card"><span>Updates</span><strong id="system-update-state">Wird geprüft</strong><p>Lokale Update-Quelle und Installationsstatus</p></article>
   </div>
   <div class="system-workspace">
     <article class="system-data-panel">
@@ -785,7 +609,26 @@
         <button class="ghost-button" id="open-log-folder" type="button">Logordner öffnen</button>
         <button class="ghost-button" id="system-theme" type="button">Darstellung wechseln</button>
       </div>
-      <p class="system-privacy-note"><strong>Privacy by default:</strong> Der Diagnose-Export enthält keine Nachrichteninhalte, AI-Erinnerungen, Tokens, Passwörter oder Konfigurationswerte. Exportiert werden nur technische Zustände, Größen, Zähler und bereinigte Protokolle.</p>
+      <p class="system-privacy-note"><strong>Privacy by default:</strong> Der Diagnose-Export enthält keine Nachrichteninhalte, Tokens, Passwörter oder Konfigurationswerte. Exportiert werden nur technische Zustände, Größen, Zähler und bereinigte Protokolle.</p>
+    </article>
+    <article class="system-data-panel update-panel">
+      <div class="system-panel-head">
+        <div><span class="eyebrow">APP UPDATES</span><h2>Neue Version installieren</h2></div>
+        <button class="ghost-button" id="update-check" type="button">Nach Updates suchen</button>
+      </div>
+      <div class="update-folder-row">
+        <label for="update-folder">Update-Ordner (auch Netzwerkfreigabe möglich)</label>
+        <div class="update-folder-input">
+          <input id="update-folder" type="text" placeholder="z. B. C:\FHCC-Updates oder \\SERVER\Freigabe" spellcheck="false">
+          <button class="ghost-button" id="update-folder-save" type="button">Speichern</button>
+        </div>
+      </div>
+      <div class="update-status" id="update-status">Update-Ordner noch nicht konfiguriert.</div>
+      <div class="update-actions">
+        <button class="primary-button" id="update-install" type="button" disabled>Update installieren</button>
+        <button class="text-button" id="update-open-folder" type="button">Ordner öffnen</button>
+      </div>
+      <p class="system-privacy-note"><strong>Sicher:</strong> Die Update-Datei wird vor der Installation anhand des SHA-512-Werts aus <code>latest.yml</code> geprüft und in den Temp-Ordner kopiert – die Freigabe muss während der Installation nicht mehr erreichbar sein. Die Installation läuft still (silent), die App startet danach neu.</p>
     </article>
     <article class="log-panel">
       <div class="system-panel-head">
@@ -832,14 +675,15 @@
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   <script src="stability.js"></script>
   <script src="runtime-state.js"></script>
-    <script src="modern-ui-v5.js?v=3.9.66"></script>
-    <script src="discord-reference-v7.js?v=3.9.66"></script>
-    <script src="discord-reference-v8.js?v=3.9.66"></script>
-    <script src="app.js?v=3.9.66"></script>
-    <script src="../../node_modules/skinview3d/bundles/skinview3d.bundle.js"></script>
-    <script src="../../node_modules/three/build/three.min.js"></script>
-    <script src="skin-editor.js?v=3.9.66"></script>
-    <script src="server-management.js?v=3.9.66"></script>
+<script src="modern-ui-v5.js?v=3.9.289"></script>
+<script src="discord-reference-v7.js?v=3.9.289"></script>
+<script src="discord-reference-v8.js?v=3.9.289"></script>
+<script src="activity-race-studio.js?v=3.9.289"></script>
+<script src="studio-components.js?v=3.9.289"></script>
+<script src="app.js?v=3.9.289"></script>
+    <!-- three.js + skinview3d werden erst beim ersten Öffnen des Skin Studios nachgeladen (skin-editor.js → loadViewerLibraries) -->
+<script src="skin-editor.js?v=3.9.289"></script>
+<script src="server-management.js?v=3.9.289"></script>
     <script src="theme-bridge.js"></script>
   <script src="admin-safety.js"></script>
   <script src="media-resilience.js"></script>

@@ -1,5 +1,6 @@
 import { ChannelType, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 
+import { isProtectedPublicCallVoteMessage } from './publicCallVote.js';
 import { recordDiagnosticError, runTrackedOperation } from '../runtime/liveDiagnostics.js';
 
 const VOICE_CHANNEL_TYPES = new Set([ChannelType.GuildVoice]);
@@ -138,20 +139,27 @@ const runWithRetry = async (operation, label) => {
   throw new Error(`${label}: ${lastError?.message || lastError || 'Unbekannter Discord-Fehler'}`);
 };
 
-const partitionMessagesForDeletion = (messages, now = Date.now(), deletePinned = true) => {
+const partitionMessagesForDeletion = (messages, now = Date.now(), deletePinned = true, guildId = '', channelId = '') => {
   const bulk = [];
   const individual = [];
   const skippedPinned = [];
+  const skippedProtected = [];
   const cutoff = now - BULK_DELETE_MAX_AGE_MS + BULK_DELETE_SAFETY_MARGIN_MS;
   for (const message of messages || []) {
     if (!deletePinned && message?.pinned) {
       skippedPinned.push(message);
       continue;
     }
+    // Feste Moderations-Panels und laufende Abstimmungen (Public-Call-Moderation)
+    // werden nie gelöscht – sie sollen im öffentlichen Call dauerhaft bestehen.
+    if (isProtectedPublicCallVoteMessage(guildId, channelId, message?.id)) {
+      skippedProtected.push(message);
+      continue;
+    }
     if (Number(message?.createdTimestamp || 0) > cutoff) bulk.push(message);
     else individual.push(message);
   }
-  return { bulk, individual, skippedPinned };
+  return { bulk, individual, skippedPinned, skippedProtected };
 };
 
 const deleteMessageIndividually = async (channel, message, expectedAbortVersion) => {
@@ -164,7 +172,7 @@ const deleteMessageIndividually = async (channel, message, expectedAbortVersion)
 };
 
 const deletePage = async ({ channel, messages, conf, expectedAbortVersion }) => {
-  const partition = partitionMessagesForDeletion(messages, Date.now(), conf.deletePinned);
+  const partition = partitionMessagesForDeletion(messages, Date.now(), conf.deletePinned, channel?.guild?.id, channel?.id);
   let bulkDeleted = 0;
   let individuallyDeleted = 0;
   const failures = [];
@@ -174,6 +182,7 @@ const deletePage = async ({ channel, messages, conf, expectedAbortVersion }) => 
       bulkDeleted: partition.bulk.length,
       individuallyDeleted: partition.individual.length,
       skippedPinned: partition.skippedPinned.length,
+      skippedProtected: partition.skippedProtected.length,
       failures
     };
   }
@@ -217,6 +226,7 @@ const deletePage = async ({ channel, messages, conf, expectedAbortVersion }) => 
     bulkDeleted,
     individuallyDeleted,
     skippedPinned: partition.skippedPinned.length,
+    skippedProtected: partition.skippedProtected.length,
     failures
   };
 };
@@ -234,6 +244,7 @@ const purgeVoiceChat = async ({ channel, conf, status, expectedAbortVersion }) =
     bulkDeleted: 0,
     individuallyDeleted: 0,
     skippedPinned: 0,
+    skippedProtected: 0,
     failed: 0,
     failures: [],
     complete: true
@@ -261,6 +272,7 @@ const purgeVoiceChat = async ({ channel, conf, status, expectedAbortVersion }) =
       result.individuallyDeleted += page.individuallyDeleted;
       result.deleted += deleted;
       result.skippedPinned += page.skippedPinned;
+      result.skippedProtected += page.skippedProtected || 0;
       result.failed += page.failures.length;
       result.failures.push(...page.failures.slice(0, Math.max(0, 25 - result.failures.length)));
       foundDeletable ||= deleted > 0 || (conf.dryRun && (page.bulkDeleted + page.individuallyDeleted) > 0);

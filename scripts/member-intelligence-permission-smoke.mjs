@@ -64,10 +64,19 @@ assert.deepEqual(
   ['member_banned', 'boost_started']
 );
 
+const engineSource = fs.readFileSync(new URL('../src/features/memberIntelligenceEngine.js', import.meta.url), 'utf8');
+assert.doesNotMatch(engineSource, /queueAnalysis|runAnalysis|analysisJobs|readState\s*\(/, 'Die Profil-Analyse darf keine Hintergrundjobs oder State-Dateien mehr starten');
+assert.match(engineSource, /getServerIndexAuthorChannelBreakdown/, 'Profil muss Kanäle über eine einzelne schnelle SQL-Abfrage laden');
+assert.doesNotMatch(engineSource, /getServerSystemEvents/, 'Profil darf keinen JSONL-Scan über alle Systemereignisse machen');
+
+const storeSource = fs.readFileSync(new URL('../src/serverIndexStore.js', import.meta.url), 'utf8');
+assert.match(storeSource, /getServerIndexAuthorChannelBreakdown/, 'Channel-Breakdown muss als SQL-Abfrage existieren');
+
 const appSource = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
 assert.match(appSource, /const rows = candidateMembers\.map\(\(member\) => \{/, 'Mitgliederliste muss sortierbare synchrone Basiszeilen erzeugen');
 assert.match(appSource, /const visibleRows = rows\.slice\(/, 'Mitgliederliste muss vor teuren Profilauflösungen paginieren');
 assert.match(appSource, /const visibleMembers = await Promise\.all\(visibleRows\.map\(/, 'Nur die sichtbare Seite darf asynchrone Profilbilder auflösen');
 assert.doesNotMatch(appSource, /Promise\.all\(candidateMembers\.map\(async/, 'Profilbilder dürfen nicht für die gesamte Serverliste gleichzeitig aufgelöst werden');
+assert.match(appSource, /getBoostLedgerMemberEvents/, 'Boost-Timeline muss das leichte Ledger statt des vollen Server-Scans nutzen');
 
 console.log('Member-Intelligence-Rechtescope-Smoke bestanden.');

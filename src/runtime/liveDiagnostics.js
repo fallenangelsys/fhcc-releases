@@ -1,6 +1,7 @@
 import os from 'node:os';
 import process from 'node:process';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { getServerIndexSnapshot } from '../serverIndexStore.js';
@@ -13,6 +14,110 @@ const MAX_RECENT_OPERATIONS = 80;
 const MAX_RECENT_FAILURES = 120;
 const counters = { started: 0, completed: 0, failed: 0, overdue: 0 };
 const sessionCounters = { started: 0, completed: 0, failed: 0, overdue: 0 };
+
+// Interaktions-Timing-Telemetrie: Wie schnell wurde eine Interaktion bestätigt
+// (Discords 3-Sekunden-Frist) und wie lange lief der Handler? Langsame oder
+// verspätete Fälle werden einzeln festgehalten, damit Blockaden sichtbar
+// werden, bevor Nutzer „Fallen-Heaven hat nicht rechtzeitig reagiert“ melden.
+const INTERACTION_LATE_ACK_MS = 2_800; // nahe an Discords 3-Sekunden-Frist
+const INTERACTION_SLOW_HANDLER_MS = 2_500;
+const MAX_INTERACTION_TIMING_RECENT = 20;
+const interactionTiming = {
+  started: 0,
+  acked: 0,
+  unacked: 0,
+  lateAcks: 0,
+  slowHandlers: 0,
+  lastLateAck: null,
+  lastSlowHandler: null,
+  recent: []
+};
+
+// Rate-Limit-Telemetrie (RESTEvents.RateLimited): Erfasst, WELCHER Endpoint
+// wie oft von Discords Rate-Limit gebremst wurde und wie lange gewartet wurde.
+// Rate-Limits werden korrekt abgewartet (discord.js REST-Retry), aber ohne
+// Telemetrie bleibt unsichtbar, WO der Request-Spam entsteht (Punkt 82).
+const MAX_RATE_LIMIT_RECENT = 12;
+const rateLimits = {
+  total: 0,
+  global: 0,
+  byRoute: new Map(),
+  last: null,
+  recent: []
+};
+
+export const recordRateLimit = (info = {}) => {
+  const timeout = Number(info.timeout || info.retryAfter || 0);
+  const isGlobal = Boolean(info.global);
+  const method = String(info.method || '').toUpperCase() || 'GET';
+  const route = String(info.route || info.path || 'unbekannt').slice(0, 120);
+  const path = String(info.path || '').slice(0, 160);
+  rateLimits.total += 1;
+  if (isGlobal) rateLimits.global += 1;
+  const entry = rateLimits.byRoute.get(route) || { route, count: 0, totalWaitMs: 0, lastWaitMs: 0, lastAt: null };
+  entry.count += 1;
+  entry.totalWaitMs += timeout;
+  entry.lastWaitMs = timeout;
+  entry.lastAt = new Date().toISOString();
+  rateLimits.byRoute.set(route, entry);
+  rateLimits.last = {
+    at: new Date().toISOString(),
+    method, route, path,
+    timeoutMs: Math.round(timeout),
+    global: isGlobal
+  };
+  rateLimits.recent.unshift(rateLimits.last);
+  rateLimits.recent.splice(MAX_RATE_LIMIT_RECENT);
+  return rateLimits;
+};
+
+export const getRateLimitSnapshot = () => ({
+  total: rateLimits.total,
+  global: rateLimits.global,
+  last: rateLimits.last,
+  recent: rateLimits.recent.slice(0, MAX_RATE_LIMIT_RECENT),
+  byRoute: [...rateLimits.byRoute.values()]
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 10)
+});
+
+export const recordInteractionTiming = ({ type = 'other', customId = '', ackLatencyMs = null, handlerMs = 0 } = {}) => {
+  interactionTiming.started += 1;
+  // Nur ein ECHTER Ack-Zeitpunkt zählt als bestätigt: null/undefined bedeutet
+  // „kein Ack“, und Number(null) === 0 darf NICHT als 0-ms-Ack durchrutschen.
+  if (ackLatencyMs !== null && ackLatencyMs !== undefined && ackLatencyMs !== '' && Number.isFinite(Number(ackLatencyMs))) {
+    interactionTiming.acked += 1;
+    if (Number(ackLatencyMs) > INTERACTION_LATE_ACK_MS) {
+      interactionTiming.lateAcks += 1;
+      interactionTiming.lastLateAck = {
+        at: new Date().toISOString(),
+        type,
+        customId: String(customId || '').slice(0, 80),
+        ackLatencyMs: Math.round(Number(ackLatencyMs))
+      };
+    }
+  } else {
+    interactionTiming.unacked += 1;
+  }
+  if (Number(handlerMs) > INTERACTION_SLOW_HANDLER_MS) {
+    interactionTiming.slowHandlers += 1;
+    interactionTiming.lastSlowHandler = {
+      at: new Date().toISOString(),
+      type,
+      customId: String(customId || '').slice(0, 80),
+      handlerMs: Math.round(Number(handlerMs))
+    };
+  }
+  interactionTiming.recent.unshift({
+    at: new Date().toISOString(),
+    type,
+    customId: String(customId || '').slice(0, 80),
+    ackLatencyMs: (ackLatencyMs !== null && ackLatencyMs !== undefined && ackLatencyMs !== '' && Number.isFinite(Number(ackLatencyMs))) ? Math.round(Number(ackLatencyMs)) : null,
+    handlerMs: Math.round(Number(handlerMs) || 0)
+  });
+  interactionTiming.recent.splice(MAX_INTERACTION_TIMING_RECENT);
+  return interactionTiming;
+};
 const diagnosticsDataDir = path.resolve(String(process.env.FALLEN_HEAVEN_DATA_DIR || '').trim() || path.join(process.cwd(), 'data'));
 const diagnosticsHistoryFile = path.join(diagnosticsDataDir, 'diagnostic-history.json');
 const diagnosticsTemporaryFile = diagnosticsHistoryFile + '.tmp';
@@ -100,20 +205,24 @@ const restoreDiagnosticHistory = () => {
   }
 };
 
-const writeDiagnosticHistory = () => {
-  if (diagnosticsPersistTimer) {
-    clearTimeout(diagnosticsPersistTimer);
-    diagnosticsPersistTimer = null;
-  }
+const buildDiagnosticPayload = () => JSON.stringify({
+  version: 2,
+  savedAt: new Date().toISOString(),
+  counters,
+  recentOperations: recentOperations.slice(0, MAX_RECENT_OPERATIONS),
+  recentFailures: recentFailures.slice(0, MAX_RECENT_FAILURES)
+}, null, 2);
+
+// Synchroner Schreibpfad NUR für den Prozess-Exit (dort ist async nicht mehr
+// möglich). Im normalen Lauf wird asynchron geschrieben – ein synchrones
+// writeFileSync/renameSync auf einer langsamen Freigabe würde sonst den
+// gesamten Event-Loop blockieren und damit auch die sofortige
+// Interaktions-Bestätigung („Fallen-Heaven hat nicht rechtzeitig reagiert“)
+// verzögern.
+const writeDiagnosticHistorySync = () => {
   try {
     fs.mkdirSync(diagnosticsDataDir, { recursive: true });
-    const payload = JSON.stringify({
-      version: 2,
-      savedAt: new Date().toISOString(),
-      counters,
-      recentOperations: recentOperations.slice(0, MAX_RECENT_OPERATIONS),
-      recentFailures: recentFailures.slice(0, MAX_RECENT_FAILURES)
-    }, null, 2);
+    const payload = buildDiagnosticPayload();
     fs.writeFileSync(diagnosticsTemporaryFile, payload, 'utf8');
     try {
       fs.renameSync(diagnosticsTemporaryFile, diagnosticsHistoryFile);
@@ -128,16 +237,49 @@ const writeDiagnosticHistory = () => {
   }
 };
 
+let diagnosticsWritePromise = null;
+const writeDiagnosticHistory = async () => {
+  if (diagnosticsWritePromise) return diagnosticsWritePromise;
+  diagnosticsWritePromise = (async () => {
+    try {
+      await fsp.mkdir(diagnosticsDataDir, { recursive: true });
+      const payload = buildDiagnosticPayload();
+      await fsp.writeFile(diagnosticsTemporaryFile, payload, 'utf8');
+      try {
+        await fsp.rename(diagnosticsTemporaryFile, diagnosticsHistoryFile);
+      } catch {
+        await fsp.writeFile(diagnosticsHistoryFile, payload, 'utf8');
+        await fsp.rm(diagnosticsTemporaryFile, { force: true }).catch(() => {});
+      }
+      return true;
+    } catch (error) {
+      console.error('[diagnostics] Fehlerspeicher konnte nicht geschrieben werden:', error?.message || error);
+      return false;
+    } finally {
+      diagnosticsWritePromise = null;
+    }
+  })();
+  return diagnosticsWritePromise;
+};
+
 const persistDiagnosticHistory = ({ immediate = false } = {}) => {
-  if (immediate) return writeDiagnosticHistory();
-  if (diagnosticsPersistTimer) clearTimeout(diagnosticsPersistTimer);
-  diagnosticsPersistTimer = setTimeout(writeDiagnosticHistory, 250);
+  if (diagnosticsPersistTimer) {
+    clearTimeout(diagnosticsPersistTimer);
+    diagnosticsPersistTimer = null;
+  }
+  if (immediate) {
+    void writeDiagnosticHistory();
+    return true;
+  }
+  diagnosticsPersistTimer = setTimeout(() => {
+    void writeDiagnosticHistory();
+  }, 250);
   diagnosticsPersistTimer.unref?.();
   return true;
 };
 
 restoreDiagnosticHistory();
-process.once('exit', writeDiagnosticHistory);
+process.once('exit', writeDiagnosticHistorySync);
 const eventLoop = monitorEventLoopDelay({ resolution: 20 });
 eventLoop.enable();
 
@@ -455,6 +597,13 @@ export const getLiveDiagnosticsSnapshot = async ({ client, featureDispatch = nul
     jobs,
     index: indexes,
     indexTelemetry,
+    interactions: {
+      ...interactionTiming,
+      lateAckThresholdMs: INTERACTION_LATE_ACK_MS,
+      slowHandlerThresholdMs: INTERACTION_SLOW_HANDLER_MS,
+      recent: interactionTiming.recent.slice(0, MAX_INTERACTION_TIMING_RECENT)
+    },
+    rateLimits: getRateLimitSnapshot(),
     health: buildHealth({ discord, eventLoopHealth, jobs, indexes, processMetrics, indexTelemetry }),
     totals: {
       messages: indexes.reduce((sum, item) => sum + Number(item.totalMessages || 0), 0),

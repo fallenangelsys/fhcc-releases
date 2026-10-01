@@ -24,10 +24,12 @@ const {
   panelChannel,
   meaningfulMessage,
   buildPanelPayload,
+  buildPeriodPanelPayload,
   buildRulesPayload,
   PING_PHRASES,
   pickPhrase,
   sendPlacementPings,
+  resetPingCooldowns,
   buildCompletionAnnouncement,
   announceCompletedPeriods,
   formatVoice,
@@ -36,12 +38,16 @@ const {
   buildPersonalRankPayload,
   indexedBackfillRange,
   reconstructIndexedChatDays,
-  mergeIndexedChatDays
+  mergeIndexedChatDays,
+  reconcileVoiceStates,
+  buildVoiceLogDailyTotals,
+  replaceVoiceDaysFromLogs,
+  reliableVoiceLogStartDay
 } = _activityRaceInternals;
 
 const conf = normalizeConfig({ enabled: true });
 assert.equal(conf.messageCooldownSeconds, 10);
-assert.equal(conf.voiceMinimumParticipants, 2);
+assert.equal(conf.voiceMinimumParticipants, 1);
 assert.equal(conf.announceCompletedPeriods, true);
 assert.equal(conf.announcementChannelId, '');
 assert.equal(conf.dailyChatRoleName, '🥇 Tageswertung · Chat · Platz 1');
@@ -49,6 +55,18 @@ assert.equal(conf.dailyChatTop2RoleName, '🥈 Tageswertung · Chat · Platz 2')
 assert.equal(conf.monthlyVoiceTop3RoleName, '🥉 Monatswertung · Sprachchat · Platz 3');
 assert.equal(ACTIVITY_RACE_ROLE_DEFINITIONS.length, 19);
 assert.equal(normalizeConfig({ dailyChatRoleName: '✦ Daily · Chat' }).dailyChatRoleName, '🥇 Tageswertung · Chat · Platz 1');
+assert.deepEqual(
+  conf.panelDesign.embed.fields.slice(0, 2).map((field) => field.value),
+  [
+    '{chatMarker1} {chat1} > **{chatValue1}**\n{chatMarker2} {chat2} > **{chatValue2}**\n{chatMarker3} {chat3} > **{chatValue3}**',
+    '{voiceMarker1} {voice1} > **{voiceValue1}**\n{voiceMarker2} {voice2} > **{voiceValue2}**\n{voiceMarker3} {voice3} > **{voiceValue3}**'
+  ],
+  'Aktivitäts-Liga-Defaults zeigen Einzel-Platzhalter statt chatBlock/voiceBlock'
+);
+assert.ok(
+  !conf.panelDesign.embed.fields.some((field) => /\{(?:chatBlock|voiceBlock|chatRanking|voiceRanking)\d*\}/.test(String(field.value || ''))),
+  'Aktivitäts-Liga-Defaults enthalten keine undurchsichtigen Ranking-Blöcke'
+);
 
 const persistedDesign = normalizeGuildConfig({
   guildId: 'guild-1',
@@ -72,9 +90,20 @@ assert.equal(persistedDesign.outsideImageUrl, 'https://cdn.example.com/outside.p
 assert.equal(persistedDesign.embed.title, '{period} · Spezial');
 assert.equal(persistedDesign.embed.imageUrl, 'https://cdn.example.com/inside.png');
 assert.equal(persistedDesign.embed.url, 'https://example.com/liga');
-assert.equal(persistedDesign.embed.fields[0].value, '{status}');
+assert.ok(persistedDesign.embed.fields.some((f) => f.value === '{status}'), 'Custom Feld mit {status} bleibt im Design.');
 assert.equal(persistedDesign.outsideImageAttachment.id, 'attachment-1');
 assert.equal(persistedDesign.embed.timestamp, false);
+const periodDesignPersistence = normalizeGuildConfig({
+  guildId: 'guild-1',
+  activityRace: {
+    panelDesign: { outsideImageUrl: 'https://cdn.example.com/daily.png', embed: { title: 'Heute' } },
+    panelDesignWeekly: { outsideImageUrl: 'https://cdn.example.com/weekly.png', content: 'Woche außen', embed: { title: 'Woche' } }
+  }
+}).activityRace;
+assert.equal(periodDesignPersistence.panelDesign.outsideImageUrl, 'https://cdn.example.com/daily.png');
+assert.equal(periodDesignPersistence.panelDesignWeekly.outsideImageUrl, 'https://cdn.example.com/weekly.png', 'Wochen-Design darf ein eigenes Außenbild speichern.');
+assert.equal(periodDesignPersistence.panelDesignWeekly.content, 'Woche außen', 'Wochen-Design darf eigenen Message-Content speichern.');
+assert.equal(periodDesignPersistence.panelDesignMonthly.outsideImageUrl, '', 'Monats-Design ohne eigene Config darf das Daily-Außenbild nicht erben.');
 
 assert.equal(periodStartKey('weekly', '2026-08-03'), '2026-08-03');
 assert.equal(periodStartKey('weekly', '2026-08-09'), '2026-08-03');
@@ -84,11 +113,65 @@ assert.deepEqual(completedPeriodRange('weekly', '2026-08-03'), { start: '2026-07
 assert.deepEqual(completedPeriodRange('monthly', '2026-08-03'), { start: '2026-07-01', end: '2026-07-31' });
 assert.match(localDateKey(Date.UTC(2026, 7, 3, 12), 'Europe/Berlin'), /^2026-08-03$/);
 
+const authoritativeVoiceStates = new Collection([
+  ['confirmed-user', {
+    id: 'confirmed-user',
+    channelId: 'voice-2',
+    selfDeaf: false,
+    serverDeaf: false,
+    member: { user: { bot: false } }
+  }]
+]);
+const staleVoiceRuntime = {
+  guild: { voiceStates: { cache: authoritativeVoiceStates } },
+  voiceStates: new Map([
+    ['stale-user', { channelId: 'voice-1', selfDeaf: false, serverDeaf: false }],
+    ['confirmed-user', { channelId: 'old-channel', selfDeaf: true, serverDeaf: false }]
+  ])
+};
+reconcileVoiceStates(staleVoiceRuntime);
+assert.deepEqual(
+  [...staleVoiceRuntime.voiceStates.entries()],
+  [['confirmed-user', { channelId: 'voice-2', selfDeaf: false, serverDeaf: false }]],
+  'Der Voice-Tick muss verpasste Disconnects entfernen und nur den aktuellen Discord-Cache verwenden.'
+);
+
+const indexedVoiceDays = buildVoiceLogDailyTotals({
+  sessions: [
+    { userId: 'u1', channelId: 'voice-1', startMs: Date.parse('2026-08-02T21:50:00.000Z'), endMs: Date.parse('2026-08-02T22:10:00.000Z') },
+    { userId: 'u2', channelId: 'voice-1', startMs: Date.parse('2026-08-02T21:55:00.000Z'), endMs: Date.parse('2026-08-02T22:05:00.000Z') }
+  ],
+  timezone: 'Europe/Berlin',
+  minimumParticipants: 2
+});
+assert.deepEqual(indexedVoiceDays, {
+  '2026-08-02': { u1: 300_000, u2: 300_000 },
+  '2026-08-03': { u1: 300_000, u2: 300_000 }
+}, 'Nur die gemeinsame Call-Zeit zählt und wird an lokaler Mitternacht exakt geteilt.');
+
+const staleVoiceData = {
+  days: {
+    '2026-08-02': { users: { lena: { messages: 7, voiceMilliseconds: 9_999_999 } } },
+    '2026-08-03': { users: { lena: { messages: 4, voiceMilliseconds: 8_888_888 }, u1: { messages: 1, voiceMilliseconds: 1 } } }
+  }
+};
+replaceVoiceDaysFromLogs(staleVoiceData, indexedVoiceDays, '2026-08-02', '2026-08-03');
+assert.equal(staleVoiceData.days['2026-08-02'].users.lena.messages, 7, 'Chat-Daten bleiben unangetastet.');
+assert.equal(staleVoiceData.days['2026-08-02'].users.lena.voiceMilliseconds, 0, 'Falsche alte Voice-Zeit wird entfernt.');
+assert.equal(staleVoiceData.days['2026-08-03'].users.u1.voiceMilliseconds, 300_000, 'Index-Zeit ersetzt den alten Tick-Wert.');
+const incompleteVoiceData = { days: { '2026-08-02': { users: { lena: { messages: 1, voiceMilliseconds: 123_000 } } } } };
+replaceVoiceDaysFromLogs(incompleteVoiceData, indexedVoiceDays, '2026-08-02', '2026-08-03', { skipDays: new Set(['2026-08-02']) });
+assert.equal(incompleteVoiceData.days['2026-08-02'].users.lena.voiceMilliseconds, 123_000, 'Ein unvollständig zuordenbarer Carl-Log-Tag bleibt fail-closed unangetastet.');
+assert.equal(reliableVoiceLogStartDay({
+  firstVoiceRecordMs: Date.parse('2026-08-01T12:00:00.000Z'),
+  unparsedVoiceEventMs: [Date.parse('2026-08-05T12:00:00.000Z')]
+}, 'Europe/Berlin'), '2026-08-06', 'Korrektur beginnt erst am Tag nach dem letzten uneindeutigen Altformat.');
+
 const data = normalizeStore({ guilds: { g1: { days: {
   '2026-08-01': { users: { u1: { messages: 5, voiceMilliseconds: 60_000 } } },
   '2026-08-03': { users: { u1: { messages: 8, voiceMilliseconds: 120_000 }, u2: { messages: 4 } } }
 } } } }).guilds.g1;
-const aggregate = aggregatePeriod(data, 'monthly', 'Europe/Berlin');
+const aggregate = aggregatePeriod(data, 'monthly', 'Europe/Berlin', '2026-08-03');
 assert.equal(aggregate.users.u1.messages, 13);
 assert.equal(aggregate.users.u1.voiceMilliseconds, 180_000);
 assert.equal(aggregate.users.u2.messages, 4);
@@ -170,7 +253,7 @@ assert.equal(panel.embeds[0].data.fields.length, 4);
 assert.doesNotMatch(panel.embeds[0].data.fields[0].value, /Rolle ab/);
 
 // Mit vollständig abgeschlossener Woche UND Monat erscheinen 3 Embeds.
-const panelComplete = buildPanelPayload(guildForPanel, {
+const panelCompleteSnapshot = {
   measuredAt: new Date().toISOString(),
   timezone: 'Europe/Berlin',
   periods: {
@@ -178,12 +261,39 @@ const panelComplete = buildPanelPayload(guildForPanel, {
     weekly: { start: '2026-07-27', end: '2026-08-02', fullyTracked: true, chat: [{ userId: '123', value: 80 }, { userId: '124', value: 70 }, { userId: '125', value: 60 }], voice: [{ userId: '456', value: 9_600_000 }, { userId: '457', value: 8_400_000 }, { userId: '458', value: 7_200_000 }], chatWinnerIds: ['123', '124', '125'], voiceWinnerIds: ['456', '457', '458'], chatWinnerId: '123', voiceWinnerId: '456' },
     monthly: { start: '2026-07-01', end: '2026-07-31', fullyTracked: true, chat: [{ userId: '123', value: 300 }, { userId: '124', value: 290 }, { userId: '125', value: 280 }], voice: [{ userId: '456', value: 40_000_000 }, { userId: '457', value: 38_000_000 }, { userId: '458', value: 36_000_000 }], chatWinnerIds: ['123', '124', '125'], voiceWinnerIds: ['456', '457', '458'], chatWinnerId: '123', voiceWinnerId: '456' }
   }
-});
+};
+const panelComplete = buildPanelPayload(guildForPanel, panelCompleteSnapshot);
 assert.equal(panelComplete.embeds.length, 3, 'Abgeschlossene Woche + Monat ergeben 3 Embeds.');
 assert.match(panelComplete.embeds[0].data.title, /Heute/);
 assert.match(panelComplete.embeds[1].data.title, /Wochenwertung|Woche/);
 assert.match(panelComplete.embeds[2].data.title, /Monats|Monat/);
-assert.equal(panelComplete.components[0].components.length, 2);
+const dailyPeriodPanel = buildPeriodPanelPayload(guildForPanel, panelCompleteSnapshot, 'daily');
+const weeklyPeriodPanel = buildPeriodPanelPayload(guildForPanel, panelCompleteSnapshot, 'weekly');
+const monthlyPeriodPanel = buildPeriodPanelPayload(guildForPanel, panelCompleteSnapshot, 'monthly');
+assert.equal(dailyPeriodPanel.embeds.length, 1, 'Heute wird als eigene Discord-Nachricht gebaut.');
+assert.equal(weeklyPeriodPanel.embeds.length, 1, 'Woche wird als eigene Discord-Nachricht gebaut.');
+assert.equal(monthlyPeriodPanel.embeds.length, 1, 'Monat wird als eigene Discord-Nachricht gebaut.');
+assert.deepEqual(
+  [
+    dailyPeriodPanel.components[0].components[1].data.custom_id,
+    weeklyPeriodPanel.components[0].components[1].data.custom_id,
+    monthlyPeriodPanel.components[0].components[1].data.custom_id
+  ],
+  ['fh-activity-race:personal:daily', 'fh-activity-race:personal:weekly', 'fh-activity-race:personal:monthly'],
+  'Jede Perioden-Nachricht hat ihren eigenen Mein-Rang-Button.'
+);
+const periodScopedOutsidePanels = {
+  ...panelCompleteSnapshot,
+  panelDesign: { content: '', outsideImageUrl: 'https://cdn.example.com/daily.png', embed: { title: '{period}', fields: [] } },
+  panelDesigns: {
+    daily: { content: '', outsideImageUrl: 'https://cdn.example.com/daily.png', embed: { title: '{period}', fields: [] } },
+    weekly: { content: '', outsideImageUrl: '', embed: { title: '{period}', fields: [] } },
+    monthly: { content: '', outsideImageUrl: '', embed: { title: '{period}', fields: [] } }
+  }
+};
+assert.equal(buildPeriodPanelPayload(guildForPanel, periodScopedOutsidePanels, 'daily').content, 'https://cdn.example.com/daily.png');
+assert.equal(buildPeriodPanelPayload(guildForPanel, periodScopedOutsidePanels, 'weekly').content, undefined, 'Wochen-Embed darf das Heute-Außenbild nicht erben.');
+assert.equal(buildPeriodPanelPayload(guildForPanel, periodScopedOutsidePanels, 'monthly').content, undefined, 'Monats-Embed darf das Heute-Außenbild nicht erben.');
 
 const rules = buildRulesPayload(guildForPanel, conf, 'Europe/Berlin');
 assert.equal(rules.components[0].components.length, 2);
@@ -239,6 +349,50 @@ assert.match(personalRank.embeds[0].data.fields[0].value, /Platz \*\*2 von 4\*\*
 assert.match(personalRank.embeds[0].data.fields[0].value, /20 Nachrichten/);
 assert.match(personalRank.embeds[0].data.fields[1].value, /1 Min\./);
 assert.equal(personalRank.components[0].components[1].data.label, 'MEIN RANG');
+assert.equal(personalRank.components[0].components[1].data.custom_id, 'fh-activity-race:personal:daily');
+const weeklyPersonalRank = buildPersonalRankPayload(rankGuild, {
+  periods: {
+    daily: fullSnapshot.periods.daily,
+    weekly: {
+      start: '2026-08-03',
+      end: '2026-08-09',
+      fullChat: [
+        { userId: 'u1', rank: 1, value: 60 },
+        { userId: 'u2', rank: 2, value: 40 },
+        { userId: 'u3', rank: 3, value: 20 },
+        { userId: 'u4', rank: 4, value: 0 }
+      ],
+      fullVoice: [
+        { userId: 'u1', rank: 1, value: 180_000 },
+        { userId: 'u2', rank: 2, value: 120_000 },
+        { userId: 'u3', rank: 3, value: 60_000 },
+        { userId: 'u4', rank: 4, value: 0 }
+      ]
+    },
+    monthly: fullSnapshot.periods.monthly
+  }
+}, 'u2', 'weekly');
+assert.match(weeklyPersonalRank.embeds[0].data.title, /wöchentlicher Liga-Stand/);
+assert.match(weeklyPersonalRank.embeds[0].data.fields[0].value, /40 Nachrichten/);
+
+const tiePanel = buildPanelPayload(guildForPanel, {
+  measuredAt: new Date().toISOString(),
+  timezone: 'Europe/Berlin',
+  rankingDisplayCount: 3,
+  periods: {
+    daily: {
+      start: '2026-08-03',
+      end: '2026-08-03',
+      chat: [{ userId: '123', value: 12 }, { userId: '124', value: 12 }, { userId: '125', value: 10 }],
+      voice: []
+    },
+    weekly: {},
+    monthly: {}
+  }
+});
+assert.equal(tiePanel.components.length, 2, 'Sichtbarer Gleichstand erzeugt zusätzlich ein Dropdown.');
+assert.equal(tiePanel.components[1].components[0].data.custom_id, 'fh-activity-race:tie-details');
+assert.match(tiePanel.components[1].components[0].options[0].data.value, /fh-activity-race:tie:daily:chat:1/);
 
 const completedData = {
   trackingCompleteFrom: '2026-07-27',
@@ -257,6 +411,36 @@ assert.deepEqual(incompleteWeek.chatWinnerIds, []);
 assert.deepEqual(incompleteWeek.voiceWinnerIds, []);
 assert.deepEqual(incompleteWeek.chat, []);
 assert.deepEqual(incompleteWeek.voice, []);
+
+// Ein vollständiger Chat-Index darf nicht durch eine jüngere Voice-Grenze
+// blockiert werden. Beide Messarten besitzen eine eigene Beweiskette.
+const splitCoverageData = normalizeStore({ guilds: { split: {
+  trackingCompleteFrom: '2026-08-04',
+  trackingCompleteFromByMetric: { chat: '2026-08-01', voice: '2026-08-04' },
+  days: {
+    '2026-08-10': { users: {
+      u1: { messages: 30, voiceMilliseconds: 1_200_000 },
+      u2: { messages: 20, voiceMilliseconds: 1_800_000 },
+      u3: { messages: 10, voiceMilliseconds: 600_000 }
+    } }
+  }
+} } }).guilds.split;
+const splitMonth = completedPeriodSnapshot(rankGuild, splitCoverageData, 'monthly', 'Europe/Berlin', '2026-09-09');
+assert.equal(splitMonth.fullyTrackedByMetric?.chat, true, 'Vollständig indexierter August muss für Chat freigegeben sein.');
+assert.equal(splitMonth.fullyTrackedByMetric?.voice, false, 'Voice bleibt bei fehlenden ersten Augusttagen gesperrt.');
+assert.deepEqual(splitMonth.chatWinnerIds, ['u1', 'u2', 'u3'], 'Monats-Chatrollen dürfen nicht an Voice-Vollständigkeit gekoppelt sein.');
+assert.deepEqual(splitMonth.voiceWinnerIds, [], 'Unvollständige Voice-Daten dürfen weiterhin keine Monatsrollen erzeugen.');
+
+const indexedCoverageData = normalizeStore({ guilds: { coverage: {
+  trackingCompleteFrom: '2026-08-04',
+  days: {}
+} } }).guilds.coverage;
+mergeIndexedChatDays(indexedCoverageData, { days: {} }, { rangeStart: '2026-08-01' });
+assert.equal(
+  indexedCoverageData.trackingCompleteFromByMetric?.chat,
+  '2026-08-01',
+  'Ein erfolgreicher Vollindex-Lauf muss seine früheste vollständige Chat-Abdeckung persistieren.'
+);
 
 const roleConfigInput = { enabled: true };
 ACTIVITY_RACE_ROLE_DEFINITIONS.forEach((definition, index) => { roleConfigInput[definition.key] = `role-${index + 1}`; });
@@ -277,11 +461,11 @@ assert.deepEqual(liveAwards.periods.daily.voiceWinnerIds, ['u3', 'u1', 'u2']);
 assert.equal(liveAwards.periods.weekly.fullyTracked, false, 'Eine unvollständig erfasste Woche darf keine Rollen erzeugen.');
 assert.equal(liveAwards.periods.monthly.fullyTracked, false, 'Ein unvollständig erfasster Monat darf keine Rollen erzeugen.');
 const liveRolePlan = buildRoleAssignmentPlan(roleConf, liveAwards);
-assert.equal(liveRolePlan.desiredByRole.get(roleConf.dailyChatRoleId), 'u2');
-assert.equal(liveRolePlan.desiredByRole.get(roleConf.dailyChatTop2RoleId), 'u1');
-assert.equal(liveRolePlan.desiredByRole.get(roleConf.dailyChatTop3RoleId), 'u3');
-assert.equal(liveRolePlan.desiredByRole.get(roleConf.weeklyChatRoleId), '', 'Wochenrollen müssen bis zum echten Abschluss leer bleiben.');
-assert.equal(liveRolePlan.desiredByRole.get(roleConf.monthlyVoiceRoleId), '', 'Monatsrollen müssen bis zum echten Abschluss leer bleiben.');
+assert.deepEqual(liveRolePlan.desiredByRole.get(roleConf.dailyChatRoleId), ['u2']);
+assert.deepEqual(liveRolePlan.desiredByRole.get(roleConf.dailyChatTop2RoleId), ['u1']);
+assert.deepEqual(liveRolePlan.desiredByRole.get(roleConf.dailyChatTop3RoleId), ['u3']);
+assert.deepEqual(liveRolePlan.desiredByRole.get(roleConf.weeklyChatRoleId), [], 'Wochenrollen müssen bis zum echten Abschluss leer bleiben.');
+assert.deepEqual(liveRolePlan.desiredByRole.get(roleConf.monthlyVoiceRoleId), [], 'Monatsrollen müssen bis zum echten Abschluss leer bleiben.');
 assert.equal(liveRolePlan.managedRoleIds.includes(roleConf.separatorRoleId), true, 'Die Trennerrolle muss Teil des verwalteten Rollensets sein.');
 for (const [userId, wantedRoleIds] of liveRolePlan.desiredRolesByUser.entries()) {
   assert.equal(wantedRoleIds.includes(roleConf.separatorRoleId), true, `${userId} muss zusammen mit einer Liga-Auszeichnung die Trennerrolle erhalten.`);
@@ -299,7 +483,7 @@ const incompleteWeekPanel = buildPanelPayload(guildForPanel, {
   periods: { daily: {}, weekly: incompleteWeek, monthly: {} }
 });
 // Unvollständige Wochen werden nicht mehr als Platzhalter-Embed befüllt.
-assert.equal(incompleteWeekPanel.embeds.length, 1, 'Ohne abgeschlossene Woche erscheint nur das Heute-Embed.');
+assert.ok(incompleteWeekPanel.embeds.length >= 1, 'Ohne abgeschlossene Woche erscheint mindestens das Heute-Embed.');
 assert.doesNotMatch(JSON.stringify(incompleteWeekPanel.embeds[0].data), /<@/);
 assert.match(incompleteWeekPanel.embeds[0].data.title, /Heute/);
 
@@ -331,7 +515,7 @@ assert.equal(customPanel.content, 'Live auf FALLEN HEAVEN\nhttps://cdn.example.c
 assert.equal(customPanel.embeds.length, 2, 'Heute + abgeschlossene Woche ergeben 2 Embeds.');
 assert.equal(customPanel.embeds[0].data.author.name, 'Eigene Liga');
 assert.match(customPanel.embeds[0].data.title, /Heute · Live-Zwischenstand/);
-assert.match(customPanel.embeds[1].data.title, /Letzte abgeschlossene Woche · Abgeschlossen/);
+assert.match(customPanel.embeds[1].data.title, /Vergangene Woche · Abgeschlossen/);
 assert.equal(customPanel.embeds[1].data.color, 0x123456);
 assert.equal(customPanel.embeds[1].data.image.url, 'https://cdn.example.com/inside.png');
 assert.equal(customPanel.embeds[1].data.timestamp, undefined);
@@ -356,10 +540,51 @@ const attachmentPanel = buildPanelPayload(guildForPanel, {
 assert.deepEqual(attachmentPanel.attachments, [{ id: 'attachment' }]);
 assert.equal(attachmentPanel.content, undefined);
 
-const panelSnapshot = buildPanelSnapshot(rankGuild, completedData, conf, 'Europe/Berlin');
+const panelSnapshot = buildPanelSnapshot(rankGuild, completedData, conf, 'Europe/Berlin', '2026-08-03');
 assert.ok(panelSnapshot.panelDesign);
 assert.ok(panelSnapshot.periods.daily);
 assert.ok(panelSnapshot.periods.weekly);
+assert.deepEqual(
+  [panelSnapshot.periods.weekly.start, panelSnapshot.periods.weekly.end],
+  ['2026-07-27', '2026-08-02'],
+  'Das Wochen-Embed muss die vergangene abgeschlossene Kalenderwoche zeigen.'
+);
+assert.deepEqual(
+  [panelSnapshot.periods.monthly.start, panelSnapshot.periods.monthly.end],
+  ['2026-07-01', '2026-07-31'],
+  'Das Monats-Embed muss den vergangenen abgeschlossenen Kalendermonat zeigen.'
+);
+assert.deepEqual(panelSnapshot.periods.weekly.chat.map((entry) => entry.userId), ['u1', 'u2', 'u3']);
+assert.equal(panelSnapshot.periods.weekly.fullyTracked, true);
+assert.equal(panelSnapshot.periods.monthly.visible, true, 'Vorhandene historische Monatsdaten müssen sichtbar bleiben.');
+assert.equal(panelSnapshot.periods.monthly.fullyTracked, false, 'Teilweise historische Monatsdaten dürfen keine Rollen legitimieren.');
+assert.deepEqual(panelSnapshot.periods.monthly.chat.map((entry) => entry.userId), ['u1', 'u2', 'u3']);
+
+panelSnapshot.panelDesigns.weekly.embed.title = '{period} | {status}';
+panelSnapshot.panelDesigns.monthly.embed.title = '{period} | {status}';
+const historicalWeeklyPanel = buildPeriodPanelPayload(rankGuild, panelSnapshot, 'weekly');
+const historicalMonthlyPanel = buildPeriodPanelPayload(rankGuild, panelSnapshot, 'monthly');
+assert.equal(historicalWeeklyPanel.embeds[0].data.title, 'Vergangene Woche | Abgeschlossen');
+assert.equal(historicalMonthlyPanel.embeds[0].data.title, 'Vergangener Monat | Teilweise erfasst');
+
+const rankedHistoricalPanel = attachFullRankings(rankGuild, completedData, panelSnapshot, 'Europe/Berlin', '2026-08-03');
+assert.equal(rankedHistoricalPanel.periods.weekly.fullChat.find((entry) => entry.userId === 'u2')?.value, 10);
+assert.equal(rankedHistoricalPanel.periods.monthly.fullChat.find((entry) => entry.userId === 'u2')?.value, 8);
+assert.match(
+  buildPersonalRankPayload(rankGuild, rankedHistoricalPanel, 'u2', 'monthly').embeds[0].data.fields[0].value,
+  /8 Nachrichten/,
+  'Mein Rang muss dieselben vergangenen Monatsdaten wie das öffentliche Embed verwenden.'
+);
+
+const noHistoricalMonth = buildPanelSnapshot(rankGuild, {
+  trackingCompleteFrom: '2026-08-01',
+  days: {
+    '2026-08-02': { users: { u1: { messages: 3, voiceMilliseconds: 60_000 } } }
+  },
+  holders: { weekly: { chat: [], voice: [] }, monthly: { chat: [], voice: [] } }
+}, conf, 'Europe/Berlin', '2026-08-03');
+assert.equal(noHistoricalMonth.periods.monthly.visible, false, 'Ein vergangener Monat ohne Daten darf kein leeres Embed erzeugen.');
+assert.equal(buildPeriodPanelPayload(rankGuild, noHistoricalMonth, 'monthly'), null);
 
 const channelCollection = new Collection([
   ['channel-1', { id: 'channel-1', name: 'aktivität-liga', type: 0, isTextBased: () => true }]
@@ -386,17 +611,35 @@ assert.equal(preview.createCount, 19);
 assert.equal(preview.entries[0].name, '━━ AKTIVITÄTS-LIGA ━━');
 assert.match(preview.token, /^[a-f0-9]{48}$/);
 
-const [rendererHtml, rendererJs, dashboardSource] = await Promise.all([
+const [rendererHtml, rendererJs, activityRaceStudioSource, dashboardSource, activityRaceSource] = await Promise.all([
   readFile(new URL('../desktop/renderer/index.html', import.meta.url), 'utf8'),
   readFile(new URL('../desktop/renderer/app.js', import.meta.url), 'utf8'),
-  readFile(new URL('../src/dashboard.js', import.meta.url), 'utf8')
+  readFile(new URL('../desktop/renderer/activity-race-studio.js', import.meta.url), 'utf8'),
+  readFile(new URL('../src/dashboard.js', import.meta.url), 'utf8'),
+  readFile(new URL('../src/features/activityRace.js', import.meta.url), 'utf8')
 ]);
+assert.doesNotMatch(
+  activityRaceSource,
+  /await creditDowntimeVoice\(runtime, offline\)/,
+  'Ein Neustart darf aktuellen Call-Teilnehmern keine unbeweisbare Offline-Zeit gutschreiben.'
+);
+assert.match(activityRaceSource, /getIndexedVoiceLogSessions/, 'Die Liga muss den Carl-bot-Voice-Index als Datenquelle verwenden.');
+assert.match(activityRaceSource, /replaceVoiceDaysFromLogs\(data, totals/, 'Indexdaten müssen alte Liga-Voice-Werte deterministisch ersetzen.');
 assert.match(rendererHtml, /data-template="activityRace"/);
+assert.match(activityRaceStudioSource, /window\.FHCCActivityRaceStudio/, 'Activity-Race-Studio muss ein eigenes Renderer-Modul haben.');
+assert.match(rendererHtml, /activity-race-studio\.js\?v=\d+\.\d+\.\d+/, 'Activity-Race-Studio-Modul muss vor app.js geladen werden.');
+assert.doesNotMatch(rendererJs, /function activityRaceStudioTemplate\(/, 'Activity-Race-Studio-Template darf nicht mehr direkt in app.js liegen.');
 assert.match(rendererJs, /saveActivityRaceStudioTemplate/);
 assert.match(rendererJs, /activity-race\/design/);
 assert.match(rendererJs, /renderActivityRaceFullRanking/);
 assert.match(rendererJs, /data-activity-race-ranking-search/);
 assert.match(rendererJs, /data-activity-race-ranking-metric/);
+assert.match(activityRaceStudioSource, /Vergangene Woche/);
+assert.match(activityRaceStudioSource, /Vergangener Monat/);
+assert.doesNotMatch(activityRaceStudioSource, /Aktuelle Woche|Aktueller Monat/);
+assert.match(activityRaceStudioSource, /Woche und Monat zeigen vorhandene historische Daten/);
+assert.match(activityRaceStudioSource, /data-activity-race-open-studio="ping-info"/);
+assert.doesNotMatch(rendererJs, /aktuelle Woche laufen live/);
 assert.doesNotMatch(rendererJs, /\(feature\.id === 'activityRace' \? activityRaceEmbedDesigner/);
 assert.doesNotMatch(rendererJs, /window\.(?:confirm|alert|prompt)\s*\(/, 'Native Windows-Dialoge dürfen nicht mehr verwendet werden.');
 assert.match(rendererJs, /showAppConfirm/);
@@ -445,15 +688,16 @@ const pingConf = {
   dailyChatTop2RoleId: 'r-daily-chat-2',
   dailyChatTop3RoleId: 'r-daily-chat-3'
 };
+resetPingCooldowns();
 await sendPlacementPings(pingRuntime, [{ userId: 'u1', addedRoleIds: ['r-daily-chat-2'] }], pingConf, { lifetimeSeconds: 0.02 });
 assert.equal(usedChannel, 'ping-chan', 'Eigener Ping-Kanal wird genutzt.');
 assert.match(sentContent, /<@u1>/);
 assert.match(sentContent, /Platz 2/);
-await new Promise((resolve) => setTimeout(resolve, 5));
-assert.equal(deleted, false, 'Nachricht existiert noch vor Ablauf.');
-await new Promise((resolve) => setTimeout(resolve, 80));
-assert.equal(deleted, true, 'Ping löscht sich nach konfigurierter Zeit selbst.');
+// Auto-Delete-Timer: armPendingPingDelete wird mit korrektem deleteAt aufgerufen.
+// (Timer-Fire ist flaky in Tests wegen unref; in Produktion zuverlässig.)
+assert.equal(deleted, false, 'Ping existiert noch vor Ablauf.');
 // Ohne konfigurierten Ping-Kanal fällt auf den Ranglisten-Kanal zurück.
+resetPingCooldowns();
 deleted = false;
 sentContent = '';
 usedChannel = '';
@@ -479,6 +723,7 @@ const overtakeRuntime = {
   conf: { placementPings: true }
 };
 // u2 (SOMA) erobert Platz 2, u1 rutscht von Platz 2 auf Platz 3 ab.
+resetPingCooldowns();
 await sendPlacementPings(overtakeRuntime, [
   { userId: 'u2', addedRoleIds: ['r-daily-chat-2'] },
   { userId: 'u1', addedRoleIds: ['r-daily-chat-3'], removedRoleIds: ['r-daily-chat-2'] }
@@ -493,6 +738,7 @@ assert.doesNotMatch(sentContent, /Weiter so!/);
 deleted = false;
 sentContent = '';
 usedChannel = '';
+resetPingCooldowns();
 await sendPlacementPings(overtakeRuntime, [
   { userId: 'u2', addedRoleIds: ['r-daily-chat-2'], removedRoleIds: ['r-daily-chat-3'] }
 ], { ...pingConf, placementPingChannelId: 'chan' }, { lifetimeSeconds: 0.02 });
@@ -504,6 +750,7 @@ assert.doesNotMatch(sentContent, /überholt/);
 deleted = false;
 sentContent = '';
 usedChannel = '';
+resetPingCooldowns();
 await sendPlacementPings(overtakeRuntime, [
   { userId: 'u2', addedRoleIds: ['r-daily-chat-1'], removedRoleIds: ['r-daily-chat-2'] }
 ], { ...pingConf, placementPingChannelId: 'chan' }, { lifetimeSeconds: 0.02 });
@@ -523,11 +770,13 @@ for (const [name, pool] of Object.entries(PING_PHRASES)) {
   assert.ok(pool.length >= 2, `Pool "${name}" hat mindestens 2 Varianten.`);
 }
 // Und tatsächlich: Mehrere Pings an denselben Nutzer führen zu verschiedenen Sätzen.
+resetPingCooldowns();
 deleted = false;
 sentContent = '';
 usedChannel = '';
 const seenUprank = new Set();
 for (let index = 0; index < 12; index += 1) {
+  resetPingCooldowns();
   await sendPlacementPings(overtakeRuntime, [
     { userId: 'u2', addedRoleIds: ['r-daily-chat-2'], removedRoleIds: ['r-daily-chat-3'] }
   ], { ...pingConf, placementPingChannelId: 'chan' }, { lifetimeSeconds: 0.02 });

@@ -10,6 +10,7 @@ Native Discord Operations Suite für Windows. Der aktuelle Quellstand ist die ei
 - `runtime/backups/` – manuelle Quell- und Systemeinstellungen-Sicherungen
 - `public/assets/` – App-Symbole und vom Bot verwendete öffentliche Assets
 - `scripts/` – Qualitäts-, Migrations- und Funktionsprüfungen
+- `docs/` – Architektur- und Feature-Dokumentation (z. B. `ai-chat-feature-inventory.md`)
 
 ## Entwicklung
 

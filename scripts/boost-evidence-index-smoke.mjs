@@ -62,6 +62,9 @@ await writeRows(lossChannelId, [{
 }]);
 
 const { getIndexedBoostEvidenceEvents, getIndexedNativeBoostEvents } = await import('../src/features/boostSystemIndex.js');
+// getIndexedNativeBoostEvents öffnet seit dem SQLite-Backfill auch die
+// Index-Datenbank – vor dem Aufräumen schließen, sonst bleibt die WAL-Datei gesperrt.
+const { closeServerIndex } = await import('../src/serverIndexStore.js');
 const channels = new Map([
   [mainChannelId, { id: mainChannelId, name: 'hauptchat' }],
   [infoChannelId, { id: infoChannelId, name: '╰🚀〢boost-info' }],
@@ -72,12 +75,13 @@ const channelIds = [...channels.keys()];
 const since = Date.parse('2026-08-03T00:00:00.000Z');
 
 const native = await getIndexedNativeBoostEvents({ guild, channelIds, activeUserIds: [userId], since });
-const evidence = getIndexedBoostEvidenceEvents({ guildId, channelIds, activeUserIds: [userId], since });
+const evidence = await getIndexedBoostEvidenceEvents({ guildId, channelIds, activeUserIds: [userId], since });
 
 assert.equal(native.length, 1);
 assert.equal(native[0].type, 'boost');
 assert.deepEqual(evidence.map((entry) => entry.type).sort(), ['boost-info', 'expired']);
 assert.equal(evidence.some((entry) => entry.messageId === 'scheduled-expiry'), false);
 
+await closeServerIndex().catch(() => {});
 await fs.rm(root, { recursive: true, force: true });
 console.log('Boost-Evidence-Index-Smoke-Test bestanden.');

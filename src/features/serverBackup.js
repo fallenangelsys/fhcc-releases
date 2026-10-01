@@ -9,8 +9,10 @@ import {
 
 import { recordDiagnosticError, runTrackedOperation } from '../runtime/liveDiagnostics.js';
 import { atomicWriteJson } from '../runtime/atomicJsonStore.js';
+import { quietLog, QUIET_LOG_SCOPE } from '../runtime/quietLog.js';
+import { DATA_DIR } from '../shared/paths.js';
 
-const DATA_ROOT = process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_ROOT = DATA_DIR;
 const BACKUP_ROOT = path.join(DATA_ROOT, 'server-backups');
 const timers = new Map();
 const lastDailyRun = new Map();
@@ -171,11 +173,21 @@ const serializeScheduledEvent = (event) => ({
 
 export const buildServerStructureSnapshot = async (guild, conf = {}) => {
   const settings = normalizeBackupConfig(conf);
-  await guild.channels.fetch().catch(() => null);
-  await guild.roles.fetch?.().catch(() => null);
-  if (settings.includeEmojis) await guild.emojis.fetch().catch(() => null);
-  if (settings.includeStickers) await guild.stickers.fetch().catch(() => null);
-  if (settings.includeScheduledEvents) await guild.scheduledEvents.fetch().catch(() => null);
+  await guild.channels.fetch().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.serverBackup, error, `channels.fetch fehlgeschlagen`);
+  });
+  await guild.roles.fetch?.().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.serverBackup, error, `roles.fetch fehlgeschlagen`);
+  });
+  if (settings.includeEmojis) await guild.emojis.fetch().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.serverBackup, error, `emojis.fetch fehlgeschlagen`);
+  });
+  if (settings.includeStickers) await guild.stickers.fetch().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.serverBackup, error, `stickers.fetch fehlgeschlagen`);
+  });
+  if (settings.includeScheduledEvents) await guild.scheduledEvents.fetch().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.serverBackup, error, `scheduledEvents.fetch fehlgeschlagen`);
+  });
 
   const roles = guild.roles.cache
     .filter((role) => role.id !== guild.id)
@@ -287,7 +299,10 @@ const pruneBackups = async (guildId, keepBackups) => {
 const sendBackupLog = async (guild, conf, embed) => {
   const channelId = String(conf?.logChannelId || '').trim();
   if (!channelId) return;
-  const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+  const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.serverBackup, error, `channels.fetch (Log) fehlgeschlagen: ${channelId}`);
+    return null;
+  });
   if (!channel?.isTextBased?.()) return;
   await channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
 };

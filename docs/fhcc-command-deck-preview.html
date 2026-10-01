@@ -1,0 +1,1209 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fallen Heaven Command Deck</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --void: #050608;
+      --iron: #101217;
+      --iron-2: #15181e;
+      --steel: #242832;
+      --line: #303641;
+      --ash: #8a909b;
+      --bone: #e7e4dd;
+      --white: #f7f5f0;
+      --halo: #a996ff;
+      --halo-soft: rgba(169, 150, 255, .16);
+      --signal: #e35d6a;
+      --signal-soft: rgba(227, 93, 106, .13);
+      --alive: #52d39a;
+      --alive-soft: rgba(82, 211, 154, .12);
+      --amber: #d8ad66;
+      --topbar: 72px;
+      --rail: 48px;
+      font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+      background: var(--void);
+      color: var(--bone);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; background: var(--void); }
+    body { min-width: 320px; overflow-x: hidden; }
+    button, input, textarea, select { font: inherit; color: inherit; }
+    button { border: 0; cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 2px solid var(--halo);
+      outline-offset: 2px;
+    }
+
+    .app-shell { min-height: 100vh; background: var(--void); }
+
+    .command-deck {
+      position: fixed;
+      z-index: 50;
+      inset: 0 0 auto;
+      height: var(--topbar);
+      display: grid;
+      grid-template-columns: minmax(250px, 1fr) auto minmax(250px, 1fr);
+      align-items: stretch;
+      border-bottom: 1px solid var(--line);
+      background: rgba(5, 6, 8, .93);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      padding: 0 22px;
+      min-width: 0;
+      border-right: 1px solid var(--line);
+    }
+
+    .brand img { width: 34px; height: 34px; object-fit: cover; border-radius: 50%; filter: grayscale(1); }
+    .brand-copy { min-width: 0; }
+    .brand b {
+      display: block;
+      font-family: Bahnschrift, "Arial Narrow", sans-serif;
+      font-stretch: condensed;
+      font-size: 17px;
+      font-weight: 600;
+      line-height: 1;
+    }
+    .brand small, .deck-actions small {
+      display: block;
+      margin-top: 5px;
+      color: var(--ash);
+      font: 10px/1.1 "Cascadia Mono", Consolas, monospace;
+      text-transform: uppercase;
+    }
+
+    .primary-nav { display: flex; align-items: stretch; min-width: 0; }
+    .primary-nav button {
+      position: relative;
+      min-width: 112px;
+      padding: 0 17px;
+      background: transparent;
+      color: var(--ash);
+      font-size: 13px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .primary-nav button:hover { color: var(--bone); background: rgba(255,255,255,.025); }
+    .primary-nav button[aria-current="page"] { color: var(--white); }
+    .primary-nav button[aria-current="page"]::before {
+      content: "";
+      position: absolute;
+      left: 50%; bottom: 12px;
+      width: 4px; height: 4px;
+      margin-left: -2px;
+      background: var(--halo);
+      box-shadow: 0 0 14px var(--halo);
+      transform: rotate(45deg);
+    }
+
+    .deck-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 0 18px;
+      border-left: 1px solid var(--line);
+    }
+    .live-state { display: flex; align-items: center; gap: 8px; color: var(--alive); font: 11px "Cascadia Mono", Consolas, monospace; }
+    .live-state i { width: 6px; height: 6px; background: var(--alive); box-shadow: 0 0 12px var(--alive); }
+    .command-trigger {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--iron-2);
+      color: var(--bone);
+      font-size: 12px;
+    }
+    .command-trigger kbd { color: var(--ash); font: 10px "Cascadia Mono", Consolas, monospace; }
+
+    .view-rail {
+      position: fixed;
+      z-index: 40;
+      inset: var(--topbar) 0 auto;
+      height: var(--rail);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      border-bottom: 1px solid #1d2027;
+      background: rgba(8, 9, 12, .95);
+    }
+    .view-rail span { color: var(--ash); font: 10px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .view-rail b { color: var(--bone); font-size: 12px; font-weight: 600; }
+    .heaven-track { position: absolute; inset: auto 0 -1px; height: 1px; background: #20242c; overflow: hidden; }
+    .heaven-line {
+      position: absolute;
+      left: 0; top: 0;
+      width: 112px; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--halo) 25%, var(--white) 50%, var(--halo) 75%, transparent);
+      box-shadow: 0 0 11px var(--halo);
+      transition: transform .42s cubic-bezier(.22,.8,.2,1), width .42s ease;
+    }
+
+    main { padding-top: calc(var(--topbar) + var(--rail)); min-height: 100vh; }
+    .workspace { display: none; min-height: calc(100vh - var(--topbar) - var(--rail)); }
+    .workspace.is-active { display: block; animation: view-in .35s ease both; }
+    @keyframes view-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+    .eyebrow { color: var(--halo); font: 10px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .section-title {
+      margin: 8px 0 0;
+      font-family: Bahnschrift, "Arial Narrow", sans-serif;
+      font-size: clamp(30px, 4vw, 64px);
+      font-stretch: condensed;
+      font-weight: 300;
+      line-height: .95;
+    }
+    .muted { color: var(--ash); }
+    .mono { font-family: "Cascadia Mono", Consolas, monospace; }
+
+    /* Overview / Server Atlas */
+    .atlas {
+      position: relative;
+      min-height: calc(100vh - var(--topbar) - var(--rail));
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(5,6,8,.02), rgba(5,6,8,.22) 48%, rgba(5,6,8,.82) 84%),
+        linear-gradient(0deg, var(--void), transparent 32%),
+        #080a0e;
+    }
+    .atlas::before {
+      content: "";
+      position: absolute; inset: 0;
+      background: url('../desktop/renderer/assets/fallen-heaven-bg.png') center / cover no-repeat;
+      opacity: .78;
+      filter: brightness(1.55) contrast(1.08);
+      mask-image: linear-gradient(#000 0%, #000 78%, transparent 100%);
+    }
+    .atlas::after {
+      content: "";
+      position: absolute; inset: 0;
+      pointer-events: none;
+      background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 52px 52px;
+      mask-image: linear-gradient(90deg, transparent, #000 48%, #000);
+    }
+    .atlas-heading { position: relative; z-index: 2; padding: 46px 5vw 0; max-width: 760px; }
+    .atlas-heading .section-title { color: var(--white); text-shadow: 0 2px 24px rgba(0,0,0,.9); }
+    .atlas-heading p { max-width: 510px; margin: 18px 0 0; color: #d0d2d7; font-size: 14px; line-height: 1.65; text-shadow: 0 2px 14px #000; }
+    .atlas-stamp {
+      display: inline-flex; align-items: center; gap: 10px;
+      margin-top: 22px; padding: 8px 0;
+      border-top: 1px solid rgba(231,228,221,.28);
+      color: var(--bone); font: 11px "Cascadia Mono", Consolas, monospace;
+    }
+    .atlas-stamp i { width: 20px; height: 1px; background: var(--alive); box-shadow: 0 0 10px var(--alive); }
+
+    .atlas-map {
+      position: relative;
+      z-index: 3;
+      width: min(780px, 58vw);
+      height: 430px;
+      margin: -32px 3vw 90px auto;
+    }
+    .atlas-spine { position: absolute; right: 43%; top: 10%; bottom: 9%; width: 1px; background: linear-gradient(transparent, var(--halo), #4c5260, transparent); }
+    .atlas-spine::before, .atlas-spine::after { content: ""; position: absolute; left: -3px; width: 7px; height: 7px; border: 1px solid var(--halo); transform: rotate(45deg); background: var(--void); }
+    .atlas-spine::before { top: 27%; } .atlas-spine::after { bottom: 24%; }
+    .atlas-node {
+      position: absolute;
+      display: grid;
+      grid-template-columns: 34px minmax(145px, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      width: 290px;
+      min-height: 64px;
+      padding: 9px 13px 9px 0;
+      border-top: 1px solid rgba(231,228,221,.22);
+      border-bottom: 1px solid rgba(231,228,221,.09);
+      background: linear-gradient(90deg, rgba(12,14,18,.82), rgba(12,14,18,.97));
+      color: var(--bone);
+      text-align: left;
+      backdrop-filter: blur(9px);
+    }
+    .atlas-node::before { content: ""; width: 3px; align-self: stretch; background: var(--node-color, var(--halo)); box-shadow: 0 0 13px var(--node-color, var(--halo)); }
+    .atlas-node b { display: block; font-family: Bahnschrift, "Arial Narrow", sans-serif; font-size: 17px; font-weight: 500; }
+    .atlas-node small { display: block; margin-top: 4px; color: var(--ash); font: 10px "Cascadia Mono", Consolas, monospace; }
+    .atlas-node em { color: var(--node-color, var(--halo)); font: normal 10px "Cascadia Mono", Consolas, monospace; }
+    .atlas-node:hover { border-top-color: var(--node-color, var(--halo)); transform: translateX(-4px); }
+    .atlas-node.one { right: 2%; top: 4%; --node-color: var(--alive); }
+    .atlas-node.two { left: 1%; top: 29%; --node-color: var(--halo); }
+    .atlas-node.three { right: 0; top: 48%; --node-color: var(--amber); }
+    .atlas-node.four { left: 7%; bottom: 3%; --node-color: #79b8df; }
+    .atlas-core {
+      position: absolute; right: calc(43% - 55px); top: calc(50% - 55px);
+      display: grid; place-items: center;
+      width: 110px; height: 110px;
+      border: 1px solid rgba(169,150,255,.62);
+      border-radius: 50%;
+      background: rgba(5,6,8,.88);
+      box-shadow: 0 0 0 10px rgba(169,150,255,.03), 0 0 45px rgba(169,150,255,.14);
+      text-align: center;
+    }
+    .atlas-core img { width: 44px; height: 44px; border-radius: 50%; filter: grayscale(1); }
+    .atlas-core span { display: block; margin-top: 6px; font: 9px "Cascadia Mono", Consolas, monospace; color: var(--halo); }
+
+    .event-rail {
+      position: absolute; z-index: 4; inset: auto 0 0;
+      display: grid; grid-template-columns: 220px repeat(4, minmax(190px, 1fr));
+      min-height: 82px;
+      border-top: 1px solid var(--line);
+      background: rgba(5,6,8,.93);
+    }
+    .event-rail > * { padding: 14px 18px; border-right: 1px solid #20242b; }
+    .event-rail header b { display: block; font-family: Bahnschrift, sans-serif; font-size: 15px; }
+    .event-rail header span { color: var(--ash); font: 9px "Cascadia Mono", Consolas, monospace; }
+    .event-item time { color: var(--ash); font: 9px "Cascadia Mono", Consolas, monospace; }
+    .event-item b { display: block; margin-top: 6px; font-size: 11px; font-weight: 600; }
+    .event-item small { display: block; margin-top: 3px; color: var(--ash); font-size: 10px; }
+
+    /* Shared operator workspace */
+    .operator {
+      display: grid;
+      grid-template-columns: 270px minmax(480px, 1fr) 320px;
+      min-height: calc(100vh - var(--topbar) - var(--rail));
+      background: var(--void);
+    }
+    .object-pane, .inspector { background: #090b0e; }
+    .object-pane { border-right: 1px solid var(--line); }
+    .inspector { border-left: 1px solid var(--line); }
+    .pane-head { height: 76px; padding: 17px 18px; border-bottom: 1px solid var(--line); }
+    .pane-head b { display: block; font-family: Bahnschrift, sans-serif; font-size: 16px; font-weight: 500; }
+    .pane-head small { color: var(--ash); font: 9px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .pane-search { display: flex; margin: 12px 14px; border-bottom: 1px solid var(--line); }
+    .pane-search input { width: 100%; padding: 10px 2px; border: 0; background: transparent; color: var(--bone); outline: none; font-size: 12px; }
+    .tree-label { padding: 13px 16px 7px; color: #666d78; font: 9px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .object-row, .module-row, .layer-row {
+      position: relative;
+      display: grid;
+      width: 100%;
+      color: var(--ash);
+      background: transparent;
+      text-align: left;
+    }
+    .object-row { grid-template-columns: 20px 1fr auto; gap: 8px; align-items: center; min-height: 40px; padding: 0 15px; }
+    .object-row:hover, .object-row[aria-selected="true"] { color: var(--bone); background: #12151a; }
+    .object-row[aria-selected="true"]::before { content: ""; position: absolute; inset: 7px auto 7px 0; width: 2px; background: var(--halo); }
+    .object-row i { color: #626976; font-style: normal; }
+    .object-row small { font: 9px "Cascadia Mono", Consolas, monospace; color: #646a75; }
+
+    .work-pane { min-width: 0; background: #0c0e12; }
+    .work-toolbar {
+      height: 76px;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--line);
+      background: #0d0f13;
+    }
+    .work-toolbar h2 { margin: 0; font-family: Bahnschrift, sans-serif; font-size: 20px; font-weight: 500; }
+    .work-toolbar p { margin: 4px 0 0; color: var(--ash); font-size: 11px; }
+    .toolbar-actions { display: flex; align-items: center; gap: 7px; }
+    .icon-action, .text-action {
+      min-height: 34px; padding: 0 11px;
+      border: 1px solid var(--line); border-radius: 3px;
+      background: #15181e; color: var(--bone); font-size: 11px;
+    }
+    .text-action.primary { border-color: rgba(169,150,255,.5); background: var(--halo-soft); color: #d8ceff; }
+    .text-action.danger { border-color: rgba(227,93,106,.46); color: #ff9da7; background: var(--signal-soft); }
+    .data-head, .member-line { display: grid; grid-template-columns: minmax(170px, 1.4fr) minmax(120px, .8fr) 105px 100px; align-items: center; }
+    .data-head { height: 36px; padding: 0 20px; border-bottom: 1px solid var(--line); color: #676e79; font: 9px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .member-line { min-height: 58px; padding: 0 20px; border-bottom: 1px solid #1e2229; }
+    .member-line:hover { background: #11141a; }
+    .member-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .member-name img { width: 30px; height: 30px; border-radius: 50%; }
+    .member-name b { font-size: 12px; }
+    .member-name small { display: block; margin-top: 2px; color: var(--ash); font-size: 10px; }
+    .member-line > span { color: #a5aab3; font-size: 11px; }
+    .status-word { display: inline-flex; align-items: center; gap: 7px; color: var(--alive); font: 10px "Cascadia Mono", Consolas, monospace; }
+    .status-word::before { content: ""; width: 5px; height: 5px; background: currentColor; }
+    .status-word.away { color: var(--amber); }
+
+    .inspector-content { padding: 19px; }
+    .inspect-mark { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--halo); font-family: Bahnschrift, sans-serif; }
+    .inspector h3 { margin: 15px 0 4px; font: 500 22px Bahnschrift, sans-serif; }
+    .inspector-copy { margin: 0 0 22px; color: var(--ash); font-size: 12px; line-height: 1.55; }
+    .property-list { border-top: 1px solid var(--line); }
+    .property { display: grid; grid-template-columns: 108px 1fr; gap: 12px; padding: 11px 0; border-bottom: 1px solid #20242b; }
+    .property dt { color: #6e7580; font: 9px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .property dd { margin: 0; color: #c7c8cb; font-size: 11px; word-break: break-word; }
+    .inspector-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 18px; }
+
+    /* Modules */
+    .module-shell { min-height: calc(100vh - var(--topbar) - var(--rail)); background: #090b0e; }
+    .module-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; padding: 34px 4vw 25px; border-bottom: 1px solid var(--line); }
+    .module-toolbar h2 { margin: 5px 0 0; font: 300 42px/.95 Bahnschrift, sans-serif; }
+    .module-tools { display: flex; align-items: center; gap: 10px; }
+    .module-count { color: var(--bone); font: 11px "Cascadia Mono", Consolas, monospace; }
+    .module-count strong { color: var(--alive); font-size: 16px; }
+    .segmented { display: flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+    .segmented button { padding: 8px 11px; border-right: 1px solid var(--line); background: #11141a; color: var(--ash); font-size: 10px; }
+    .segmented button:last-child { border-right: 0; }
+    .segmented button[aria-pressed="true"] { color: var(--bone); background: #222630; }
+    .module-layout { display: grid; grid-template-columns: minmax(620px, 1fr) 360px; min-height: calc(100vh - 199px); }
+    .module-ledger { border-right: 1px solid var(--line); }
+    .module-group-title { display: grid; grid-template-columns: 1fr 120px 130px; padding: 17px 4vw 9px; color: #666d78; border-bottom: 1px solid #1d2128; font: 9px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .module-row { grid-template-columns: 1fr 120px 130px; align-items: center; min-height: 68px; padding: 0 4vw; border-bottom: 1px solid #20242b; }
+    .module-row:hover, .module-row[aria-selected="true"] { background: #101319; color: var(--bone); }
+    .module-row[aria-selected="true"]::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--halo); }
+    .module-identity { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 13px; }
+    .module-identity i { width: 20px; height: 1px; background: var(--state, var(--alive)); box-shadow: 0 0 10px var(--state, var(--alive)); }
+    .module-identity b { display: block; color: var(--bone); font-size: 13px; }
+    .module-identity small { display: block; margin-top: 5px; color: var(--ash); font-size: 10px; }
+    .module-row > span { color: var(--ash); font: 10px "Cascadia Mono", Consolas, monospace; }
+    .module-row.attention { --state: var(--amber); }
+    .module-row.offline { --state: var(--signal); }
+    .module-detail { padding: 30px 26px; background: #0b0d11; }
+    .module-detail h3 { margin: 12px 0 8px; font: 400 28px Bahnschrift, sans-serif; }
+    .module-detail > p { color: var(--ash); font-size: 12px; line-height: 1.6; }
+    .signal-strip { margin: 24px 0; padding: 14px 0; border-block: 1px solid var(--line); }
+    .signal-strip span { display: flex; justify-content: space-between; margin: 8px 0; color: var(--ash); font-size: 11px; }
+    .signal-strip b { color: var(--bone); font-family: "Cascadia Mono", Consolas, monospace; font-weight: 400; }
+
+    /* Studio */
+    .studio-shell { display: grid; grid-template-columns: 280px minmax(520px, 1fr) 330px; min-height: calc(100vh - var(--topbar) - var(--rail)); }
+    .studio-outline, .studio-properties { background: #090b0e; }
+    .studio-outline { border-right: 1px solid var(--line); }
+    .studio-properties { border-left: 1px solid var(--line); }
+    .layer-row { grid-template-columns: 20px 1fr auto; align-items: center; gap: 10px; min-height: 44px; padding: 0 16px; border-bottom: 1px solid #1d2128; }
+    .layer-row:hover, .layer-row[aria-selected="true"] { background: #12151a; color: var(--bone); }
+    .layer-row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; width: 2px; height: 25px; background: var(--halo); }
+    .layer-row i { color: #656b76; font-style: normal; }
+    .layer-row small { color: #5f6570; font: 9px "Cascadia Mono", Consolas, monospace; }
+    .studio-canvas { min-width: 0; background: #0c0f13; }
+    .studio-canvas-head { display: flex; align-items: center; justify-content: space-between; height: 66px; padding: 0 22px; border-bottom: 1px solid var(--line); }
+    .studio-canvas-head b { font: 500 16px Bahnschrift, sans-serif; }
+    .studio-canvas-head span { color: var(--ash); font: 9px "Cascadia Mono", Consolas, monospace; }
+    .discord-stage { display: grid; place-items: center; min-height: calc(100vh - 186px); padding: 40px; background-image: linear-gradient(#15191f 1px, transparent 1px), linear-gradient(90deg, #15191f 1px, transparent 1px); background-size: 24px 24px; }
+    .discord-message { width: min(680px, 100%); display: grid; grid-template-columns: 42px 1fr; gap: 13px; padding: 18px; background: #18191c; border-left: 1px solid #252831; }
+    .discord-message > img { width: 42px; height: 42px; border-radius: 50%; }
+    .discord-author { display: flex; align-items: baseline; gap: 8px; }
+    .discord-author b { color: #f3f3f4; font-size: 13px; }
+    .discord-author span { color: #8e9298; font-size: 10px; }
+    .discord-embed { margin-top: 8px; max-width: 530px; padding: 13px 15px; border-left: 4px solid var(--halo); border-radius: 3px; background: #242529; }
+    .discord-embed h4 { margin: 0 0 9px; font-size: 14px; }
+    .discord-embed p { margin: 0; color: #d5d7da; font-size: 12px; line-height: 1.45; }
+    .discord-fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 13px; }
+    .discord-fields b { display: block; font-size: 10px; }
+    .discord-fields span { color: #c5c7ca; font-size: 11px; }
+    .discord-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+    .discord-buttons button { min-height: 32px; padding: 0 13px; border-radius: 3px; background: #4c4f56; color: white; font-size: 11px; font-weight: 650; }
+    .discord-buttons button:first-child { background: #5865f2; }
+    .discord-select { margin-top: 8px; width: min(360px, 100%); padding: 9px 12px; border: 0; border-radius: 3px; background: #111214; color: #b5bac1; font-size: 11px; }
+    .property-form { padding: 17px; }
+    .property-form label { display: block; margin-bottom: 14px; }
+    .property-form label > span { display: block; margin-bottom: 6px; color: #747b86; font: 9px "Cascadia Mono", Consolas, monospace; text-transform: uppercase; }
+    .property-form input, .property-form textarea, .property-form select { width: 100%; border: 1px solid var(--line); border-radius: 3px; background: #12151a; padding: 9px 10px; font-size: 11px; }
+    .property-form textarea { min-height: 92px; resize: vertical; }
+    .placeholder-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .placeholder-list button { padding: 6px 8px; border: 1px solid #363b47; border-radius: 2px; background: transparent; color: #aaa2d0; font: 9px "Cascadia Mono", Consolas, monospace; }
+
+    /* System */
+    .system-shell { display: grid; grid-template-columns: minmax(620px, 1fr) 360px; min-height: calc(100vh - var(--topbar) - var(--rail)); background: #090b0e; }
+    .system-main { border-right: 1px solid var(--line); }
+    .system-header { padding: 34px 4vw 26px; border-bottom: 1px solid var(--line); }
+    .system-header h2 { margin: 5px 0 9px; font: 300 42px Bahnschrift, sans-serif; }
+    .system-header p { margin: 0; color: var(--ash); font-size: 12px; }
+    .process-rail { position: relative; padding: 18px 4vw 50px; }
+    .process-rail::before { content: ""; position: absolute; left: calc(4vw + 72px); top: 18px; bottom: 30px; width: 1px; background: var(--line); }
+    .system-event { position: relative; display: grid; grid-template-columns: 58px 28px 1fr auto; align-items: start; gap: 14px; width: 100%; min-height: 80px; padding: 13px 0; background: transparent; color: var(--ash); text-align: left; }
+    .system-event time { padding-top: 4px; font: 9px "Cascadia Mono", Consolas, monospace; }
+    .system-event i { position: relative; z-index: 1; width: 9px; height: 9px; margin: 3px auto 0; border: 2px solid #090b0e; background: var(--alive); box-shadow: 0 0 0 1px var(--alive); }
+    .system-event.warning i { background: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+    .system-event.error i { background: var(--signal); box-shadow: 0 0 0 1px var(--signal); }
+    .system-event b { display: block; color: var(--bone); font-size: 12px; }
+    .system-event small { display: block; margin-top: 5px; color: var(--ash); font-size: 10px; line-height: 1.45; }
+    .system-event em { padding-top: 3px; color: #6f7580; font: normal 9px "Cascadia Mono", Consolas, monospace; }
+    .system-event[aria-selected="true"] b { color: var(--halo); }
+    .system-inspector { padding: 31px 25px; }
+    .system-inspector h3 { margin: 9px 0 8px; font: 400 26px Bahnschrift, sans-serif; }
+    .log-block { margin-top: 22px; padding: 14px; border-left: 2px solid var(--halo); background: #11141a; color: #9da3ad; font: 10px/1.6 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; }
+
+    /* Command layer */
+    .command-layer { position: fixed; z-index: 100; inset: 0; display: none; place-items: start center; padding-top: 13vh; background: rgba(2,3,5,.72); backdrop-filter: blur(8px); }
+    .command-layer.is-open { display: grid; }
+    .command-dialog { width: min(680px, calc(100vw - 30px)); border: 1px solid #454b58; border-radius: 4px; background: #0d1014; box-shadow: 0 28px 80px rgba(0,0,0,.6); }
+    .command-input { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; padding: 14px 17px; border-bottom: 1px solid var(--line); }
+    .command-input input { border: 0; outline: 0; background: transparent; font-size: 16px; }
+    .command-input kbd { color: var(--ash); font: 9px "Cascadia Mono", Consolas, monospace; }
+    .command-results { padding: 8px; }
+    .command-result { display: grid; grid-template-columns: 1fr auto; width: 100%; padding: 12px; border-radius: 2px; background: transparent; color: var(--bone); text-align: left; }
+    .command-result:hover, .command-result:focus-visible { background: #1a1e25; }
+    .command-result small { color: var(--ash); font: 9px "Cascadia Mono", Consolas, monospace; }
+
+    @media (max-width: 1180px) {
+      .command-deck { grid-template-columns: 210px 1fr auto; }
+      .primary-nav button { min-width: 92px; padding-inline: 11px; }
+      .deck-actions .live-state { display: none; }
+      .operator, .studio-shell { grid-template-columns: 240px minmax(450px, 1fr); }
+      .operator .inspector, .studio-properties { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+      .module-layout, .system-shell { grid-template-columns: 1fr 320px; }
+      .atlas-map { width: 70vw; }
+      .event-rail { grid-template-columns: 190px repeat(4, minmax(180px, 1fr)); overflow-x: auto; }
+    }
+
+    @media (max-width: 760px) {
+      :root { --topbar: 112px; --rail: 42px; }
+      .command-deck { grid-template-columns: 1fr auto; grid-template-rows: 58px 54px; height: var(--topbar); }
+      .brand { grid-column: 1; grid-row: 1; padding-inline: 14px; border-right: 0; }
+      .brand img { width: 30px; height: 30px; }
+      .deck-actions { grid-column: 2; grid-row: 1; padding-inline: 10px; border-left: 0; }
+      .command-trigger span, .command-trigger kbd { display: none; }
+      .command-trigger { width: 38px; justify-content: center; padding: 0; }
+      .primary-nav { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; border-top: 1px solid #1f232a; }
+      .primary-nav button { min-width: auto; flex: 0 0 auto; padding: 0 16px; }
+      .primary-nav button[aria-current="page"]::before { bottom: 7px; }
+      .view-rail { padding-inline: 14px; }
+      .view-rail > span:last-of-type { display: none; }
+      .atlas { min-height: 960px; background-position: 60% top; }
+      .atlas-heading { padding: 30px 20px 0; }
+      .section-title { font-size: 44px; }
+      .atlas-map { width: calc(100% - 28px); height: 520px; margin: 35px 14px 120px; }
+      .atlas-spine { right: 15px; }
+      .atlas-core { right: -10px; top: 205px; width: 82px; height: 82px; }
+      .atlas-node { width: calc(100% - 65px); left: 0 !important; right: auto !important; }
+      .atlas-node.one { top: 4%; } .atlas-node.two { top: 25%; } .atlas-node.three { top: 48%; } .atlas-node.four { top: 71%; bottom: auto; }
+      .event-rail { grid-template-columns: 170px repeat(4, 210px); }
+      .operator, .studio-shell, .module-layout, .system-shell { display: block; }
+      .object-pane, .studio-outline { border-right: 0; border-bottom: 1px solid var(--line); }
+      .object-pane .tree-scroll { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); overflow-x: auto; padding-bottom: 8px; }
+      .object-pane .tree-label { grid-column: 1 / -1; }
+      .work-toolbar, .module-toolbar { align-items: flex-start; height: auto; flex-direction: column; padding: 18px 16px; }
+      .data-head, .member-line { grid-template-columns: minmax(160px, 1fr) 100px; }
+      .data-head span:nth-child(3), .data-head span:nth-child(4), .member-line > span:nth-child(3), .member-line > span:nth-child(4) { display: none; }
+      .inspector, .module-detail, .studio-properties, .system-inspector { border-left: 0; border-top: 1px solid var(--line); }
+      .module-toolbar h2, .system-header h2 { font-size: 34px; }
+      .module-tools { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+      .module-group-title, .module-row { grid-template-columns: 1fr 90px; padding-inline: 16px; }
+      .module-group-title span:last-child, .module-row > span:last-child { display: none; }
+      .discord-stage { min-height: 560px; padding: 22px 10px; }
+      .discord-message { padding: 12px; grid-template-columns: 34px 1fr; }
+      .discord-message > img { width: 34px; height: 34px; }
+      .discord-fields { grid-template-columns: 1fr; }
+      .system-header { padding-inline: 18px; }
+      .process-rail { padding-inline: 18px; }
+      .process-rail::before { left: 76px; }
+      .system-event { grid-template-columns: 43px 20px 1fr; gap: 9px; }
+      .system-event em { display: none; }
+    }
+
+    /* Gothic Luxury revision: black lacquer, silver engraving and cathedral rhythm. */
+    :root {
+      --void: #070608;
+      --lacquer: #0d0b0f;
+      --velvet: #171116;
+      --ivory: #efe9de;
+      --silver: #b8b3bb;
+      --silver-dim: #77727b;
+      --oxblood: #6f2234;
+      --amethyst: #8d79aa;
+      --emerald: #3ead7b;
+      --line: #332d35;
+      --line-bright: #554d58;
+      --topbar: 88px;
+      --rail: 34px;
+    }
+
+    body[data-aesthetic="gothic-luxury"] {
+      color: var(--ivory);
+      background: var(--void);
+      font-family: "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    body[data-aesthetic="gothic-luxury"]::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 90;
+      border: 1px solid rgba(184,179,187,.16);
+      box-shadow: inset 0 0 80px rgba(0,0,0,.72);
+    }
+
+    .command-deck {
+      grid-template-columns: 300px minmax(520px, 1fr) 300px;
+      height: var(--topbar);
+      padding: 0 28px;
+      background: rgba(7,6,8,.97);
+      border-bottom: 1px solid var(--line-bright);
+      box-shadow: 0 12px 35px rgba(0,0,0,.4);
+    }
+
+    .command-deck::after {
+      content: "";
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 5px;
+      height: 1px;
+      background: var(--oxblood);
+      opacity: .72;
+    }
+
+    .brand { gap: 13px; }
+    .brand img {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 1px solid var(--silver-dim);
+      box-shadow: 0 0 0 5px #0b090c, 0 0 0 6px #29242b;
+    }
+    .brand-copy b,
+    .section-title,
+    .pane-head b,
+    .work-toolbar h2,
+    .module-heading h2,
+    .studio-title h2,
+    .system-title h2,
+    .atlas-node b,
+    .atlas-core span {
+      font-family: "Bodoni MT", Didot, "Times New Roman", serif;
+      letter-spacing: 0;
+    }
+    .brand-copy b { color: var(--ivory); font-size: 15px; font-weight: 500; }
+    .brand-copy small { color: var(--silver-dim); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; }
+
+    .primary-nav { align-self: stretch; gap: 0; justify-content: center; }
+    .primary-nav button {
+      position: relative;
+      align-self: stretch;
+      padding: 0 20px;
+      color: #918b94;
+      border: 0;
+      border-left: 1px solid transparent;
+      border-right: 1px solid transparent;
+      border-radius: 0;
+      background: transparent;
+      font-family: "Bodoni MT", Didot, serif;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .primary-nav button::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: 13px;
+      width: 4px;
+      height: 4px;
+      background: transparent;
+      transform: translateX(-50%) rotate(45deg);
+    }
+    .primary-nav button:hover { color: var(--ivory); background: rgba(255,255,255,.02); }
+    .primary-nav button[aria-current="page"] {
+      color: var(--ivory);
+      border-color: rgba(184,179,187,.12);
+      background: #100d12;
+    }
+    .primary-nav button[aria-current="page"]::before { background: var(--amethyst); box-shadow: 0 0 14px rgba(141,121,170,.8); }
+
+    .deck-actions { gap: 16px; }
+    .live-state { color: var(--silver); font-family: Consolas, monospace; font-size: 9px; letter-spacing: 1px; }
+    .live-state i { background: var(--emerald); box-shadow: 0 0 12px rgba(62,173,123,.55); }
+    .command-trigger {
+      height: 40px;
+      border-radius: 0;
+      border: 1px solid var(--line-bright);
+      background: #100d12;
+      color: var(--ivory);
+      box-shadow: inset 0 0 0 3px #09070a;
+    }
+    .command-trigger:hover { border-color: var(--silver); background: #161118; }
+    .command-trigger strong { color: var(--amethyst); }
+    .command-trigger kbd { color: var(--silver-dim); border-color: var(--line); background: #080709; }
+
+    .view-rail {
+      height: var(--rail);
+      padding: 0 28px;
+      color: var(--silver-dim);
+      background: #0b090c;
+      border-bottom: 1px solid #201c22;
+      font-family: Consolas, monospace;
+      font-size: 9px;
+      letter-spacing: .8px;
+    }
+    .view-rail b { color: var(--silver); }
+    .heaven-track { background: #19151b; height: 1px; }
+    .heaven-line { background: var(--amethyst); height: 1px; box-shadow: 0 0 8px rgba(141,121,170,.5); }
+
+    .workspace { background: var(--void); }
+    .atlas {
+      min-height: calc(100vh - var(--topbar) - var(--rail));
+      background-color: #080709;
+      background-image: linear-gradient(90deg, rgba(7,6,8,.99) 0%, rgba(7,6,8,.88) 39%, rgba(7,6,8,.3) 68%, rgba(7,6,8,.82) 100%), url('../desktop/renderer/assets/fallen-heaven-bg.png');
+      background-size: cover;
+      background-position: center 38%;
+      overflow: hidden;
+    }
+    .atlas::after {
+      content: "";
+      position: absolute;
+      inset: 18px 20px;
+      pointer-events: none;
+      border: 1px solid rgba(184,179,187,.16);
+    }
+    .cathedral-frame {
+      position: absolute;
+      inset: 34px 34px 30px;
+      z-index: 1;
+      pointer-events: none;
+      border-left: 1px solid rgba(184,179,187,.23);
+      border-right: 1px solid rgba(184,179,187,.13);
+    }
+    .cathedral-frame::before,
+    .cathedral-frame::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      width: 110px;
+      height: 110px;
+      border-top: 1px solid rgba(184,179,187,.3);
+    }
+    .cathedral-frame::before { left: 0; border-left: 1px solid rgba(184,179,187,.3); }
+    .cathedral-frame::after { right: 0; border-right: 1px solid rgba(184,179,187,.3); }
+    .cathedral-frame i { position: absolute; top: 112px; bottom: 0; width: 1px; background: rgba(184,179,187,.08); }
+    .cathedral-frame i:first-child { left: 110px; }
+    .cathedral-frame i:nth-child(2) { right: 110px; }
+    .stained-slit {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 2px;
+      height: 96px;
+      background: var(--amethyst);
+      box-shadow: 0 0 16px rgba(141,121,170,.8), 0 34px 0 var(--oxblood), 0 68px 0 #5b7898;
+      opacity: .75;
+    }
+
+    .atlas-heading { z-index: 3; padding: 72px 0 0 7vw; max-width: 570px; }
+    .eyebrow { color: var(--silver); font-family: Consolas, monospace; font-size: 9px; letter-spacing: 2.4px; }
+    .section-title {
+      margin: 20px 0 0;
+      color: var(--ivory);
+      font-size: clamp(62px, 8vw, 116px);
+      line-height: .76;
+      font-weight: 500;
+      text-shadow: 0 8px 40px #000;
+    }
+    .atlas-heading p { max-width: 440px; margin-top: 28px; color: #b8b1b9; font-family: Georgia, serif; font-size: 14px; line-height: 1.7; }
+    .atlas-stamp {
+      margin-top: 24px;
+      color: var(--silver);
+      border: 0;
+      border-left: 2px solid var(--oxblood);
+      border-radius: 0;
+      background: rgba(10,8,11,.8);
+      font-family: Consolas, monospace;
+      letter-spacing: .7px;
+      box-shadow: none;
+    }
+    .atlas-stamp i { background: var(--emerald); box-shadow: 0 0 10px rgba(62,173,123,.6); }
+
+    .atlas-map {
+      position: absolute;
+      z-index: 3;
+      top: 40px;
+      right: 4vw;
+      width: min(52vw, 720px);
+      height: calc(100% - 162px);
+      margin: 0;
+    }
+    .atlas-spine { left: 52%; width: 1px; background: rgba(184,179,187,.2); box-shadow: none; }
+    .atlas-core {
+      left: 52%;
+      width: 136px;
+      height: 136px;
+      border: 1px solid var(--silver-dim);
+      border-radius: 50%;
+      background: rgba(9,7,10,.92);
+      box-shadow: 0 0 0 8px rgba(9,7,10,.7), 0 0 0 9px rgba(184,179,187,.1), 0 18px 60px #000;
+    }
+    .atlas-core::before { border-color: var(--oxblood); opacity: .7; }
+    .atlas-core img { width: 44px; height: 44px; border-color: var(--silver-dim); }
+    .atlas-core span { color: var(--ivory); font-size: 11px; }
+    .atlas-node {
+      width: min(300px, 42%);
+      min-height: 66px;
+      padding: 13px 16px;
+      color: var(--ivory);
+      border: 0;
+      border-top: 1px solid var(--line-bright);
+      border-bottom: 1px solid #211d23;
+      border-radius: 0;
+      background: rgba(10,8,11,.88);
+      box-shadow: 0 16px 34px rgba(0,0,0,.35);
+    }
+    .atlas-node::before { background: var(--amethyst); box-shadow: 0 0 8px rgba(141,121,170,.5); }
+    .atlas-node:hover,
+    .atlas-node.is-lit { border-color: var(--silver); background: rgba(18,14,20,.96); transform: translateY(-2px); }
+    .atlas-node b { font-size: 16px; font-weight: 600; }
+    .atlas-node small { color: var(--silver-dim); }
+    .atlas-node em { color: var(--silver); border-color: var(--line); border-radius: 0; background: #0b090c; }
+    .atlas-node.one { top: 9%; left: 0; }
+    .atlas-node.two { top: 24%; right: 0; }
+    .atlas-node.three { bottom: 22%; left: 0; }
+    .atlas-node.four { bottom: 7%; right: 0; }
+
+    .event-rail {
+      z-index: 4;
+      left: 34px;
+      right: 34px;
+      bottom: 30px;
+      min-height: 92px;
+      border: 1px solid rgba(184,179,187,.18);
+      border-radius: 0;
+      background: rgba(7,6,8,.94);
+      box-shadow: 0 -15px 40px rgba(0,0,0,.28);
+    }
+    .event-rail header { background: #0d0a0e; border-right-color: var(--line); }
+    .event-rail header span { color: var(--amethyst); }
+    .event-item { border-left-color: var(--line); }
+    .event-item time { color: var(--silver-dim); font-family: Consolas, monospace; }
+    .event-item b { color: var(--ivory); font-family: Georgia, serif; font-weight: 500; }
+    .event-item small { color: #89838b; }
+
+    .operator,
+    .studio-shell,
+    .system-shell { background: var(--void); }
+    .object-pane,
+    .inspector,
+    .studio-library,
+    .studio-settings,
+    .system-aside { background: #0b090c; border-color: var(--line); }
+    .work-pane,
+    .studio-canvas,
+    .module-shell,
+    .system-main { background: #100d11; }
+    .pane-head,
+    .work-toolbar,
+    .module-heading,
+    .studio-title,
+    .system-title { border-color: var(--line); background: #0d0a0e; }
+    .pane-head small,
+    .module-heading small,
+    .studio-title small,
+    .system-title small { color: var(--amethyst); letter-spacing: 1.5px; }
+    .pane-head b,
+    .work-toolbar h2,
+    .module-heading h2,
+    .studio-title h2,
+    .system-title h2 { color: var(--ivory); font-weight: 500; }
+    .pane-search input,
+    .field input,
+    .field textarea,
+    .field select { border-radius: 0; border-color: var(--line); background: #080709; color: var(--ivory); }
+    .object-row,
+    .template-row,
+    .module-row { border-radius: 0; border-color: transparent; }
+    .object-row:hover,
+    .template-row:hover { background: #141016; }
+    .object-row[aria-selected="true"],
+    .template-row[aria-selected="true"] { color: var(--ivory); border-left: 2px solid var(--amethyst); background: #171219; box-shadow: none; }
+    .tree-label,
+    .library-label,
+    .data-head { color: var(--silver-dim); border-color: var(--line); }
+    .member-line,
+    .module-row,
+    .system-event { border-color: var(--line); background: transparent; }
+    .member-line:hover,
+    .module-row:hover { background: rgba(255,255,255,.018); }
+    .status-word { color: var(--emerald); }
+    .status-word.away { color: #bb9c65; }
+    .text-action,
+    .icon-action,
+    .module-filter button,
+    .studio-actions button { border-radius: 0; border-color: var(--line-bright); color: var(--silver); background: #0c0a0d; }
+    .text-action.primary,
+    .studio-actions .primary { color: var(--ivory); border-color: var(--amethyst); background: #2a2030; box-shadow: none; }
+    .inspect-mark { color: var(--ivory); border-radius: 50%; background: var(--oxblood); box-shadow: 0 0 0 5px #0b090c, 0 0 0 6px var(--line); }
+    .module-filter button[aria-pressed="true"] { color: var(--ivory); border-color: var(--amethyst); background: #1b1520; box-shadow: none; }
+    .module-icon { border-radius: 0; background: #151117; border: 1px solid var(--line); color: var(--silver); }
+    .switch { border-color: var(--line-bright); background: #09070a; }
+    .switch::after { background: var(--silver); }
+    .switch[aria-checked="true"] { border-color: var(--emerald); background: #11241d; box-shadow: 0 0 16px rgba(62,173,123,.12); }
+    .discord-preview { border-radius: 3px; border-left-color: var(--amethyst); background: #29282d; }
+    .process-rail::before { background: var(--line-bright); }
+    .system-dot { border-color: var(--silver-dim); background: #0b090c; }
+    .system-event.is-live .system-dot { border-color: var(--emerald); background: var(--emerald); box-shadow: 0 0 12px rgba(62,173,123,.5); }
+    .system-event.is-warning .system-dot { border-color: var(--oxblood); background: var(--oxblood); }
+    .command-layer { background: rgba(4,3,5,.88); backdrop-filter: blur(7px); }
+    .command-dialog { border-radius: 0; border-color: var(--silver-dim); background: #0b090c; box-shadow: 0 30px 100px #000; }
+    .command-input { border-color: var(--line); }
+    .command-input input { color: var(--ivory); }
+    .command-result { border-radius: 0; }
+    .command-result:hover { background: #171219; }
+
+    @media (max-width: 980px) {
+      :root { --topbar: 118px; --rail: 34px; }
+      .command-deck { grid-template-columns: 1fr auto; grid-template-rows: 62px 56px; padding: 0 16px; }
+      .primary-nav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; overflow-x: auto; }
+      .primary-nav button { flex: 0 0 auto; padding: 0 18px; }
+      .command-deck::after { left: 16px; right: 16px; }
+      .atlas-heading { padding: 48px 0 0 7vw; }
+      .atlas-map { right: 2vw; width: 55vw; }
+    }
+
+    @media (max-width: 720px) {
+      :root { --topbar: 112px; --rail: 32px; }
+      .command-deck { grid-template-rows: 56px 56px; }
+      .brand img { width: 34px; height: 34px; box-shadow: 0 0 0 3px #0b090c, 0 0 0 4px #29242b; }
+      .brand-copy small { display: block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .live-state { display: none; }
+      .command-trigger { width: 42px; padding: 0; justify-content: center; }
+      .command-trigger span,
+      .command-trigger kbd { display: none; }
+      .view-rail { padding: 0 16px; }
+      .view-rail > span:nth-child(2) { display: none; }
+      .atlas { min-height: 900px; background-position: 58% center; }
+      .atlas::after { inset: 10px; }
+      .cathedral-frame { inset: 18px 18px 20px; }
+      .cathedral-frame i { display: none; }
+      .stained-slit { height: 72px; }
+      .atlas-heading { padding: 40px 30px 0; max-width: 100%; }
+      .section-title { font-size: 58px; }
+      .atlas-heading p { max-width: 330px; font-size: 13px; }
+      .atlas-stamp { font-size: 8px; }
+      .atlas-map { top: 390px; left: 18px; right: 18px; width: auto; height: 330px; }
+      .atlas-core { width: 100px; height: 100px; }
+      .atlas-node { width: 45%; min-height: 72px; padding: 10px; }
+      .atlas-node b { font-size: 13px; }
+      .atlas-node small { font-size: 9px; }
+      .atlas-node em { display: none; }
+      .event-rail { left: 18px; right: 18px; bottom: 20px; grid-template-columns: 1fr 1fr; }
+      .event-rail header { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--line); }
+      .event-item { border-left: 0; border-top: 1px solid var(--line); }
+      .event-item:nth-last-child(-n+2) { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body data-aesthetic="gothic-luxury">
+  <div class="app-shell">
+    <header class="command-deck">
+      <div class="brand">
+        <img src="../desktop/renderer/assets/fallen-heaven-avatar.png" alt="Fallen Heaven">
+        <div class="brand-copy"><b>FALLEN HEAVEN</b><small>Community Command Center</small></div>
+      </div>
+      <nav class="primary-nav" aria-label="Hauptbereiche">
+        <button type="button" data-view-target="overview" aria-current="page">Übersicht</button>
+        <button type="button" data-view-target="server">Server</button>
+        <button type="button" data-view-target="modules">Module</button>
+        <button type="button" data-view-target="studio">Embed Studio</button>
+        <button type="button" data-view-target="system">System</button>
+      </nav>
+      <div class="deck-actions">
+        <span class="live-state"><i></i> BOT ONLINE</span>
+        <button class="command-trigger" id="command-trigger" type="button" aria-haspopup="dialog"><strong>⌕</strong><span>Befehl</span><kbd>Ctrl K</kbd></button>
+      </div>
+    </header>
+
+    <div class="view-rail">
+      <span>FHCC / <b id="view-title">Serverlage</b></span>
+      <span>05 SEP 2026 · 21:47:12 · <b>LIVE</b></span>
+      <div class="heaven-track"><i class="heaven-line" id="heaven-line"></i></div>
+    </div>
+
+    <main>
+      <section class="workspace is-active" data-view="overview">
+        <div class="atlas">
+          <div class="cathedral-frame" aria-hidden="true"><i></i><i></i><span class="stained-slit"></span></div>
+          <header class="atlas-heading">
+            <span class="eyebrow">Server Atlas · Livezustand</span>
+            <h1 class="section-title">FALLEN<br>HEAVEN</h1>
+            <p>Nicht fünf Dashboards nebeneinander, sondern ein zusammenhängendes System. Du siehst sofort, was läuft, was Aufmerksamkeit braucht und wo du eingreifen musst.</p>
+            <span class="atlas-stamp"><i></i> 38 MODULE VERBUNDEN · 1 HINWEIS · 0 KRITISCH</span>
+          </header>
+
+          <div class="atlas-map" aria-label="Serverbereiche">
+            <div class="atlas-spine"></div>
+            <div class="atlas-core"><div><img src="../desktop/renderer/assets/fallen-heaven-icon.png" alt=""><span>FH CORE</span></div></div>
+            <button class="atlas-node one" type="button" data-atlas-node data-go="modules">
+              <span><b>Community-Automation</b><small>TempVoice · Counting · Level</small></span><em>19 LIVE</em>
+            </button>
+            <button class="atlas-node two" type="button" data-atlas-node data-go="server">
+              <span><b>Mitglieder & Kanäle</b><small>847 Mitglieder · 64 Kanäle</small></span><em>SYNCHRON</em>
+            </button>
+            <button class="atlas-node three" type="button" data-atlas-node data-go="studio">
+              <span><b>Nachrichten-System</b><small>Embed Studio · 12 Entwürfe</small></span><em>1 OFFEN</em>
+            </button>
+            <button class="atlas-node four" type="button" data-atlas-node data-go="system">
+              <span><b>Laufzeit & Diagnose</b><small>Node 24 · SQLite · Watchdog</small></span><em>STABIL</em>
+            </button>
+          </div>
+
+          <div class="event-rail">
+            <header><span>OPERATIVE SPUR</span><b>Was gerade passiert</b></header>
+            <div class="event-item"><time>21:46:58</time><b>TempVoice erstellt</b><small>FALLEN ANGEL-talk · 3 Mitglieder</small></div>
+            <div class="event-item"><time>21:45:11</time><b>Aktivitäts-Liga</b><small>Wochenrang aktualisiert</small></div>
+            <div class="event-item"><time>21:42:04</time><b>Counting bestätigt</b><small>#counting · Nachricht 18.421</small></div>
+            <div class="event-item"><time>21:38:29</time><b>Server-Tag erkannt</b><small>Mitglied automatisch synchronisiert</small></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace" data-view="server">
+        <div class="operator">
+          <aside class="object-pane">
+            <header class="pane-head"><small>Discord-Struktur</small><b>Server erkunden</b></header>
+            <label class="pane-search"><input type="search" placeholder="Kanal oder Mitglied suchen" aria-label="Server durchsuchen"></label>
+            <div class="tree-scroll">
+              <div class="tree-label">Community</div>
+              <button class="object-row" type="button" data-server-object data-title="willkommen" data-kind="Textkanal" data-detail="Öffentlicher Einstieg mit Welcome- und Rollenpanel." aria-selected="false"><i>#</i><span>willkommen</span><small>12</small></button>
+              <button class="object-row" type="button" data-server-object data-title="allgemein" data-kind="Textkanal" data-detail="Aktivster öffentlicher Chat des Servers." aria-selected="true"><i>#</i><span>allgemein</span><small>38</small></button>
+              <button class="object-row" type="button" data-server-object data-title="aktivitäts-liga" data-kind="Systemkanal" data-detail="Tages-, Wochen- und Monatsranglisten mit persönlichen Ping-Einstellungen." aria-selected="false"><i>#</i><span>aktivitäts-liga</span><small>3</small></button>
+              <div class="tree-label">Sprachkanäle</div>
+              <button class="object-row" type="button" data-server-object data-title="Talk 1" data-kind="Sprachkanal" data-detail="Öffentlicher Call mit Abstimmungsmoderation." aria-selected="false"><i>◖</i><span>Talk 1</span><small>5</small></button>
+              <button class="object-row" type="button" data-server-object data-title="TempVoice Lobby" data-kind="Erstellerkanal" data-detail="Erzeugt persönliche Calls mit gespeicherten Profilen." aria-selected="false"><i>+</i><span>TempVoice Lobby</span><small>0</small></button>
+              <div class="tree-label">Verwaltung</div>
+              <button class="object-row" type="button" data-server-object data-title="Mitglieder" data-kind="Verzeichnis" data-detail="Rollen, Aktivität, Moderation und Verlauf aller Mitglieder." aria-selected="false"><i>◎</i><span>Mitglieder</span><small>847</small></button>
+            </div>
+          </aside>
+
+          <section class="work-pane">
+            <header class="work-toolbar">
+              <div><h2># allgemein</h2><p>Mitglieder · Aktivität · Rollen · letzte Synchronisierung vor 14 Sekunden</p></div>
+              <div class="toolbar-actions"><button class="icon-action" type="button" title="Aktualisieren">↻</button><button class="text-action" type="button">Filter</button><button class="text-action primary" type="button">Nachricht erstellen</button></div>
+            </header>
+            <div class="data-head"><span>Mitglied</span><span>Rollen</span><span>Aktivität</span><span>Status</span></div>
+            <div class="member-line"><div class="member-name"><img src="../desktop/renderer/assets/fallen-heaven-avatar.png" alt=""><span><b>daisy doll</b><small>@daisy_doll</small></span></div><span>Booster · Level 32</span><span>vor 1 Min.</span><span class="status-word">Aktiv</span></div>
+            <div class="member-line"><div class="member-name"><img src="../desktop/renderer/assets/fallen-heaven-icon.png" alt=""><span><b>Kyu</b><small>@kyu</small></span></div><span>VIP · Level 41</span><span>vor 4 Min.</span><span class="status-word">Aktiv</span></div>
+            <div class="member-line"><div class="member-name"><img src="../desktop/renderer/assets/fallen-heaven-avatar.png" alt=""><span><b>Nyna</b><small>@nyna</small></span></div><span>Level 27</span><span>vor 18 Min.</span><span class="status-word away">Ruhig</span></div>
+            <div class="member-line"><div class="member-name"><img src="../desktop/renderer/assets/fallen-heaven-icon.png" alt=""><span><b>Yoshinoo</b><small>@yoshinoo</small></span></div><span>Team · Level 38</span><span>vor 27 Min.</span><span class="status-word">Im Call</span></div>
+            <div class="member-line"><div class="member-name"><img src="../desktop/renderer/assets/fallen-heaven-avatar.png" alt=""><span><b>Raven</b><small>@raven</small></span></div><span>Member · Level 12</span><span>vor 2 Std.</span><span class="status-word away">Abwesend</span></div>
+          </section>
+
+          <aside class="inspector">
+            <header class="pane-head"><small>Kontext</small><b>Eigenschaften</b></header>
+            <div class="inspector-content">
+              <div class="inspect-mark" id="server-inspect-mark">#</div>
+              <h3 id="server-inspect-title">allgemein</h3>
+              <p class="inspector-copy" id="server-inspect-copy">Aktivster öffentlicher Chat des Servers.</p>
+              <dl class="property-list">
+                <div class="property"><dt>Typ</dt><dd id="server-inspect-kind">Textkanal</dd></div>
+                <div class="property"><dt>ID</dt><dd class="mono">1305845958797430844</dd></div>
+                <div class="property"><dt>Rechte</dt><dd>Synchron · 4 Überschreibungen</dd></div>
+                <div class="property"><dt>Index</dt><dd>18.421 Nachrichten erfasst</dd></div>
+              </dl>
+              <div class="inspector-actions"><button class="text-action primary" type="button">Im Studio öffnen</button><button class="icon-action" type="button" title="Mehr Aktionen">•••</button></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="workspace" data-view="modules">
+        <div class="module-shell">
+          <header class="module-toolbar">
+            <div><span class="eyebrow">Automationen & Regeln</span><h2>Module als laufende Systeme</h2></div>
+            <div class="module-tools"><span class="module-count"><strong>38</strong> AKTIV</span><div class="segmented" aria-label="Module filtern"><button type="button" data-module-filter="all" aria-pressed="true">Alle</button><button type="button" data-module-filter="live" aria-pressed="false">Aktiv</button><button type="button" data-module-filter="attention" aria-pressed="false">Hinweise</button></div><button class="text-action primary" type="button">Alle aktivieren</button></div>
+          </header>
+          <div class="module-layout">
+            <div class="module-ledger">
+              <div class="module-group-title"><span>Community-Systeme</span><span>Letzte Aktion</span><span>Zustand</span></div>
+              <button class="module-row" type="button" data-module-row data-state="live" data-title="TempVoice" data-copy="Persönliche Sprachkanäle mit Besitzersteuerung, Profilen und automatischem Cleanup." data-events="14 aktive Calls" aria-selected="true"><span class="module-identity"><i></i><span><b>TempVoice</b><small>Persönliche Calls und Zugriff</small></span></span><span>vor 8 Sek.</span><span>Aktiv · 14 Calls</span></button>
+              <button class="module-row" type="button" data-module-row data-state="live" data-title="Aktivitäts-Liga" data-copy="Tages-, Wochen- und Monatswertung mit fairen Gleichständen und persönlichen Pings." data-events="Nächste Wertung 23:59" aria-selected="false"><span class="module-identity"><i></i><span><b>Aktivitäts-Liga</b><small>Chat- und Voice-Ranglisten</small></span></span><span>vor 1 Min.</span><span>Aktiv · synchron</span></button>
+              <button class="module-row attention" type="button" data-module-row data-state="attention" data-title="Counting" data-copy="Validiert jede Zahl in Reihenfolge und markiert richtige sowie falsche Nachrichten direkt." data-events="1 verzögerte Prüfung" aria-selected="false"><span class="module-identity"><i></i><span><b>Counting</b><small>Zahlenfolge mit Reaktionsfeedback</small></span></span><span>vor 3 Sek.</span><span>Hinweis · Rückstand 1</span></button>
+              <div class="module-group-title"><span>Sicherheit & Identität</span><span>Letzte Aktion</span><span>Zustand</span></div>
+              <button class="module-row" type="button" data-module-row data-state="live" data-title="Server-Tag" data-copy="Synchronisiert die Tag-Rolle ereignisbasiert anhand des aktuellen Discord-Profils." data-events="847 Mitglieder geprüft" aria-selected="false"><span class="module-identity"><i></i><span><b>Server-Tag</b><small>Tag-Erkennung und Rollensync</small></span></span><span>vor 9 Min.</span><span>Aktiv · aktuell</span></button>
+              <button class="module-row" type="button" data-module-row data-state="live" data-title="Inaktivitäts-Erkennung" data-copy="Sendet nur dann eine Erinnerung, wenn weder Chat- noch Voice-Aktivität innerhalb der Frist belegt ist." data-events="Nächster Scan 02:00" aria-selected="false"><span class="module-identity"><i></i><span><b>Inaktivitäts-Erkennung</b><small>Chat- und Voice-Beweise</small></span></span><span>heute 02:00</span><span>Aktiv · 0 offen</span></button>
+            </div>
+            <aside class="module-detail">
+              <span class="eyebrow">Ausgewähltes System</span>
+              <h3 id="module-detail-title">TempVoice</h3>
+              <p id="module-detail-copy">Persönliche Sprachkanäle mit Besitzersteuerung, Profilen und automatischem Cleanup.</p>
+              <div class="signal-strip"><span>Live-Zustand <b id="module-detail-events">14 aktive Calls</b></span><span>Verarbeitung <b>ereignisbasiert</b></span><span>Letzter Fehler <b>keiner</b></span><span>Persistenz <b>atomar</b></span></div>
+              <button class="text-action primary" type="button">Konfiguration öffnen</button>
+              <button class="text-action" type="button">Live-Daten ansehen</button>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace" data-view="studio">
+        <div class="studio-shell">
+          <aside class="studio-outline">
+            <header class="pane-head"><small>Nachrichtenstruktur</small><b>VIP-Vorteile-Panel</b></header>
+            <div class="tree-label">Nachricht</div>
+            <button class="layer-row" type="button" data-studio-layer data-title="Nachrichtentext" data-kind="content" aria-selected="false"><i>¶</i><span>Text außerhalb</span><small>0 / 2000</small></button>
+            <div class="tree-label">Embed 1</div>
+            <button class="layer-row" type="button" data-studio-layer data-title="Titel & Beschreibung" data-kind="copy" aria-selected="true"><i>▤</i><span>VIP-Vorteile</span><small>428</small></button>
+            <button class="layer-row" type="button" data-studio-layer data-title="Großes Bild" data-kind="image" aria-selected="false"><i>▧</i><span>Bild</span><small>URL</small></button>
+            <button class="layer-row" type="button" data-studio-layer data-title="Footer" data-kind="footer" aria-selected="false"><i>—</i><span>Fußzeile</span><small>62</small></button>
+            <div class="tree-label">Komponenten</div>
+            <button class="layer-row" type="button" data-studio-layer data-title="Rollen-Buttons" data-kind="roles" aria-selected="false"><i>◆</i><span>Rollen-Buttons</span><small>3</small></button>
+            <button class="layer-row" type="button" data-studio-layer data-title="Funktionsbuttons" data-kind="actions" aria-selected="false"><i>↗</i><span>Funktionsbuttons</span><small>4</small></button>
+            <button class="layer-row" type="button" data-studio-layer data-title="Dropdowns" data-kind="selects" aria-selected="false"><i>⌄</i><span>Dropdowns</span><small>1</small></button>
+          </aside>
+
+          <section class="studio-canvas">
+            <header class="studio-canvas-head"><b>Discord-Vorschau</b><span>DESKTOP · LIVE RENDER</span><div class="toolbar-actions"><button class="icon-action" type="button" title="Rückgängig">↶</button><button class="icon-action" type="button" title="Wiederholen">↷</button><button class="text-action primary" type="button">Speichern</button></div></header>
+            <div class="discord-stage">
+              <article class="discord-message">
+                <img src="../desktop/renderer/assets/fallen-heaven-avatar.png" alt="">
+                <div>
+                  <div class="discord-author"><b>Fallen-Heaven</b><span>APP · heute um 21:47</span></div>
+                  <div class="discord-embed">
+                    <h4>VIP-VORTEILE</h4>
+                    <p>Mit einem VIP-Rang unterstützt du Fallen Heaven und erhältst Zugang zu zusätzlichen Bereichen und Community-Vorteilen.</p>
+                    <div class="discord-fields"><span><b>Hervorgehobene Präsenz</b>Dein Rang hebt dich sichtbar hervor.</span><span><b>VIP-Lounges</b>Zusätzliche Voice-Bereiche.</span><span><b>Early Access</b>Informationen und Aktionen früher.</span><span><b>Priority Support</b>Bevorzugte Bearbeitung.</span></div>
+                  </div>
+                  <div class="discord-buttons"><button type="button">Mein Konto</button><button type="button">VIP-Shop</button><button type="button">VIP verschenken</button><button type="button">Coins kaufen</button></div>
+                  <select class="discord-select" aria-label="VIP-Stufe"><option>VIP-Stufe auswählen ...</option></select>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <aside class="studio-properties">
+            <header class="pane-head"><small>Auswahl bearbeiten</small><b id="studio-property-title">Titel & Beschreibung</b></header>
+            <form class="property-form" onsubmit="return false">
+              <label><span>Titel</span><input value="VIP-VORTEILE"></label>
+              <label><span>Beschreibung</span><textarea>Mit einem VIP-Rang unterstützt du Fallen Heaven und erhältst Zugang zu zusätzlichen Bereichen und Community-Vorteilen.</textarea></label>
+              <label><span>Akzentfarbe</span><input value="#A996FF"></label>
+              <label><span>Platzhalter</span><span class="placeholder-list"><button type="button">{user}</button><button type="button">{vipRank}</button><button type="button">{coins}</button><button type="button">{server}</button></span></label>
+            </form>
+          </aside>
+        </div>
+      </section>
+
+      <section class="workspace" data-view="system">
+        <div class="system-shell">
+          <section class="system-main">
+            <header class="system-header"><span class="eyebrow">Runtime · Ereignisse · Releases</span><h2>Betriebsspur</h2><p>Jeder Zustand hat Quelle, Zeitpunkt, Wirkung und eine konkrete nächste Aktion.</p></header>
+            <div class="process-rail">
+              <button class="system-event" type="button" data-system-event data-title="Bot verbunden" data-copy="Discord Gateway ist verbunden. Alle Ereignis-Module empfangen Live-Daten." data-log="gateway READY\nlatency 42ms\nguilds 1" aria-selected="true"><time>21:47</time><i></i><span><b>Bot verbunden</b><small>Discord Gateway · 42 ms · 1 Server</small></span><em>HEALTH</em></button>
+              <button class="system-event" type="button" data-system-event data-title="SQLite Checkpoint" data-copy="Alle offenen Schreibvorgänge wurden dauerhaft in den Hauptindex übernommen." data-log="wal checkpoint PASS\npages 284\nduration 18ms" aria-selected="false"><time>21:45</time><i></i><span><b>SQLite Checkpoint</b><small>Serverindex · 284 Seiten · 18 ms</small></span><em>STORAGE</em></button>
+              <button class="system-event warning" type="button" data-system-event data-title="Counting verzögert" data-copy="Eine Nachricht wartet noch auf Reaktionsfeedback. Die Verarbeitung läuft weiter." data-log="queue depth 1\noldest 740ms\nretry armed" aria-selected="false"><time>21:42</time><i></i><span><b>Counting verzögert</b><small>Eine Reaktion wartet seit 740 ms</small></span><em>MODULE</em></button>
+              <button class="system-event" type="button" data-system-event data-title="Update 3.9.307 geprüft" data-copy="Installer, Manifest, Packaged Runtime und Artefakt-Audit wurden erfolgreich geprüft." data-log="artifact PASS\nsha256 D3C4...BBC3\nprivate files 0" aria-selected="false"><time>20:14</time><i></i><span><b>Update 3.9.307 geprüft</b><small>Installer · Manifest · Runtime · Artefakt</small></span><em>UPDATE</em></button>
+              <button class="system-event" type="button" data-system-event data-title="Diagnosen abgeschlossen" data-copy="Watchdog, Interaktionszeiten und Modulbereitschaft liegen innerhalb der Grenzen." data-log="watchdog PASS\np95 1.66s\nmodules ready 38" aria-selected="false"><time>20:09</time><i></i><span><b>Diagnosen abgeschlossen</b><small>Watchdog · Interaktionen · Module</small></span><em>DIAGNOSE</em></button>
+            </div>
+          </section>
+          <aside class="system-inspector">
+            <span class="eyebrow">Ausgewähltes Ereignis</span>
+            <h3 id="system-detail-title">Bot verbunden</h3>
+            <p class="inspector-copy" id="system-detail-copy">Discord Gateway ist verbunden. Alle Ereignis-Module empfangen Live-Daten.</p>
+            <dl class="property-list"><div class="property"><dt>Wirkung</dt><dd>Alle Live-Module verfügbar</dd></div><div class="property"><dt>Quelle</dt><dd>Runtime Supervisor</dd></div><div class="property"><dt>Status</dt><dd class="status-word">Gesund</dd></div></dl>
+            <pre class="log-block" id="system-detail-log">gateway READY
+latency 42ms
+guilds 1</pre>
+            <button class="text-action" type="button">Logs öffnen</button>
+            <button class="text-action primary" type="button">Diagnosen starten</button>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="command-layer" id="command-layer" role="dialog" aria-modal="true" aria-labelledby="command-title">
+    <div class="command-dialog">
+      <label class="command-input"><span>⌕</span><input id="command-search" placeholder="Bereich oder Aktion suchen ..." autocomplete="off"><kbd>ESC</kbd></label>
+      <div class="command-results" id="command-title">
+        <button class="command-result" type="button" data-command-view="server"><span>Mitglieder und Kanäle öffnen</span><small>SERVER</small></button>
+        <button class="command-result" type="button" data-command-view="modules"><span>TempVoice konfigurieren</span><small>MODULE</small></button>
+        <button class="command-result" type="button" data-command-view="studio"><span>VIP-Vorteile im Embed Studio öffnen</span><small>STUDIO</small></button>
+        <button class="command-result" type="button" data-command-view="system"><span>Logs, Updates und Diagnosen prüfen</span><small>SYSTEM</small></button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const viewTitles = { overview: 'Serverlage', server: 'Serververwaltung', modules: 'Module', studio: 'Embed Studio', system: 'System & Diagnose' };
+    const navButtons = [...document.querySelectorAll('[data-view-target]')];
+    const workspaces = [...document.querySelectorAll('[data-view]')];
+    const heavenLine = document.getElementById('heaven-line');
+
+    function moveHeavenLine(button) {
+      if (!button || !heavenLine) return;
+      const navRect = button.parentElement.getBoundingClientRect();
+      const buttonRect = button.getBoundingClientRect();
+      heavenLine.style.width = buttonRect.width + 'px';
+      heavenLine.style.transform = 'translateX(' + (buttonRect.left - navRect.left + navRect.left) + 'px)';
+    }
+
+    function activateView(viewId) {
+      const target = workspaces.find((view) => view.dataset.view === viewId) || workspaces[0];
+      workspaces.forEach((view) => view.classList.toggle('is-active', view === target));
+      navButtons.forEach((button) => {
+        const active = button.dataset.viewTarget === target.dataset.view;
+        if (active) button.setAttribute('aria-current', 'page');
+        else button.removeAttribute('aria-current');
+      });
+      document.getElementById('view-title').textContent = viewTitles[target.dataset.view];
+      moveHeavenLine(navButtons.find((button) => button.dataset.viewTarget === target.dataset.view));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    navButtons.forEach((button) => button.addEventListener('click', () => activateView(button.dataset.viewTarget)));
+    document.querySelectorAll('[data-atlas-node]').forEach((button) => button.addEventListener('click', () => activateView(button.dataset.go)));
+
+    function bindSelection(selector, callback) {
+      document.querySelectorAll(selector).forEach((row) => row.addEventListener('click', () => {
+        document.querySelectorAll(selector).forEach((item) => item.setAttribute('aria-selected', String(item === row)));
+        callback(row);
+      }));
+    }
+
+    bindSelection('[data-server-object]', (row) => {
+      document.getElementById('server-inspect-title').textContent = row.dataset.title;
+      document.getElementById('server-inspect-kind').textContent = row.dataset.kind;
+      document.getElementById('server-inspect-copy').textContent = row.dataset.detail;
+      document.getElementById('server-inspect-mark').textContent = row.querySelector('i').textContent;
+    });
+
+    bindSelection('[data-module-row]', (row) => {
+      document.getElementById('module-detail-title').textContent = row.dataset.title;
+      document.getElementById('module-detail-copy').textContent = row.dataset.copy;
+      document.getElementById('module-detail-events').textContent = row.dataset.events;
+    });
+
+    bindSelection('[data-studio-layer]', (row) => {
+      document.getElementById('studio-property-title').textContent = row.dataset.title;
+    });
+
+    bindSelection('[data-system-event]', (row) => {
+      document.getElementById('system-detail-title').textContent = row.dataset.title;
+      document.getElementById('system-detail-copy').textContent = row.dataset.copy;
+      document.getElementById('system-detail-log').textContent = row.dataset.log;
+    });
+
+    document.querySelectorAll('[data-module-filter]').forEach((button) => button.addEventListener('click', () => {
+      const filter = button.dataset.moduleFilter;
+      document.querySelectorAll('[data-module-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+      document.querySelectorAll('[data-module-row]').forEach((row) => {
+        row.hidden = filter !== 'all' && row.dataset.state !== filter;
+      });
+    }));
+
+    const commandLayer = document.getElementById('command-layer');
+    const commandSearch = document.getElementById('command-search');
+    function openCommands() { commandLayer.classList.add('is-open'); window.setTimeout(() => commandSearch.focus(), 20); }
+    function closeCommands() { commandLayer.classList.remove('is-open'); document.getElementById('command-trigger').focus(); }
+    document.getElementById('command-trigger').addEventListener('click', openCommands);
+    commandLayer.addEventListener('click', (event) => { if (event.target === commandLayer) closeCommands(); });
+    document.querySelectorAll('[data-command-view]').forEach((button) => button.addEventListener('click', () => { activateView(button.dataset.commandView); closeCommands(); }));
+    commandSearch.addEventListener('input', () => {
+      const query = commandSearch.value.trim().toLocaleLowerCase('de');
+      document.querySelectorAll('.command-result').forEach((button) => { button.hidden = query && !button.textContent.toLocaleLowerCase('de').includes(query); });
+    });
+    document.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'k') { event.preventDefault(); openCommands(); }
+      if (event.key === 'Escape' && commandLayer.classList.contains('is-open')) closeCommands();
+    });
+    window.addEventListener('resize', () => moveHeavenLine(document.querySelector('[data-view-target][aria-current="page"]')));
+    moveHeavenLine(document.querySelector('[data-view-target][aria-current="page"]'));
+  </script>
+</body>
+</html>

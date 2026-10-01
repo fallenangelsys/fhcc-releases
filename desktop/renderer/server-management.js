@@ -1890,7 +1890,12 @@ let pendingMemberAction = null;
     const picker = $('#boost-baseline-member-add');
     if (!editor || !list || !health || !picker) return;
     const importedActivity = status.activityImport || null;
-    const active = Array.isArray(status.active) ? status.active : [];
+    // Korrigierbar sind aktive Booster UND Mitglieder im Restboost-Fenster
+    // (premiumSince gesetzt, Systemrolle schon entfernt). Der Server liefert
+    // dafür manualCorrection; der active-Fallback hält ältere Stände lauffähig.
+    const active = Array.isArray(status.manualCorrection) && status.manualCorrection.length
+      ? status.manualCorrection
+      : (Array.isArray(status.active) ? status.active : []);
     editor.hidden = !importedActivity?.baselineCompletedAt;
     if (editor.hidden) return;
 
@@ -1964,7 +1969,7 @@ let pendingMemberAction = null;
         const countCopy = member.nativeActive
           ? `${activeCount} aktiver ${activeCount === 1 ? 'Boost' : 'Boosts'} nach Aktivitätsabgleich`
           : 'Nicht aktiv';
-        const action = member.nativeActive && importedActivity?.baselineCompletedAt
+        const action = member.manuallyCorrectable && importedActivity?.baselineCompletedAt
           ? `<button type="button" class="boost-count-action" data-boost-baseline-open="${safe(member.id)}">Basis bearbeiten</button>`
           : '';
         return `<article class="booster-card boost-${safe(selected)}"><img src="${safe(avatarSource(member))}" alt=""><div><b>${safe(member.displayName)}</b><small>@${safe(member.username)}</small><small>${safe(statusCopy)}</small><em>${safe(countCopy)}</em>${action}</div></article>`;

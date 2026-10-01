@@ -11,8 +11,6 @@
   memberPageCount: 1,
   memberQuery: '',
   channels: [],
-  aiMemories: [],
-  selectedMemoryUserId: null,
   selectedEmbedId: null,
   initialized: false,
   pollingActive: false
@@ -62,9 +60,6 @@ const membersPrevButton = document.getElementById('members-prev');
 const membersNextButton = document.getElementById('members-next');
 const membersPageInfo = document.getElementById('members-page-info');
 const memberDrawer = document.getElementById('member-drawer');
-const memoryRefreshButton = document.getElementById('memory-refresh');
-const memoryList = document.getElementById('memory-list');
-const memoryDetail = document.getElementById('memory-detail');
 
 let botStatusTimer = null;
 
@@ -544,116 +539,6 @@ const openMemberDrawer = async (userId) => {
   `;
   memberDrawer.querySelector('.member-drawer-close')?.addEventListener('click', () => memberDrawer.classList.add('hidden'));
 };
-const renderAiMemoryList = () => {
-  if (!memoryList) {
-    return;
-  }
-
-  if (!state.aiMemories.length) {
-    memoryList.innerHTML = '<div class="empty-state">Noch keine AI-Erinnerungen gespeichert.</div>';
-    if (memoryDetail) {
-      memoryDetail.innerHTML = '<div class="empty-state">Sobald User mit dem AI Chat schreiben, erscheinen sie hier.</div>';
-    }
-    return;
-  }
-
-  memoryList.innerHTML = state.aiMemories
-    .map(
-      (memory) => `
-        <button class="memory-list-item ${memory.userId === state.selectedMemoryUserId ? 'active' : ''}" data-user-id="${escapeHtml(memory.userId)}" type="button">
-          <strong>${escapeHtml(memory.displayName || memory.username || memory.userId)}</strong>
-          <span>${escapeHtml(memory.username || memory.userId)}</span>
-          <small>${escapeHtml(memory.facts?.length || 0)} Fakten - ${escapeHtml(memory.messageCount || 0)} Nachrichten</small>
-        </button>
-      `
-    )
-    .join('');
-
-  memoryList.querySelectorAll('[data-user-id]').forEach((button) => {
-    button.addEventListener('click', () => {
-      void selectAiMemory(button.dataset.userId);
-    });
-  });
-};
-
-const renderAiMemoryDetail = (memory) => {
-  if (!memoryDetail) {
-    return;
-  }
-
-  const facts = Array.isArray(memory.facts) ? memory.facts : [];
-  const messages = Array.isArray(memory.messages) ? memory.messages.slice(-30) : [];
-
-  memoryDetail.innerHTML = `
-    <div class="memory-detail-header">
-      <div>
-        <p class="eyebrow">User Memory</p>
-        <h3>${escapeHtml(memory.displayName || memory.username || memory.userId)}</h3>
-        <p class="muted">${escapeHtml(memory.userId)} - ${escapeHtml(memory.messageCount || 0)} gespeicherte Gespräche</p>
-      </div>
-      <button id="memory-delete" class="danger-button" type="button">Diesen User wipen</button>
-    </div>
-    <section class="memory-section">
-      <h4>Gemerkte Fakten</h4>
-      ${
-        facts.length
-          ? `<ul>${facts.map((fact) => {
-              const label = fact && typeof fact === 'object' ? String(fact.label || fact.key || 'Fakt') : '';
-              const value = fact && typeof fact === 'object' ? String(fact.value || '') : String(fact || '');
-              return `<li>${escapeHtml(label ? `${label}: ${value}` : value)}</li>`;
-            }).join('')}</ul>`
-          : '<p class="muted">Noch keine festen Fakten erkannt.</p>'
-      }
-    </section>
-    <section class="memory-section">
-      <h4>Letzte Nachrichten</h4>
-      <div class="memory-messages">
-        ${
-          messages.length
-            ? messages
-                .map(
-                  (entry) => `
-                    <article class="${entry.role === 'assistant' ? 'assistant' : 'user'}">
-                      <strong>${escapeHtml(entry.authorName || entry.role || 'User')}</strong>
-                      <p>${escapeHtml(entry.content || '')}</p>
-                    </article>
-                  `
-                )
-                .join('')
-            : '<p class="muted">Kein Verlauf gespeichert.</p>'
-        }
-      </div>
-    </section>
-  `;
-
-  memoryDetail.querySelector('#memory-delete')?.addEventListener('click', async () => {
-    await api(`/guild/${state.selectedGuildId}/ai/memory/${encodeURIComponent(memory.userId)}`, { method: 'DELETE' });
-    state.selectedMemoryUserId = null;
-    await loadAiMemories(state.selectedGuildId);
-    showToast('AI-Erinnerung für diesen User gelöscht', 'success');
-  });
-};
-
-const selectAiMemory = async (userId) => {
-  if (!state.selectedGuildId || !userId) {
-    return;
-  }
-
-  state.selectedMemoryUserId = userId;
-  renderAiMemoryList();
-  const response = await api(`/guild/${state.selectedGuildId}/ai/memory/${encodeURIComponent(userId)}`);
-  renderAiMemoryDetail(response.memory);
-};
-
-const loadAiMemories = async (guildId) => {
-  const response = await api(`/guild/${guildId}/ai/memories`);
-  state.aiMemories = response.memories || [];
-  if (state.selectedMemoryUserId && !state.aiMemories.some((memory) => memory.userId === state.selectedMemoryUserId)) {
-    state.selectedMemoryUserId = null;
-  }
-  renderAiMemoryList();
-};
-
 const collectFeaturePatch = (featureId) => {
   const panel = document.querySelector(`.feature-card[data-feature="${featureId}"]`);
   const fields = panel ? panel.querySelectorAll('[data-key]') : [];
@@ -1090,10 +975,6 @@ const loadConfig = async (guildId) => {
     loadChannels(guildId).catch(() => {
       state.channels = [];
     }),
-    loadAiMemories(guildId).catch(() => {
-      state.aiMemories = [];
-      renderAiMemoryList();
-    }),
     loadDashboardMembers().catch(() => {
       state.memberRows = [];
       renderMembersTable();
@@ -1337,15 +1218,6 @@ botRestartButton.addEventListener('click', async () => {
   await runBotAction('restart', 'Bot neustarten');
 });
 
-
-memoryRefreshButton?.addEventListener('click', async () => {
-  if (!state.selectedGuildId) {
-    return;
-  }
-
-  await loadAiMemories(state.selectedGuildId);
-  showToast('AI Memory neu geladen', 'success');
-});
 
 memberSearchInput?.addEventListener('input', () => {
   state.memberQuery = memberSearchInput.value || '';

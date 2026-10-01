@@ -6,10 +6,14 @@ import { featureCards } from '../src/defaultConfig.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const htmlPath = path.join(root, 'desktop', 'renderer', 'index.html');
 const appPath = path.join(root, 'desktop', 'renderer', 'app.js');
-const qualityCssPath = path.join(root, 'desktop', 'renderer', 'ui-quality-v9.css');
+const inputModulePath = path.join(root, 'desktop', 'renderer', 'module-config-inputs.js');
+// Seit 3.9.139 sind alle Einzel-Sheets zu ui-base.css zusammengeführt – die
+// Qualitätsschicht-Prüfungen laufen gegen das konsolidierte Sheet.
+const qualityCssPath = path.join(root, 'desktop', 'renderer', 'ui-base.css');
 const diagnosticsPath = path.join(root, 'desktop', 'renderer', 'live-diagnostics.js');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const app = fs.readFileSync(appPath, 'utf8');
+const inputModule = fs.readFileSync(inputModulePath, 'utf8');
 const qualityCss = fs.readFileSync(qualityCssPath, 'utf8');
 const diagnostics = fs.readFileSync(diagnosticsPath, 'utf8');
 const problems = [];
@@ -27,7 +31,7 @@ const contrast = (foreground, background) => {
 const supportedTypes = new Set([
   'text', 'number', 'integer', 'textarea', 'arraylines', 'checkbox', 'select',
   'channelselect', 'multichannelselect', 'roleselect', 'multiroleselect',
-  'rolemappingselect', 'emoji', 'json', 'password'
+  'rolemappingselect', 'roleswapselect', 'emoji', 'json', 'password'
 ]);
 const keys = new Set();
 let fieldCount = 0;
@@ -74,8 +78,8 @@ for (const match of html.matchAll(/<(input|select|textarea)\b[^>]*\bid="([^"]+)"
 }
 assert(unlabelled.length === 0, `Felder ohne zugängliche Bezeichnung: ${unlabelled.join(', ')}`);
 
-assert(/ui-quality-v9\.css/.test(html), 'Die finale UI-Qualitätsschicht ist nicht eingebunden.');
-assert(html.lastIndexOf('ui-quality-v9.css') > html.lastIndexOf('skin-editor.css'), 'Die UI-Qualitätsschicht muss als letztes Stylesheet geladen werden.');
+assert(/ui-base\.css/.test(html), 'Das konsolidierte Stylesheet ui-base.css ist nicht eingebunden.');
+assert(qualityCss.indexOf('/* --- ui-quality-v9.css --- */') > qualityCss.indexOf('/* --- skin-editor.css --- */'), 'Die UI-Qualitätsschicht muss im konsolidierten Sheet nach den Modulstilen stehen.');
 assert(/html\[data-theme="light"\]/.test(qualityCss), 'Vollständige Hellmodus-Tokens fehlen.');
 assert(!/<label class="module-search"><svg/i.test(html), 'Modul-Suche darf kein Icon direkt vor dem Platzhalter anzeigen.');
 assert(/\.module-search input\s*\{[^}]*padding-left:\s*14px\s*!important/.test(qualityCss), 'Modul-Suche braucht normalen linken Textabstand ohne Icon-Reservierung.');
@@ -85,11 +89,14 @@ assert(contrast('#f7f8ff', '#07091c') >= 7, 'Dunkelmodus unterschreitet den prof
 assert(contrast('#171a36', '#eef1ff') >= 7, 'Hellmodus unterschreitet den professionellen Textkontrast.');
 assert(contrast('#b3b8d2', '#07091c') >= 4.5, 'Dunkelmodus: Sekundärtext ist nicht gut lesbar.');
 assert(contrast('#4f5879', '#eef1ff') >= 4.5, 'Hellmodus: Sekundärtext ist nicht gut lesbar.');
-assert(/data-setting-type="emoji"/.test(app), 'Dynamische Emoji-Felder besitzen keine Bibliotheksanbindung.');
-assert(/type === 'arraylines'/.test(app), 'Mehrzeilige Konfigurationsfelder werden nicht als Textbereich gebaut.');
-assert(/data-setting-type="channel-multi"/.test(app), 'Mehrfach-Kanalauswahl fehlt.');
+const fieldRendererSource = app + '\n' + inputModule;
+assert(/data-setting-type="emoji"/.test(fieldRendererSource), 'Dynamische Emoji-Felder besitzen keine Bibliotheksanbindung.');
+assert(/type === 'arraylines'/.test(fieldRendererSource), 'Mehrzeilige Konfigurationsfelder werden nicht als Textbereich gebaut.');
+assert(/data-setting-type="channel-multi"/.test(fieldRendererSource), 'Mehrfach-Kanalauswahl fehlt.');
 assert(!/score:\s*70[\s,]/.test(diagnostics), 'Live-Diagnose enthält noch einen erfundenen 70-Punkte-Fallback.');
 assert(/Noch keine Detailmessung/.test(diagnostics), 'Live-Diagnose kennzeichnet fehlende Messwerte nicht verständlich.');
+const appLines = app.split(/\r?\n/).length;
+assert(appLines <= 9800, `desktop/renderer/app.js ist mit ${appLines} Zeilen zu groß. Neue UI-Logik muss in ein eigenes Renderer-Modul.`);
 
 if (problems.length) {
   console.error(`UI-Feld-Audit fehlgeschlagen (${problems.length}):`);

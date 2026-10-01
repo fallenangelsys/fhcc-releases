@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 
 const html = await fs.readFile(new URL('../desktop/renderer/index.html', import.meta.url), 'utf8');
 const renderer = await fs.readFile(new URL('../desktop/renderer/server-management.js', import.meta.url), 'utf8');
-const styles = await fs.readFile(new URL('../desktop/renderer/styles.css', import.meta.url), 'utf8');
+const styles = await fs.readFile(new URL('../desktop/renderer/ui-base.css', import.meta.url), 'utf8');
 const dashboard = await fs.readFile(new URL('../src/dashboard.js', import.meta.url), 'utf8');
 const backupSource = await fs.readFile(new URL('../src/features/serverBackup.js', import.meta.url), 'utf8');
 

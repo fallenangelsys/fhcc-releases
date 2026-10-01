@@ -7,6 +7,14 @@
   const webglCanvas = document.getElementById('skin-webgl-canvas');
   if (!studio || !workspace || !textureCanvas || !webglCanvas) return;
 
+  // Lazy-Load des 3D-Renderers: three.js + skinview3d werden NICHT mehr beim
+  // App-Start geladen (größte JS-Dateien der App), sondern erst beim ersten
+  // Öffnen des Skin Studios. Das spart Startzeit und RAM – gerade auf dem
+  // Mini-PC, wo das Skin Studio vielleicht nie benutzt wird.
+  let viewerInitialized = false;
+  let viewerLibrariesReady = false;
+  let viewerLibraryPromise = null;
+
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const byId = (id) => document.getElementById(id);
@@ -78,13 +86,6 @@
     baseLayer: byId('skin-base-layer'),
     overlayLayer: byId('skin-overlay-layer'),
     viewReset: byId('skin-view-reset')
-    ,aiOpen: byId('skin-ai-open')
-    ,aiCreator: byId('skin-ai-creator')
-    ,aiPrompt: byId('skin-ai-prompt')
-    ,aiStyle: byId('skin-ai-style')
-    ,aiDetail: byId('skin-ai-detail')
-    ,aiGenerate: byId('skin-ai-generate')
-    ,aiStatus: byId('skin-ai-status')
   };
 
   const compositeContext = textureCanvas.getContext('2d', { willReadFrequently: true });
@@ -203,22 +204,53 @@
     };
   }
 
-  function drawDefaultSkin() {
-    baseContext.clearRect(0, 0, 64, 64);
-    const recipe = defaultStarterRecipe();
-    drawAiSkinBaseLayer({ context: baseContext }, recipe, stringSeed('fallen-heaven-starter-base-v3'));
+  let standardSkinCanvas = null;
 
-    detectedModel = 'default';
-    importMetadata = { name: 'Fallen Heaven Starter', width: 64, height: 64, note: 'Basis · Details · Outer-Layer' };
+  async function loadStandardSkinCanvas() {
+    if (standardSkinCanvas) return standardSkinCanvas;
+    try {
+      const image = await loadImage('assets/fallen-heaven-standard-skin.png');
+      standardSkinCanvas = normalizeSkinSourceCanvas(image);
+    } catch (error) {
+      console.warn('Standard-Skin konnte nicht geladen werden; Fallback auf Starter-Skin:', error);
+      standardSkinCanvas = null;
+    }
+    return standardSkinCanvas;
   }
 
-  function createDefaultSkinLayers() {
+  async function drawDefaultSkin() {
+    baseContext.clearRect(0, 0, 64, 64);
+    const source = await loadStandardSkinCanvas();
+    if (source) {
+      copySkinRegions(source, baseContext, SKIN_BASE_RECTS);
+      detectedModel = 'default';
+      importMetadata = { name: 'Fallen Heaven Standard', width: 64, height: 64, note: 'Basis · Details · Outer-Layer' };
+    } else {
+      const recipe = defaultStarterRecipe();
+      drawStarterBaseLayer({ context: baseContext }, recipe, stringSeed('fallen-heaven-starter-base-v3'));
+      detectedModel = 'default';
+      importMetadata = { name: 'Fallen Heaven Starter', width: 64, height: 64, note: 'Basis · Details · Outer-Layer' };
+    }
+  }
+
+  async function createDefaultSkinLayers() {
+    const source = standardSkinCanvas;
+    if (source) {
+      const overlayContext = source.getContext('2d', { willReadFrequently: true });
+      const overlayCoverage = countVisiblePixels(overlayContext, SKIN_OVERLAY_RECTS);
+      if (overlayCoverage.count > 0) {
+        const overlayLayer = createLayer('Standard · Overlay / 2. Ebene', 'paint-1');
+        copySkinRegions(source, overlayLayer.context, SKIN_OVERLAY_RECTS);
+        return [overlayLayer];
+      }
+      return [createLayer('Details', 'paint-1')];
+    }
     const recipe = defaultStarterRecipe();
     const seed = stringSeed('fallen-heaven-starter-editable-v3');
     const detailLayer = createLayer('FH · Schatten & Pixel', 'paint-1');
     const overlayLayer = createLayer('FH · Hood & Outer-Layer', 'paint-2');
-    drawAiSkinDetailLayer(detailLayer, recipe, seed);
-    drawAiSkinOverlayLayer(overlayLayer, recipe, seed);
+    drawStarterDetailLayer(detailLayer, recipe, seed);
+    drawStarterOverlayLayer(overlayLayer, recipe, seed);
     return [detailLayer, overlayLayer];
   }
 
@@ -310,10 +342,12 @@
   }
 
   function initializeViewer() {
+    if (viewerInitialized) return;
     if (!window.skinview3d?.SkinViewer) {
-      studio.classList.add('skin-render-unavailable');
-      setStatusText(elements.renderState, '3D-MODUL FEHLT');
-      setImportReport('error', '3D-Vorschau nicht verfügbar', 'Skin-Render-Modul konnte nicht geladen werden.');
+      // Bibliotheken werden erst beim Öffnen des Skin Studios nachgeladen –
+      // das ist KEIN Fehler, nur noch nicht geladen.
+      studio.classList.add('skin-render-loading');
+      setStatusText(elements.renderState, '3D-MODUL LÄDT …');
       return;
     }
 
@@ -332,6 +366,8 @@
         zoom: 0.76,
         animation: new window.skinview3d.IdleAnimation()
       });
+      viewerInitialized = true;
+      studio.classList.remove('skin-render-loading', 'skin-render-unavailable');
       viewer.controls.enableDamping = true;
       viewer.controls.dampingFactor = 0.075;
       viewer.controls.enablePan = false;
@@ -593,7 +629,8 @@
   }
 
   function updateImportReport() {
-    const title = importMetadata.name === 'Fallen Heaven Starter' ? 'Fallen-Heaven-Skin bereit' : `${importMetadata.name} erkannt`;
+    const isStandard = importMetadata.name === 'Fallen Heaven Starter' || importMetadata.name === 'Fallen Heaven Standard';
+    const title = isStandard ? 'Fallen-Heaven-Skin bereit' : `${importMetadata.name} erkannt`;
     const detail = `${importMetadata.width} × ${importMetadata.height} · ${modelLabel()} · ${importMetadata.note}`;
     setImportReport('ready', title, detail);
   }
@@ -620,7 +657,8 @@
     const baseCopy = document.createElement('span');
     baseCopy.className = 'skin-layer-copy';
     const baseTitle = document.createElement('b');
-    baseTitle.textContent = importMetadata.name === 'Fallen Heaven Starter' ? 'Fallen-Heaven-Basis' : 'Importierte Basis';
+    const isStandard = importMetadata.name === 'Fallen Heaven Starter' || importMetadata.name === 'Fallen Heaven Standard';
+    baseTitle.textContent = isStandard ? 'Fallen-Heaven-Basis' : 'Importierte Basis';
     const baseDetail = document.createElement('small');
     baseDetail.textContent = 'Geschützt · Original bleibt erhalten';
     baseCopy.append(baseTitle, baseDetail);
@@ -762,6 +800,26 @@
     }
   }
 
+  const CUSTOM_PALETTE_KEY = 'fh-skin-custom-palette';
+
+  function loadCustomPalette() {
+    try {
+      const raw = localStorage.getItem(CUSTOM_PALETTE_KEY);
+      const colors = raw ? JSON.parse(raw) : [];
+      return Array.isArray(colors) ? colors.filter((color) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 28) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveCustomPalette(colors) {
+    try {
+      localStorage.setItem(CUSTOM_PALETTE_KEY, JSON.stringify(colors));
+    } catch {
+      /* Speicher voll oder blockiert — Palette bleibt dann nur in dieser Sitzung. */
+    }
+  }
+
   function renderSwatches() {
     if (!elements.swatches) return;
     elements.swatches.replaceChildren();
@@ -777,7 +835,38 @@
       button.title = color.toUpperCase();
       elements.swatches.append(button);
     });
+    loadCustomPalette().forEach((color) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'skin-swatch skin-swatch-custom';
+      button.dataset.color = color;
+      button.style.background = color;
+      button.title = `${color.toUpperCase()} · Rechtsklick zum Entfernen`;
+      elements.swatches.append(button);
+    });
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'skin-swatch-add';
+    addButton.title = 'Aktuelle Farbe zur Palette hinzufügen';
+    addButton.textContent = '＋';
+    elements.swatches.append(addButton);
     updateColorUI();
+  }
+
+  function addCurrentColorToPalette() {
+    const color = (elements.primaryColor?.value || '#5865f2').toUpperCase();
+    const custom = loadCustomPalette();
+    if (!custom.includes(color)) {
+      custom.push(color);
+      saveCustomPalette(custom);
+      renderSwatches();
+    }
+  }
+
+  function removeCustomColor(color) {
+    const custom = loadCustomPalette().filter((entry) => entry !== String(color || '').toUpperCase());
+    saveCustomPalette(custom);
+    renderSwatches();
   }
 
   function canvasCoordinates(event) {
@@ -895,90 +984,7 @@
     }
   }
 
-  function normalizeRecipeColor(value, fallback) {
-    return /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value).toUpperCase() : fallback;
-  }
-
-  function keywordColor(prompt, fallback) {
-    const explicit = String(prompt || '').match(/#[0-9a-f]{6}/i)?.[0];
-    if (explicit) return explicit.toUpperCase();
-    const colors = [
-      [/\b(?:violett|lila|purple|magenta)\b/i, '#7657E8'],
-      [/\b(?:blau|blue|ice|eis)\b/i, '#3976D9'],
-      [/\b(?:rot|red|feuer|fire)\b/i, '#C83D52'],
-      [/\b(?:grün|green|wald|forest)\b/i, '#2F8A63'],
-      [/\b(?:grau|gray|grey|silber|silver|stahl|steel)\b/i, '#343744'],
-      [/\b(?:gold|gelb|yellow)\b/i, '#D8A630'],
-      [/\b(?:pink|rosa)\b/i, '#D9579F'],
-      [/\b(?:weiß|white|hell)\b/i, '#D9DEEB'],
-      [/\b(?:schwarz|black|dunkel|dark|shadow|schatten|fallen|heaven)\b/i, '#090B18']
-    ];
-    return colors.find(([expression]) => expression.test(prompt))?.[1] || fallback;
-  }
-
-  function createLocalSkinRecipe(prompt, style, detail) {
-    const normalized = String(prompt || '').toLowerCase();
-    const cyber = /cyber|neon|future|tech|robot/.test(normalized) || style === 'cyber';
-    const fantasy = /ritter|knight|magier|mage|demon|dämon|engel|angel|fantasy|rune/.test(normalized) || style === 'fantasy';
-    const streetwear = /hoodie|street|urban|skater|modern/.test(normalized) || style === 'streetwear';
-    const minimal = style === 'minimal' || /minimal|clean|schlicht/.test(normalized);
-    const fallen = /fallen heaven|fallen|heaven|engel|angel|schatten|shadow/.test(normalized);
-    const primary = keywordColor(prompt, cyber ? '#24213F' : fantasy ? '#303445' : streetwear ? '#24283A' : '#27304A');
-    const accent = /grün|green/.test(normalized) ? '#55E6A5' : /rot|red|feuer|fire/.test(normalized) ? '#FF5D6C' : /gold|gelb|yellow/.test(normalized) ? '#FFD061' : fallen ? '#9D8CFF' : cyber ? '#8D7CFF' : '#6D8CFF';
-    return {
-      name: (prompt.split(/[,.;]/)[0] || 'Smart Entwurf').trim().slice(0, 38) || 'Smart Entwurf',
-      style: cyber ? 'cyber' : fantasy ? 'fantasy' : streetwear ? 'streetwear' : minimal ? 'minimal' : (style === 'auto' ? 'modern' : style),
-      archetype: /rüstung|armor|ritter|knight|samurai/.test(normalized) ? 'armor' : /robe|magier|mage/.test(normalized) ? 'robe' : /anzug|suit/.test(normalized) ? 'suit' : /hood|kapuze/.test(normalized) ? 'hoodie' : 'jacket',
-      pattern: /rune|magie|magic/.test(normalized) ? 'runes' : /streifen|stripe/.test(normalized) ? 'stripes' : /asym/.test(normalized) ? 'asymmetric' : minimal ? 'clean' : 'panels',
-      detail,
-      palette: {
-        primary,
-        secondary: /dunkel|dark|schwarz|black|shadow|schatten|fallen|heaven/.test(normalized) ? '#1A1D2A' : shiftColor(primary, 25),
-        accent,
-        skin: /blass|pale/.test(normalized) ? '#D4A487' : /dunkle haut|dark skin/.test(normalized) ? '#744630' : '#B97A56',
-        hair: /weißes haar|white hair/.test(normalized) ? '#D8DCE4' : /blondes haar|blond/.test(normalized) ? '#C8A25B' : fallen ? '#070707' : '#281B1A',
-        eyes: accent
-      },
-      hood: /hood|kapuze|assassin/.test(normalized),
-      mask: /maske|mask|ninja|samurai|robot/.test(normalized),
-      gloves: !/ohne handschuhe|no gloves/.test(normalized),
-      boots: true,
-      glowing: cyber || /leucht|glow|neon|magie|magic/.test(normalized),
-      summary: 'Lokal aus Beschreibung, Stil und Farbstimmung aufgebaut.'
-    };
-  }
-
-  function normalizedSkinRecipe(recipe, prompt, style, detail) {
-    const fallback = createLocalSkinRecipe(prompt, style, detail);
-    const value = recipe && typeof recipe === 'object' ? recipe : {};
-    const allowedStyles = ['modern', 'fantasy', 'cyber', 'streetwear', 'minimal'];
-    const allowedArchetypes = ['hoodie', 'armor', 'jacket', 'robe', 'suit', 'adventurer'];
-    const allowedPatterns = ['clean', 'stripes', 'panels', 'runes', 'gradient', 'asymmetric'];
-    return {
-      ...fallback,
-      ...value,
-      name: String(value.name || fallback.name).replace(/[<>]/g, '').slice(0, 38),
-      style: allowedStyles.includes(value.style) ? value.style : fallback.style,
-      archetype: allowedArchetypes.includes(value.archetype) ? value.archetype : fallback.archetype,
-      pattern: allowedPatterns.includes(value.pattern) ? value.pattern : fallback.pattern,
-      detail: ['rich', 'balanced', 'clean'].includes(detail) ? detail : 'balanced',
-      palette: {
-        primary: normalizeRecipeColor(value.palette?.primary, fallback.palette.primary),
-        secondary: normalizeRecipeColor(value.palette?.secondary, fallback.palette.secondary),
-        accent: normalizeRecipeColor(value.palette?.accent, fallback.palette.accent),
-        skin: normalizeRecipeColor(value.palette?.skin, fallback.palette.skin),
-        hair: normalizeRecipeColor(value.palette?.hair, fallback.palette.hair),
-        eyes: normalizeRecipeColor(value.palette?.eyes, fallback.palette.eyes)
-      }
-    };
-  }
-
-  function paintRect(context, rect, color) {
-    context.fillStyle = color;
-    context.fillRect(rect[0], rect[1], rect[2], rect[3]);
-  }
-
-  function drawAiSkinBaseLayer(layer, recipe, seed) {
+  function drawStarterBaseLayer(layer, recipe, seed) {
     const context = layer.context;
     context.clearRect(0, 0, 64, 64);
     const { primary, secondary, skin } = recipe.palette;
@@ -992,9 +998,9 @@
     const rightLegRects = [[4, 16, 4, 4], [8, 16, 4, 4], [0, 20, 4, 12], [4, 20, 4, 12], [8, 20, 4, 12], [12, 20, 4, 12]];
     const leftLegRects = [[20, 48, 4, 4], [24, 48, 4, 4], [16, 52, 4, 12], [20, 52, 4, 12], [24, 52, 4, 12], [28, 52, 4, 12]];
 
-    const noise = recipe.detail === 'clean' ? 7 : recipe.detail === 'rich' ? 22 : 15;
+    const noise = recipe.detail === 'clean' ? 5 : recipe.detail === 'rich' ? 13 : 9;
     paintTexturedSet(context, faceRects, skin, seed + 100, { noise, tint: -9, contrast: 0.85 });
-    paintTexturedSet(context, torsoRects, primary, seed + 200, { noise: noise + 3, tint: -14, contrast: 1.05 });
+    paintTexturedSet(context, torsoRects, primary, seed + 200, { noise: noise + 2, tint: -14, contrast: 1.05 });
     paintTexturedSet(context, rightArmRects, sleeve, seed + 300, { noise, tint: -12, contrast: 1 });
     paintTexturedSet(context, leftArmRects, sleeve, seed + 400, { noise, tint: -12, contrast: 1 });
     paintTexturedSet(context, rightLegRects, dark, seed + 500, { noise, tint: -8, contrast: 1.05 });
@@ -1018,7 +1024,7 @@
     }
   }
 
-  function drawAiSkinDetailLayer(layer, recipe, seed) {
+  function drawStarterDetailLayer(layer, recipe, seed) {
     const context = layer.context;
     context.clearRect(0, 0, 64, 64);
     const { primary, secondary, accent, skin, hair, eyes } = recipe.palette;
@@ -1033,12 +1039,21 @@
     context.fillRect(0, 8, 8, 4);
     context.fillRect(16, 8, 8, 4);
     context.fillRect(24, 8, 8, 7);
-    paintSparsePixels(context, [[8, 8, 8, 5], [0, 8, 8, 5], [16, 8, 8, 5], [24, 8, 8, 7]], shiftColor(hair, 36), seed + 810, recipe.detail === 'rich' ? 0.2 : 0.11);
-    context.fillStyle = eyes;
+    paintSparsePixels(context, [[8, 8, 8, 5], [0, 8, 8, 5], [16, 8, 8, 5], [24, 8, 8, 7]], shiftColor(hair, 36), seed + 810, recipe.detail === 'rich' ? 0.16 : 0.09);
+    // Augenbrauen in Haarfarbe, darunter lesbare Augen mit Weiß + Pupille
+    context.fillStyle = hair;
+    context.fillRect(10, 11, 2, 1);
+    context.fillRect(14, 11, 2, 1);
+    context.fillStyle = mixColor(skin, '#FFFFFF', 0.32);
     context.fillRect(10, 12, 2, 1);
     context.fillRect(14, 12, 2, 1);
-    context.fillStyle = shiftColor(skin, -28);
+    context.fillStyle = eyes;
+    context.fillRect(11, 12, 1, 1);
+    context.fillRect(15, 12, 1, 1);
+    // Nase + Mund für ein erkennbares Gesicht
+    context.fillStyle = shiftColor(skin, -30);
     context.fillRect(12, 14, 2, 1);
+    context.fillRect(12, 15, 2, 1);
     if (recipe.mask) {
       context.fillStyle = dark;
       context.fillRect(8, 13, 8, 3);
@@ -1122,12 +1137,12 @@
       context.fillRect(20, 60, 4, 1);
     }
 
-    const density = recipe.detail === 'clean' ? 0.035 : recipe.detail === 'rich' ? 0.16 : 0.085;
+    const density = recipe.detail === 'clean' ? 0.03 : recipe.detail === 'rich' ? 0.1 : 0.06;
     paintSparsePixels(context, [[20, 20, 8, 12], [44, 20, 4, 12], [36, 52, 4, 12], [4, 20, 4, 12], [20, 52, 4, 12]], shiftColor(primary, 34), seed + 840, density);
     paintSparsePixels(context, [[20, 20, 8, 12], [44, 20, 4, 12], [36, 52, 4, 12], [4, 20, 4, 12], [20, 52, 4, 12]], shiftColor(primary, -38), seed + 850, density * 0.75);
   }
 
-  function drawAiSkinOverlayLayer(layer, recipe, seed) {
+  function drawStarterOverlayLayer(layer, recipe, seed) {
     const context = layer.context;
     context.clearRect(0, 0, 64, 64);
     const { primary, secondary, accent, hair } = recipe.palette;
@@ -1136,36 +1151,36 @@
 
     // True Minecraft outer layer: hood / hair shell, jacket shoulders and trim.
     if (recipe.hood || recipe.archetype === 'hoodie') {
-      paintTexturedRect(context, [40, 8, 8, 8], shell, { seed: seed + 900, noise: 18, gradient: 4 });
-      paintTexturedRect(context, [32, 8, 8, 8], shiftColor(shell, -6), { seed: seed + 901, noise: 16, gradient: 4 });
-      paintTexturedRect(context, [48, 8, 8, 8], shiftColor(shell, -8), { seed: seed + 902, noise: 16, gradient: 4 });
-      paintTexturedRect(context, [56, 8, 8, 8], shiftColor(shell, -18), { seed: seed + 903, noise: 14, gradient: 4 });
-      paintTexturedRect(context, [40, 0, 8, 8], shiftColor(shell, 6), { seed: seed + 904, noise: 14, gradient: 3 });
+      paintTexturedRect(context, [40, 8, 8, 8], shell, { seed: seed + 900, noise: 12, gradient: 4 });
+      paintTexturedRect(context, [32, 8, 8, 8], shiftColor(shell, -6), { seed: seed + 901, noise: 10, gradient: 4 });
+      paintTexturedRect(context, [48, 8, 8, 8], shiftColor(shell, -8), { seed: seed + 902, noise: 10, gradient: 4 });
+      paintTexturedRect(context, [56, 8, 8, 8], shiftColor(shell, -18), { seed: seed + 903, noise: 9, gradient: 4 });
+      paintTexturedRect(context, [40, 0, 8, 8], shiftColor(shell, 6), { seed: seed + 904, noise: 9, gradient: 3 });
       context.fillStyle = accent;
       context.fillRect(40, 10, 1, 5);
       context.fillRect(47, 10, 1, 5);
     } else {
-      paintTexturedRect(context, [40, 8, 8, 2], shiftColor(hair, 22), { seed: seed + 910, noise: 18 });
-      paintTexturedRect(context, [32, 8, 8, 3], hair, { seed: seed + 911, noise: 14, transparentEvery: 5 });
-      paintTexturedRect(context, [48, 8, 8, 3], hair, { seed: seed + 912, noise: 14, transparentEvery: 5 });
+      paintTexturedRect(context, [40, 8, 8, 2], shiftColor(hair, 22), { seed: seed + 910, noise: 12 });
+      paintTexturedRect(context, [32, 8, 8, 3], hair, { seed: seed + 911, noise: 9, transparentEvery: 5 });
+      paintTexturedRect(context, [48, 8, 8, 3], hair, { seed: seed + 912, noise: 9, transparentEvery: 5 });
     }
 
-    paintTexturedRect(context, [20, 36, 8, 12], mixColor(primary, secondary, 0.34), { seed: seed + 930, noise: 18, gradient: 6 });
-    paintTexturedRect(context, [16, 36, 4, 4], shiftColor(secondary, -10), { seed: seed + 931, noise: 16 });
-    paintTexturedRect(context, [28, 36, 4, 4], shiftColor(secondary, -16), { seed: seed + 932, noise: 16 });
-    paintTexturedRect(context, [44, 36, 4, 4], shiftColor(secondary, -10), { seed: seed + 933, noise: 14 });
-    paintTexturedRect(context, [52, 52, 4, 4], shiftColor(secondary, -10), { seed: seed + 934, noise: 14 });
+    paintTexturedRect(context, [20, 36, 8, 12], mixColor(primary, secondary, 0.34), { seed: seed + 930, noise: 12, gradient: 6 });
+    paintTexturedRect(context, [16, 36, 4, 4], shiftColor(secondary, -10), { seed: seed + 931, noise: 10 });
+    paintTexturedRect(context, [28, 36, 4, 4], shiftColor(secondary, -16), { seed: seed + 932, noise: 10 });
+    paintTexturedRect(context, [44, 36, 4, 4], shiftColor(secondary, -10), { seed: seed + 933, noise: 9 });
+    paintTexturedRect(context, [52, 52, 4, 4], shiftColor(secondary, -10), { seed: seed + 934, noise: 9 });
 
     if (recipe.archetype === 'armor') {
-      paintTexturedRect(context, [20, 36, 8, 5], shell, { seed: seed + 940, noise: 20 });
-      paintTexturedRect(context, [44, 36, 4, 6], shell, { seed: seed + 941, noise: 16 });
-      paintTexturedRect(context, [52, 52, 4, 6], shell, { seed: seed + 942, noise: 16 });
+      paintTexturedRect(context, [20, 36, 8, 5], shell, { seed: seed + 940, noise: 14 });
+      paintTexturedRect(context, [44, 36, 4, 6], shell, { seed: seed + 941, noise: 10 });
+      paintTexturedRect(context, [52, 52, 4, 6], shell, { seed: seed + 942, noise: 10 });
       context.fillStyle = shiftColor(shell, 28);
       context.fillRect(21, 37, 6, 1);
     }
 
-    paintTexturedRect(context, [4, 36, 4, 4], shiftColor(primary, -38), { seed: seed + 950, noise: 13 });
-    paintTexturedRect(context, [4, 52, 4, 4], shiftColor(primary, -38), { seed: seed + 951, noise: 13 });
+    paintTexturedRect(context, [4, 36, 4, 4], shiftColor(primary, -38), { seed: seed + 950, noise: 9 });
+    paintTexturedRect(context, [4, 52, 4, 4], shiftColor(primary, -38), { seed: seed + 951, noise: 9 });
     if (recipe.glowing) {
       context.fillStyle = trim;
       context.fillRect(20, 38, 1, 9);
@@ -1178,78 +1193,6 @@
 
     if (recipe.detail === 'rich') {
       paintSparsePixels(context, [[20, 36, 8, 12], [44, 36, 4, 12], [52, 52, 4, 12], [4, 36, 4, 12], [4, 52, 4, 12]], trim, seed + 960, 0.12);
-    }
-  }
-
-  function createAiSkinLayers(recipe) {
-    const seed = stringSeed(`${recipe.name}|${recipe.style}|${recipe.archetype}|${recipe.pattern}|${Object.values(recipe.palette || {}).join('|')}`);
-    const baseLayer = createLayer(`AI · Basis · ${recipe.name}`);
-    const detailLayer = createLayer('AI · Schatten & Pixel');
-    const overlayLayer = createLayer('AI · Overlay / 2. Ebene');
-    drawAiSkinBaseLayer(baseLayer, recipe, seed);
-    drawAiSkinDetailLayer(detailLayer, recipe, seed);
-    drawAiSkinOverlayLayer(overlayLayer, recipe, seed);
-    return [baseLayer, detailLayer, overlayLayer];
-  }
-
-  function setAiStatus(state, text) {
-    if (!elements.aiStatus) return;
-    elements.aiStatus.dataset.state = state;
-    const textNode = Array.from(elements.aiStatus.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
-    if (textNode) textNode.nodeValue = text;
-  }
-
-  function applyAiRecipe(recipe, provider) {
-    const generatedLayers = createAiSkinLayers(recipe);
-    layers.push(...generatedLayers);
-    activeLayerId = generatedLayers[generatedLayers.length - 1].id;
-    renderLayerList();
-    compositeLayers();
-    captureHistory();
-    setViewMode('split');
-    setAiStatus('success', provider === 'ollama'
-      ? `AI-Entwurf „${recipe.name}“ wurde als 3 echte Ebenen hinzugefügt.`
-      : `Smart-Entwurf „${recipe.name}“ wurde offline als 3 echte Ebenen hinzugefügt.`);
-    setImportReport('ready', `${recipe.name} hinzugefügt`, `${recipe.style} · ${recipe.archetype} · Basis, Pixel & Overlay getrennt`);
-  }
-
-  async function generateAiSkin() {
-    const prompt = String(elements.aiPrompt?.value || '').trim();
-    if (prompt.length < 3) {
-      setAiStatus('error', ' Bitte beschreibe kurz, wie der Skin aussehen soll.');
-      elements.aiPrompt?.focus();
-      return;
-    }
-    const style = elements.aiStyle?.value || 'auto';
-    const detail = elements.aiDetail?.value || 'balanced';
-    if (elements.aiGenerate) elements.aiGenerate.disabled = true;
-    setAiStatus('loading', ' Lokale AI analysiert Stil, Kontrast und Pixelaufbau …');
-    let recipe = null;
-    let provider = 'smart';
-    try {
-      const guildId = localStorage.getItem('fh-selected-guild') || '';
-      if (guildId && window.fallenHeaven?.apiRequest) {
-        const response = await window.fallenHeaven.apiRequest({
-          path: `/api/guild/${encodeURIComponent(guildId)}/skin/assistant`,
-          method: 'POST',
-          body: { prompt, style, detail }
-        });
-        if (response?.ok && response.data?.result?.recipe) {
-          recipe = response.data.result.recipe;
-          provider = response.data.result.provider || 'ollama';
-        }
-      }
-    } catch (error) {
-      console.warn('Lokale Skin-AI ist nicht erreichbar; Smart-Generator übernimmt:', error);
-    }
-    try {
-      const normalized = normalizedSkinRecipe(recipe, prompt, style, detail);
-      applyAiRecipe(normalized, provider);
-    } catch (error) {
-      console.error('AI-Skin konnte nicht aufgebaut werden:', error);
-      setAiStatus('error', ` Entwurf fehlgeschlagen: ${error?.message || 'unbekannter Fehler'}`);
-    } finally {
-      if (elements.aiGenerate) elements.aiGenerate.disabled = false;
     }
   }
 
@@ -1626,9 +1569,9 @@
     setImportReport('ready', 'Skin exportiert', 'Minecraft-kompatible PNG · 64 × 64 · Transparenz erhalten');
   }
 
-  function resetProject() {
-    drawDefaultSkin();
-    layers = createDefaultSkinLayers();
+  async function resetProject() {
+    await drawDefaultSkin();
+    layers = await createDefaultSkinLayers();
     activeLayerId = layers[layers.length - 1]?.id || layers[0]?.id || 'paint-1';
     layerSequence = layers.length;
     modelChoice = 'auto';
@@ -1646,18 +1589,6 @@
     elements.file?.addEventListener('change', () => importSkinFile(elements.file.files?.[0]));
     elements.exportButton?.addEventListener('click', exportSkin);
     elements.resetButton?.addEventListener('click', resetProject);
-    elements.aiOpen?.addEventListener('click', () => {
-      elements.aiCreator?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      window.setTimeout(() => elements.aiPrompt?.focus(), 220);
-    });
-    elements.aiGenerate?.addEventListener('click', generateAiSkin);
-    elements.aiPrompt?.addEventListener('keydown', (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-        event.preventDefault();
-        generateAiSkin();
-      }
-    });
-
     $$('[data-skin-tool]').forEach((button) => button.addEventListener('click', () => setTool(button.dataset.skinTool)));
     $$('[data-skin-size]').forEach((button) => button.addEventListener('click', () => setBrushSize(button.dataset.skinSize)));
     $$('[data-skin-mode]').forEach((button) => button.addEventListener('click', () => setViewMode(button.dataset.skinMode)));
@@ -1682,11 +1613,22 @@
     });
 
     elements.swatches?.addEventListener('click', (event) => {
+      const addButton = event.target.closest('.skin-swatch-add');
+      if (addButton) {
+        addCurrentColorToPalette();
+        return;
+      }
       const swatch = event.target.closest('[data-color]');
       if (!swatch) return;
       elements.primaryColor.value = swatch.dataset.color;
       updateColorUI();
       saveProject();
+    });
+    elements.swatches?.addEventListener('contextmenu', (event) => {
+      const swatch = event.target.closest('.skin-swatch-custom');
+      if (!swatch) return;
+      event.preventDefault();
+      removeCustomColor(swatch.dataset.color);
     });
 
     elements.undo?.addEventListener('click', undo);
@@ -1814,8 +1756,8 @@
     drawUvOverlay();
     const restored = await loadStoredProject();
     if (!restored) {
-      drawDefaultSkin();
-      layers = createDefaultSkinLayers();
+      await drawDefaultSkin();
+      layers = await createDefaultSkinLayers();
       activeLayerId = layers[layers.length - 1]?.id || layers[0]?.id || 'paint-1';
       layerSequence = layers.length;
     }
@@ -1839,9 +1781,50 @@
     studio.classList.add('ready');
   }
 
+  // Lädt three.js + skinview3d erst beim ersten Öffnen des Skin Studios nach
+  // (größte JS-Bundles der App) und startet danach den 3D-Viewer.
+  function loadViewerLibraries() {
+    if (viewerLibrariesReady || window.skinview3d?.SkinViewer) {
+      viewerLibrariesReady = true;
+      if (!viewerInitialized) {
+        initializeViewer();
+        scheduleViewerTextureUpdate({ forceModel: true });
+        applyViewerVisibility();
+      }
+      return Promise.resolve();
+    }
+    if (viewerLibraryPromise) return viewerLibraryPromise;
+    viewerLibraryPromise = (async () => {
+      const scripts = [
+        '../../node_modules/three/build/three.min.js',
+        '../../node_modules/skinview3d/bundles/skinview3d.bundle.js'
+      ];
+      for (const src of scripts) {
+        await new Promise((resolve, reject) => {
+          const tag = document.createElement('script');
+          tag.src = src;
+          tag.async = true;
+          tag.onload = resolve;
+          tag.onerror = () => reject(new Error('Skin-Render-Modul konnte nicht geladen werden: ' + src));
+          document.head.append(tag);
+        });
+      }
+      viewerLibrariesReady = true;
+      initializeViewer();
+      scheduleViewerTextureUpdate({ forceModel: true });
+      applyViewerVisibility();
+    })().catch((error) => {
+      console.error('Skin-Render-Module fehlen:', error);
+      setStatusText(elements.renderState, '3D-MODUL FEHLT');
+      setImportReport('error', '3D-Vorschau nicht verfügbar', error?.message || 'Skin-Render-Modul konnte nicht geladen werden.');
+    });
+    return viewerLibraryPromise;
+  }
+
   window.FallenHeavenSkinStudio = Object.freeze({
     importFile: importSkinFile,
     exportSkin,
+    loadViewerLibraries,
     getState: () => Object.freeze({
       modelChoice,
       detectedModel,

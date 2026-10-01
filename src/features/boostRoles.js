@@ -1,10 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { PermissionFlagsBits } from 'discord.js';
+import { ChannelType, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { setBoostSystemIndexSchedule } from './boostSystemIndex.js';
 
 import { recordDiagnosticError, runTrackedOperation } from '../runtime/liveDiagnostics.js';
+import { quietLog, QUIET_LOG_SCOPE } from '../runtime/quietLog.js';
 import { applyRoleChangesSequentially } from '../runtime/managedRoleService.js';
+import { isAllowedEmbedImageUrl, readLocalImage } from '../runtime/localImageStore.js';
+import { _welcomeFarewellInternals } from './welcomeFarewell.js';
 
 const LEDGER_FILE = path.join(process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data'), 'boost-role-ledger.json');
 // Only type 8 represents an individual member boost. Types 9-11 are guild
@@ -14,11 +17,11 @@ const LEDGER_FILE = path.join(process.env.FALLEN_HEAVEN_DATA_DIR || path.join(pr
 // bot or the current index window.
 const BOOST_MESSAGE_TYPES = new Set([8]);
 const TRUSTED_BOOST_NOTIFICATION_BOT_IDS = new Set([
-  String(process.env.BOOST_NOTIFICATION_BOT_ID || '1067880912538304583')
-]);
+  String(process.env.BOOST_NOTIFICATION_BOT_ID || '').trim()
+].filter(Boolean));
 const TRUSTED_BOOST_LOSS_CHANNEL_IDS = new Set([
-  String(process.env.BOOST_LOSS_CHANNEL_ID || '1404532593575067690')
-]);
+  String(process.env.BOOST_LOSS_CHANNEL_ID || '').trim()
+].filter(Boolean));
 const MAX_PROCESSED_MESSAGES = 50000;
 const MAX_LEDGER_EVENTS = 100000;
 const BOOST_EVIDENCE_MATCH_WINDOW_MS = 2 * 60 * 1000;
@@ -34,7 +37,11 @@ let ledger = null;
 let ledgerMutation = Promise.resolve();
 
 const LEDGER_VERSION = 8;
-const RECONCILE_INTERVAL_MS = 15 * 60 * 1000;
+// Sicherheitsnetz-Intervall: Die eigentliche Arbeit läuft event-basiert
+// (Boost-Nachrichten, Member-Änderungen, manuelle Abgleiche). Der periodische
+// Lauf korrigiert nur verpasste Events – einmal pro Stunde reicht dafür völlig
+// und entlastet die Discord-API spürbar (vorher alle 15 Minuten).
+const RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 const reconcileTimers = new Map();
 const resolveBoostAvatarUrl = (entity, options = { size: 128 }) => {
   const user = entity?.user || entity || null;
@@ -315,17 +322,59 @@ const getNativeDiscordBoosterRole = (guild) => guild?.roles?.premiumSubscriberRo
   || guild?.roles?.cache?.find?.((role) => role?.tags?.premiumSubscriberRole === true)
   || null;
 
-// premiumSince is Discord's canonical member-level boost state. The managed
-// premium role can arrive a little earlier or later in guildMemberUpdate and
-// is therefore diagnostic evidence, not a prerequisite for automation.
-const isActiveDiscordBooster = (member) => Boolean(
-  member?.premiumSince || Number(member?.premiumSinceTimestamp || 0) > 0
-);
+// premiumSince UND die Discord-System-Boosterrolle zusammen sind der kanonische
+// Live-Status. Nach dem Ende eines Boosts entfernt Discord die Boosterrolle
+// sofort, während premiumSince (und der Server-Boost-Zähler) noch bis zu drei
+// Tage bestehen bleiben können („Restboost“). Wer keine Boosterrolle (mehr)
+// hat, boostet aus Sicht der Rollen-/Anzahl-Vergabe nicht mehr – der Count
+// wird beim nächsten Abgleich auf 0 neu aufgebaut. Ist die Systemrolle nicht
+// erkennbar (Server ohne erkannte Rolle), bleibt premiumSince die Quelle.
+export const isActiveDiscordBooster = (member, guild = member?.guild) => {
+  const premiumActive = Boolean(
+    member?.premiumSince || Number(member?.premiumSinceTimestamp || 0) > 0
+  );
+  if (!premiumActive) return false;
+  const role = guild ? getNativeDiscordBoosterRole(guild) : null;
+  if (!role || !member?.roles?.cache) return premiumActive;
+  return member.roles.cache.has(role.id);
+};
+
+// Die manuelle Basiskorrektur ist bewusst NICHT an die Boosterrolle gekoppelt.
+// Nach dem Boost-Ende entfernt Discord die Systemrolle sofort, lässt
+// premiumSince aber bis zu drei Tage bestehen („Restboost“). Genau in diesem
+// Fenster muss der Basisstand noch korrigierbar sein – sonst ist die manuelle
+// Vergabe direkt nach jedem Boost-Ende blockiert, obwohl Discord den Boost
+// fachlich noch dem Mitglied zuordnet. Die strenge Rollenprüfung gilt
+// ausschließlich der automatischen Vergabe; diese Trennung ist gewollt.
+export const isManualBoostCorrectionTarget = (member, guild = member?.guild) => {
+  if (!member || member.user?.bot) return false;
+  if (isActiveDiscordBooster(member, guild)) return true;
+  return Boolean(member.premiumSince || Number(member.premiumSinceTimestamp || 0) > 0);
+};
 
 const currentBoostCycleStart = (member) => Math.max(
   0,
   Number(member?.premiumSinceTimestamp || member?.premiumSince?.getTime?.() || 0)
 );
+
+// Discord setzt premiumSince bei JEDEM weiteren Boost eines bereits boostenden
+// Mitglieds auf den Zeitpunkt des LETZTEN Boosts. premiumSince ist damit der
+// Zeitpunkt des letzten Boosts, nicht der Beginn der Boost-Periode. Wuerde man
+// es als Zyklusstart verwenden, wuerde der Zyklusfilter alle aelteren
+// Discord-Systemmeldungen als „alte Periode“ verwerfen und ein zweiter Boost
+// waere unsichtbar (Produktionsfall _kyiuno_, 30.09.2026 00:52 UTC: zwei
+// Systemmeldungen, aber Count 1 und nur die 1×-Rolle). Deshalb gilt als
+// Zyklusstart der früheste bekannte Zeitpunkt der LAUFENDEN Periode: der
+// gespeicherte Ledgerstand, solange das Mitglied laut Ledger noch boostet.
+// Endet der Boost, setzt der Abgleich den Ledgerstand auf 0 (cycleStartedAt 0),
+// danach startet premiumSince wieder als neuer Zyklus.
+export const effectiveBoostCycleStart = (member, record = null) => {
+  const live = currentBoostCycleStart(member);
+  const stored = Math.max(0, Number(record?.cycleStartedAt || 0));
+  const recordActive = Boolean(record) && Number(record?.count || 0) > 0;
+  if (stored > 0 && recordActive && (live <= 0 || stored <= live)) return stored;
+  return live;
+};
 
 const isNativeBoostLedgerEvent = (event) => (
   event?.type === 'boost' && (
@@ -352,21 +401,25 @@ export const parseTrustedBoostLossMessage = (message, conf = {}) => {
 
 export const parseBoostInfoMessage = (message, conf = {}) => {
   if (!message?.guild || !message?.author?.bot || !isBoostInfoChannel(message.channel || { id: message.channelId }, conf)) return null;
+  // Eigene Boost-Announcements des Bots dürfen nicht als Boost-Info-Beweis
+  // zurück in den Ledger fließen (Feedback-Schleife, doppelte Zählung). Nur
+  // Nachrichten von anderen Bots (z. B. Boost-Log-Bots) sind unabhängige Belege.
+  if (String(message.author.id || '') === String(message.client?.user?.id || '')) return null;
   const combined = [message?.content, messageEmbedText(message)].map((value) => String(value || '').trim()).filter(Boolean).join('\n');
   if (!/(?:danke\s+für\s+den\s+boost|danke\s+<@!?\d{15,25}>\s*,?\s*dass\s+du\s+den\s+server\s+boostest|wir\s+haben\s+einen\s+neuen\s+booster)/i.test(combined)) return null;
   const userId = mentionedUserId(combined);
   return userId ? { userId, text: combined.slice(0, 500) } : null;
 };
 
-const isCurrentBoostCycleEvent = (member, timestamp) => {
+const isCurrentBoostCycleEvent = (member, timestamp, cycleStartedAtOverride = null) => {
   if (!isActiveDiscordBooster(member)) return false;
-  const cycleStartedAt = currentBoostCycleStart(member);
+  const cycleStartedAt = Math.max(0, Number(cycleStartedAtOverride) || currentBoostCycleStart(member));
   return cycleStartedAt > 0 && Number(timestamp || 0) >= cycleStartedAt;
 };
 
-const isAdditionalBoostEvent = (member, timestamp) => {
-  const cycleStartedAt = currentBoostCycleStart(member);
-  return isCurrentBoostCycleEvent(member, timestamp) && Number(timestamp || 0) > cycleStartedAt;
+const isAdditionalBoostEvent = (member, timestamp, cycleStartedAtOverride = null) => {
+  const cycleStartedAt = Math.max(0, Number(cycleStartedAtOverride) || currentBoostCycleStart(member));
+  return isCurrentBoostCycleEvent(member, timestamp, cycleStartedAt) && Number(timestamp || 0) > cycleStartedAt;
 };
 
 const berlinDateFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -473,6 +526,32 @@ export const calculateVerifiedBoostCount = ({
     : [];
   const memberBaseline = activityImport?.memberBaselines?.[String(userId || '')] || null;
   const memberBaselineAt = Math.max(0, Number(memberBaseline?.snapshotAt || 0));
+  const eventBalance = orderedEvents.reduce((sum, event) => sum + eventDelta(event), 0);
+  const highestNativeTotal = reportedCurrentCount(orderedEvents);
+  // Discord-Systemmeldungen (Typ 8) nennen die vom Mitglied gemeldete Gesamtzahl
+  // („hat den Server gerade 2-mal geboostet“ = aktueller Gesamtstand). Diese
+  // Zahl ist die autoritative Live-Quelle und hat Vorrang vor möglicherweise
+  // veralteten Aktivitätslisten-Zeilen: Eine alte Zeilen-Basis + neues Event
+  // würde denselben Boost doppelt zählen (bekannter Fehler: 3× statt 2×).
+  const reportedBoostEvents = orderedEvents.filter((event) => event?.type === 'boost' && Number(event?.reportedCount || 0) > 0);
+  const latestNativeReportAt = reportedBoostEvents.reduce(
+    (latest, event) => Math.max(latest, Number(event.timestamp || 0)),
+    0
+  );
+  if (memberBaseline && memberBaselineAt >= cycleStartedAt && memberBaselineAt <= today && memberBaselineAt >= latestNativeReportAt) {
+    const verifiedAfterBaseline = orderedEvents
+      .filter((event) => Number(event.timestamp || 0) > memberBaselineAt);
+    const eventTotal = Math.max(1, Number(memberBaseline.count || 0))
+      + verifiedAfterBaseline.reduce((sum, event) => sum + eventDelta(event), 0);
+    const reportedTotal = reportedCurrentCount(verifiedAfterBaseline);
+    return Math.max(1, eventTotal, reportedTotal);
+  }
+  if (reportedBoostEvents.length) {
+    // Frische Discord-Systemmeldung vorhanden: Die gemeldete Gesamtzahl (plus
+    // spätere Events) ist maßgeblich – veraltete Import-Zeilen zählen nicht mehr
+    // doppelt.
+    return Math.max(1, eventBalance, highestNativeTotal);
+  }
   if (memberBaseline && memberBaselineAt >= cycleStartedAt && memberBaselineAt <= today) {
     const verifiedAfterBaseline = orderedEvents
       .filter((event) => Number(event.timestamp || 0) > memberBaselineAt);
@@ -496,19 +575,19 @@ export const calculateVerifiedBoostCount = ({
       .reduce((sum, event) => sum + eventDelta(event), 0);
     return Math.max(1, baselineCount + verifiedAfterSnapshot);
   }
-  const eventBalance = orderedEvents.reduce((sum, event) => sum + eventDelta(event), 0);
-  const highestNativeTotal = reportedCurrentCount(orderedEvents);
-  // premiumSince + the managed Discord booster role prove at least one active
-  // boost. The event count and Discord's reported total corroborate each other;
-  // the higher verified value prevents an already active 2x booster becoming 1x
-  // merely because the first announcement is outside the readable history.
+  // premiumSince + die verwaltete Discord-Boosterrolle beweisen mindestens
+  // einen aktiven Boost. Die Event-Zahl und Discords gemeldete Gesamtzahl
+  // bestätigen sich gegenseitig; der höhere verifizierte Wert verhindert, dass
+  // ein bereits aktiver 2×-Booster nur deshalb 1× wird, weil die erste
+  // Ankündigung außerhalb der lesbaren Historie liegt.
   return Math.max(1, eventBalance, highestNativeTotal);
 };
 
-const verifiedBoostCountForMember = (member, events = [], activityImport = null) => {
+const verifiedBoostCountForMember = (member, events = [], activityImport = null, options = {}) => {
+  const override = Math.max(0, Number(options?.cycleStartedAt) || 0);
   return calculateVerifiedBoostCount({
     userId: member?.id,
-    premiumSinceTimestamp: currentBoostCycleStart(member),
+    premiumSinceTimestamp: override > 0 ? override : currentBoostCycleStart(member),
     hasSystemBoosterRole: isActiveDiscordBooster(member),
     events,
     activityImport
@@ -567,6 +646,706 @@ const sendAuditLog = async (guild, conf, content) => {
   const channel = guild.channels.cache.get(channelId);
   if (!channel?.isTextBased?.()) return;
   await channel.send({ content, allowedMentions: { parse: [], users: [], roles: [] } }).catch(() => {});
+};
+
+// Boost-Benachrichtigung: Sobald ein Mitglied boostet, wird das im Embed Studio
+// gestaltete Boost-Embed in den konfigurierten Kanal gesendet. Die Vorlage nutzt
+// denselben Mechanismus wie die Willkommensnachricht (content + embeds + Bilder).
+// {boostcount} ersetzt die verifizierte Gesamtzahl des Mitglieds (1×, 2×, …).
+export const buildBoostAnnouncementPayload = async (guild, member, conf, boostCount) => {
+  const template = conf?.boostAnnounceTemplate && typeof conf.boostAnnounceTemplate === 'object'
+    ? conf.boostAnnounceTemplate
+    : null;
+  if (!template) return null;
+  const user = { ...member?.user, displayName: member?.displayName || member?.user?.globalName || member?.user?.username || '' };
+  const extras = {
+    boostcount: Math.max(1, Math.floor(Number(boostCount) || 1)),
+    guildname: String(guild?.name || 'Server')
+  };
+  return _welcomeFarewellInternals.buildWelcomePayload(guild, user, { welcomeTemplate: template, welcomeMessage: '' }, extras);
+};
+
+const lastBoostAnnouncements = new Map();
+const sendBoostAnnouncement = async (guild, member, conf, boostCount) => {
+  const channelId = String(conf?.boostAnnounceChannelId || '').trim();
+  if (!conf?.boostAnnounceEnabled || !channelId || !guild || !member) return;
+  // Eine erste Boosterrolle und die Discord-Systemmeldung treffen für denselben
+  // Boost kurz nacheinander ein. Ein 60-Sekunden-Fenster pro (Mitglied + Boost-Zahl)
+  // verhindert Doppel-Embeds, ohne echte Folg-Boosts (1× → 2× → 3×) zu schlucken.
+  const key = `${String(guild.id)}:${String(member.id || member.user?.id || '')}:${Math.max(1, Math.floor(Number(boostCount) || 1))}`;
+  const now = Date.now();
+  const previous = lastBoostAnnouncements.get(key) || 0;
+  if (now - previous < 60_000) return;
+  lastBoostAnnouncements.set(key, now);
+  while (lastBoostAnnouncements.size > 500) lastBoostAnnouncements.delete(lastBoostAnnouncements.keys().next().value);
+  try {
+    const liveTemplate = await _welcomeFarewellInternals.refreshWelcomeAssetUrls(guild, conf.boostAnnounceTemplate);
+    const payload = await buildBoostAnnouncementPayload(guild, member, { ...conf, boostAnnounceTemplate: liveTemplate }, boostCount);
+    if (!payload) return;
+    const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased?.() || typeof channel.send !== 'function') return;
+    // Wie bei der Willkommensnachricht: nur User-Mentions erlauben (Booster-Ping),
+    // @everyone/@here- und Rollen-Mentions aus der Vorlage blockieren.
+    await channel.send({ ...payload, allowedMentions: { parse: ['users'], roles: [], repliedUser: false } })
+      .catch((error) => quietLog(QUIET_LOG_SCOPE.boostRoles, error, `Boost-Announce-Send fehlgeschlagen: Kanal ${channelId}, Booster ${member?.id}`));
+  } catch (error) {
+    recordDiagnosticError('boostRoles.boostAnnounce', error, {
+      featureId: 'boostRoles', hook: 'boostAnnounce', guildId: guild?.id, userId: member?.id
+    });
+  }
+};
+
+/* Top-Booster-Liga: Eine Live-Nachricht mit den Top 1–3 Boostern. Die Nachricht
+   wird einmal gesendet und anschließend bei jeder Änderung bearbeitet (wie das
+   Aktivitäts-Liga-Panel). Sobald jemand überholt wird, einen Platz belegt oder
+   aus den Top 3 verdrängt wird, erscheinen kurze Platzierungs-Pings, die sich
+   nach konfigurierter Zeit selbst löschen. */
+const BOOST_TOP_TROPHIES = {
+  1: { name: 'trophy1', id: '1533907289604493502', fallback: '🥇' },
+  2: { name: 'trophy2', id: '1533907288379625673', fallback: '🥈' },
+  3: { name: 'trophy3', id: '1533907290753732608', fallback: '🥉' }
+};
+const boostTopTrophy = (guild, place) => {
+  const definition = BOOST_TOP_TROPHIES[place];
+  if (!definition) return '';
+  const emoji = guild?.emojis?.cache?.get?.(definition.id)
+    || guild?.emojis?.cache?.find?.((entry) => entry?.name === definition.name);
+  if (emoji?.id) return `<${emoji.animated ? 'a' : ''}:${emoji.name || definition.name}:${emoji.id}>`;
+  return definition.id ? `<:${definition.name}:${definition.id}>` : definition.fallback;
+};
+
+const boostTopDefaultTemplate = () => ({
+  content: '',
+  outsideImageUrl: '',
+  embeds: [{
+    title: '🚀 Top-Booster',
+    description: 'Die drei größten Booster des Servers. Das Panel wird live aktualisiert, sobald sich die Top 3 ändern.',
+    color: '#a596ff',
+    authorName: '{server} · Top-Booster',
+    authorIconUrl: '',
+    thumbnailUrl: '',
+    imageUrl: '',
+    footerText: '{boostcount} Boosts gesamt',
+    footerIconUrl: '',
+    timestamp: true,
+    fields: []
+  }]
+});
+
+const expandedBoostTopPlaceLine = (position, template = DEFAULT_BOOST_TOP_TEXTS().placeLineTemplate) => String(template || DEFAULT_BOOST_TOP_TEXTS().placeLineTemplate)
+  .replaceAll('{marker}', `{boostMarker${position}}`)
+  .replaceAll('{mention}', `{boost${position}}`)
+  .replaceAll('{boostCount}', `{boostCount${position}}`)
+  .replaceAll('{boostValue}', `{boostValue${position}}`)
+  .replaceAll('{place}', String(position));
+const defaultBoostTopFields = (texts = DEFAULT_BOOST_TOP_TEXTS(), hasTop = true) => hasTop
+  ? [
+      { name: String(texts.placeNameTemplate1 || texts.placeFieldName || 'PLATZ 1').replaceAll('{place}', '1'), value: expandedBoostTopPlaceLine(1, texts.placeLineTemplate), inline: true },
+      { name: String(texts.placeNameTemplate2 || 'PLATZ 2').replaceAll('{place}', '2'), value: expandedBoostTopPlaceLine(2, texts.placeLineTemplate), inline: true },
+      { name: String(texts.placeNameTemplate3 || 'PLATZ 3').replaceAll('{place}', '3'), value: expandedBoostTopPlaceLine(3, texts.placeLineTemplate), inline: true },
+      { name: texts.statusFieldName || 'STATUS', value: '{status}', inline: true },
+      { name: texts.nextEvaluationFieldName || 'NÄCHSTE AUSWERTUNG', value: '{nextEvaluation}', inline: true }
+    ]
+  : [
+      { name: texts.emptyFieldName || 'TOP BOOSTER', value: texts.emptyText || 'Noch keine aktiven Booster erfasst.', inline: false },
+      { name: texts.statusFieldName || 'STATUS', value: '{status}', inline: true },
+      { name: texts.nextEvaluationFieldName || 'NÄCHSTE AUSWERTUNG', value: '{nextEvaluation}', inline: true }
+    ];
+const migrateBoostTopTemplateValue = (value) => {
+  let result = String(value ?? '')
+    .replaceAll('{boostRanking}', [1, 2, 3].map((position) => expandedBoostTopPlaceLine(position)).join('\n\n'));
+  for (let position = 1; position <= 3; position += 1) {
+    result = result
+      .replaceAll(`{boostBlock${position}}`, expandedBoostTopPlaceLine(position))
+      .replaceAll(`{placeLine${position}}`, expandedBoostTopPlaceLine(position));
+  }
+  return result;
+};
+const DEFAULT_BOOST_TOP_TEXTS = () => ({
+  placeFieldName: 'PLATZ {place}',
+  placeLineTemplate: '{marker} {mention}\n> **{boostCount}×** geboostet',
+  statusFieldName: 'STATUS',
+  nextEvaluationFieldName: 'NÄCHSTE AUSWERTUNG',
+  emptyFieldName: 'TOP BOOSTER',
+  emptyText: 'Noch keine aktiven Booster erfasst.'
+});
+// Individuelle Platzhalter pro Platz – das Embed-Studio zeigt diese an,
+// damit der Nutzer den TEXTRAHMEN bearbeiten kann (Name, Format etc.)
+// und nur die dynamischen Werte ({mention}, {boostCount}) vom Bot gesetzt werden.
+const BOOST_PLACE_INDIVIDUAL_DEFAULTS = [
+  { name: '{placeName1}', value: '{boostMarker1} {boost1}\n> **{boostCount1}×** geboostet' },
+  { name: '{placeName2}', value: '{boostMarker2} {boost2}\n> **{boostCount2}×** geboostet' },
+  { name: '{placeName3}', value: '{boostMarker3} {boost3}\n> **{boostCount3}×** geboostet' },
+  { name: '{statusFieldName}', value: '{status}' },
+  { name: '{nextEvalFieldName}', value: '{nextEvaluation}' }
+];
+const boostTopTexts = (conf) => {
+  const defaults = DEFAULT_BOOST_TOP_TEXTS();
+  return {
+    placeFieldName: String(conf?.boostTopPlaceFieldName || conf?.placeFieldName || defaults.placeFieldName).slice(0, 256),
+    placeLineTemplate: String(conf?.boostTopPlaceLineTemplate || conf?.placeLineTemplate || defaults.placeLineTemplate).slice(0, 1024),
+    statusFieldName: String(conf?.boostTopStatusFieldName || conf?.statusFieldName || defaults.statusFieldName).slice(0, 256),
+    nextEvaluationFieldName: String(conf?.boostTopNextEvaluationFieldName || conf?.nextEvaluationFieldName || defaults.nextEvaluationFieldName).slice(0, 256),
+    emptyFieldName: String(conf?.boostTopEmptyFieldName || conf?.emptyFieldName || defaults.emptyFieldName).slice(0, 256),
+    emptyText: String(conf?.boostTopEmptyText || conf?.emptyText || defaults.emptyText).slice(0, 1024),
+    placeNameTemplate1: String(conf?.boostTopPlaceName1 || conf?.boostTopPlaceFieldName || conf?.placeFieldName || 'PLATZ 1').slice(0, 256),
+    placeNameTemplate2: String(conf?.boostTopPlaceName2 || 'PLATZ 2').slice(0, 256),
+    placeNameTemplate3: String(conf?.boostTopPlaceName3 || 'PLATZ 3').slice(0, 256)
+  };
+};
+
+export const normalizeBoostTopConf = (conf) => ({
+  // Idempotent: Akzeptiert sowohl die rohe Konfiguration (boostTopEnabled) als
+  // auch eine bereits normalisierte (enabled) – sonst verliert ein Save mit
+  // Bild sein enabled-Flag bei der internen Zweit-Normalisierung in
+  // ensureBoostTopPanel und bricht still mit null ab.
+  enabled: conf?.boostTopEnabled === true || conf?.enabled === true,
+  channelId: String(conf?.boostTopChannelId || conf?.channelId || '').trim(),
+  pingsEnabled: conf?.boostTopPingsEnabled !== false && conf?.pingsEnabled !== false,
+  pingChannelId: String(conf?.boostTopPingChannelId || conf?.pingChannelId || '').trim(),
+  pingLifetimeMinutes: Number.isFinite(Number(conf?.boostTopPingLifetimeMinutes))
+    ? Math.min(60, Math.max(1, Math.floor(Number(conf.boostTopPingLifetimeMinutes) || 5)))
+    : Number.isFinite(Number(conf?.pingLifetimeMinutes))
+      ? Math.min(60, Math.max(1, Math.floor(Number(conf.pingLifetimeMinutes) || 5)))
+      : 5,
+  ...boostTopTexts(conf),
+  template: conf?.boostTopTemplate && typeof conf.boostTopTemplate === 'object'
+    ? conf.boostTopTemplate
+    : boostTopDefaultTemplate()
+});
+
+const normalizedBoostChannelName = (value) => String(value || '')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('de-DE').replace(/[^a-z0-9]/g, '');
+const boostTopChannel = (guild, conf) => {
+  const allowed = (channel) => channel && [ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(Number(channel.type)) && channel.isTextBased?.();
+  const configured = guild?.channels?.cache?.get?.(String(conf?.channelId || ''));
+  if (allowed(configured)) return configured;
+  if (!guild) return null;
+  const channels = [...guild.channels.cache.values()].filter(allowed);
+  return channels.find((channel) => normalizedBoostChannelName(channel.name) === 'topbooster')
+    || channels.find((channel) => normalizedBoostChannelName(channel.name).includes('topbooster'))
+    || null;
+};
+
+// Die Top-Booster-Liste zeigt ausschließlich aktuell boostende Mitglieder, die
+// noch auf dem Server sind. Ehemalige Booster (Boost beendet) und Mitglieder,
+// die den Server verlassen haben, fallen automatisch raus.
+export const filterCurrentServerBoosters = (rows, guild) => (Array.isArray(rows) ? rows : [])
+  .filter((entry) => entry?.nativeActive === true
+    && guild?.members?.cache?.has?.(String(entry?.id || entry?.userId || '')))
+  .slice(0, 3);
+
+const getBoostTopSnapshot = async (guild) => {
+  const status = await getBoostStatusSnapshot(guild);
+  const top = filterCurrentServerBoosters(status.active || [], guild).map((entry) => ({
+    userId: String(entry.id || entry.userId || ''),
+    displayName: String(entry.displayName || `Mitglied ${entry.id || entry.userId || ''}`),
+    boostCount: Math.max(1, Math.floor(Number(entry.boostCount || 1))),
+    premiumSince: entry.premiumSince || null
+  }));
+  return {
+    measuredAt: new Date().toISOString(),
+    top,
+    activeBoosterCount: Number(status.summary?.activeBoosterCount || 0),
+    boostCount: Math.max(0, Number(status.summary?.discordBoostCount || guild?.premiumSubscriptionCount || 0)),
+    assignedBoostCount: Math.max(0, Number(status.summary?.assignedBoostCount || 0))
+  };
+};
+
+const formatBoostTopText = (value, guild, snapshot, extra = {}) => {
+  const top = Array.isArray(snapshot?.top) ? snapshot.top : [];
+  const texts = boostTopTexts(extra);
+  const context = {
+    server: guild?.name || 'FALLEN HEAVEN',
+    guildname: guild?.name || 'FALLEN HEAVEN',
+    guild: guild?.name || 'FALLEN HEAVEN',
+    period: 'Live',
+    status: 'Live-Zwischenstand',
+    boostcount: String(snapshot?.boostCount || 0),
+    range: `${new Date(snapshot.measuredAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr`,
+    nextEvaluation: 'beim nächsten Boost oder Abgleich',
+    ...extra
+  };
+  for (let position = 1; position <= 3; position += 1) {
+    const entry = top[position - 1];
+    const marker = entry ? boostTopTrophy(guild, position) : '';
+    const mention = entry ? `<@${entry.userId}>` : '';
+    const boostValue = entry ? String(entry.boostCount) : '';
+    context[`boost${position}`] = mention;
+    context[`boostMention${position}`] = mention;
+    context[`boostValue${position}`] = boostValue;
+    context[`boostCount${position}`] = boostValue;
+    context[`boostMarker${position}`] = marker;
+    const lineTemplate = String(texts.placeLineTemplate || '{marker} {mention}\\n> **{boostCount}×** geboostet');
+    context[`boostBlock${position}`] = entry
+      ? lineTemplate
+        .replaceAll('{marker}', marker)
+        .replaceAll('{mention}', mention)
+        .replaceAll('{boostCount}', boostValue)
+        .replaceAll('{boostValue}', boostValue)
+        .replaceAll('{place}', String(position))
+      : '';
+    // Individuelle Platzhalter pro Platz: {placeLine1}, {placeName1}
+    context[`placeLine${position}`] = entry
+      ? lineTemplate
+        .replaceAll('{marker}', marker)
+        .replaceAll('{mention}', mention)
+        .replaceAll('{boostCount}', boostValue)
+        .replaceAll('{boostValue}', boostValue)
+        .replaceAll('{place}', String(position))
+      : '';
+    context[`placeName${position}`] = String(texts[`placeNameTemplate${position}`] || texts.placeFieldName || `PLATZ ${position}`)
+      .replaceAll('{place}', String(position));
+  }
+  // Feldnamen als editierbare Platzhalter
+  context.statusFieldName = String(texts.statusFieldName || 'STATUS');
+  context.nextEvalFieldName = String(texts.nextEvaluationFieldName || 'NÄCHSTE AUSWERTUNG');
+  let result = String(value || '');
+  for (const [key, replacement] of Object.entries(context)) {
+    const token = `{${key}}`;
+    if (typeof replacement === 'string' && result.includes(token)) result = result.split(token).join(replacement);
+  }
+  return result;
+};
+
+export const buildBoostTopPayload = (guild, conf, snapshot, options = {}) => {
+  const template = conf?.template && typeof conf.template === 'object' ? conf.template : boostTopDefaultTemplate();
+  const source = Array.isArray(template.embeds) && template.embeds.length ? template.embeds[0] : template.embed || {};
+  const embed = new EmbedBuilder();
+  const color = String(source.color || '').replace('#', '');
+  const parsed = Number.parseInt(color, 16);
+  if (Number.isFinite(parsed)) embed.setColor(parsed);
+  const texts = boostTopTexts(conf);
+  const title = formatBoostTopText(source.title, guild, snapshot, texts).slice(0, 256);
+  const description = formatBoostTopText(source.description, guild, snapshot, texts).slice(0, 4096);
+  const authorName = formatBoostTopText(source.authorName || source.author?.name, guild, snapshot, texts).slice(0, 256);
+  const footerText = formatBoostTopText(source.footerText || source.footer?.text, guild, snapshot, texts).slice(0, 2048);
+  if (title) embed.setTitle(title);
+  if (description) embed.setDescription(description);
+  if (authorName) embed.setAuthor({ name: authorName, iconURL: source.authorIconUrl || guild?.iconURL?.({ size: 128 }) || undefined });
+  if (source.thumbnailUrl && isAllowedEmbedImageUrl(source.thumbnailUrl)) embed.setThumbnail(source.thumbnailUrl);
+  if (source.imageUrl && isAllowedEmbedImageUrl(source.imageUrl)) embed.setImage(source.imageUrl);
+  if (footerText) embed.setFooter({ text: footerText, iconURL: source.footerIconUrl || undefined });
+  if (source.timestamp !== false) embed.setTimestamp(new Date(snapshot.measuredAt));
+  const customFields = (Array.isArray(source.fields) ? source.fields : [])
+    .map((field) => ({ ...field, value: migrateBoostTopTemplateValue(field?.value) }));
+  const hasEditableBoostFields = customFields.some((field) => /\{(?:boost|boostMention|boostValue|boostCount|boostMarker|boostBlock|placeLine)1\}/.test(String(field?.value || '')));
+  // Alte Designs ohne dynamische Felder erhalten die vollständige Vorlage;
+  // eigene Studio-Felder bleiben erhalten.
+  const templateFields = hasEditableBoostFields
+    ? customFields
+    : [...customFields, ...defaultBoostTopFields(texts, Array.isArray(snapshot?.top) && snapshot.top.length > 0)];
+  if (templateFields.length) {
+    embed.addFields(templateFields.slice(0, 25).map((field) => ({
+      name: formatBoostTopText(field?.name, guild, snapshot, texts).slice(0, 256) || '\u200b',
+      value: formatBoostTopText(field?.value, guild, snapshot, texts).slice(0, 1024) || '\u200b',
+      inline: field?.inline === true
+    })));
+  }
+  // Außenbild: Ein neu hochgeladenes Bild wird als Datei mitgesendet, ein
+  // bereits persistiertes Anhang bleibt bei Bearbeitungen erhalten, ansonsten
+  // erscheint eine Bild-URL als eigenständige Zeile unter dem Embed.
+  const outsideImageUrl = String(template.outsideImageUrl || '').trim();
+  const savedAttachment = normalizeBoostTopAttachment(template.outsideImageAttachment);
+  const preserveAttachment = options.preserveAttachment === true && savedAttachment;
+  const content = [
+    formatBoostTopText(template.content, guild, snapshot).slice(0, 2000),
+    options.outsideFile || preserveAttachment ? '' : outsideImageUrl
+  ].filter(Boolean).join('\n').slice(0, 2000);
+  const payload = {
+    content: content || undefined,
+    embeds: [embed],
+    allowedMentions: { parse: [] }
+  };
+  if (options.outsideFile) {
+    payload.files = [{ attachment: options.outsideFile, name: options.outsideFileName || 'fallen-heaven-boosters.png' }];
+    payload.attachments = [];
+  } else if (preserveAttachment) {
+    payload.attachments = [{ id: savedAttachment.id }];
+  } else if (options.removeOutsideImage === true) {
+    payload.attachments = [];
+  }
+  return payload;
+};
+
+const normalizeBoostTopAttachment = (value) => {
+  if (!value || typeof value !== 'object') return null;
+  const id = String(value?.id || '');
+  const url = String(value?.url || '');
+  if (!id && !/^https?:\/\//i.test(url)) return null;
+  return {
+    id,
+    url,
+    name: String(value?.name || value?.filename || 'fallen-heaven-boosters.png'),
+    size: Math.max(0, Number(value?.size || 0))
+  };
+};
+
+const BOOST_TOP_PING_PHRASES = {
+  newTop3: [
+    (trophy, place) => `${trophy} **Platz ${place}** unter den Top-Boostern – willkommen in den Top 3!`,
+    (trophy, place) => `${trophy} **Platz ${place}** unter den Top-Boostern – du hast es in die Top 3 geschafft!`,
+    (trophy, place) => `${trophy} **Platz ${place}** unter den Top-Boostern – neu dabei!`
+  ],
+  uprank: [
+    (trophy, place) => `${trophy} **Platz ${place}** unter den Top-Boostern – du hast dich verbessert!`,
+    (trophy, place) => `${trophy} **Platz ${place}** unter den Top-Boostern – stark, weiter so!`
+  ],
+  uprankFirst: [
+    (trophy) => `${trophy} **Platz 1** unter den Top-Boostern – du führst die Wertung an!`,
+    (trophy) => `${trophy} **Platz 1** unter den Top-Boostern – die Spitze gehört jetzt dir!`
+  ],
+  downrankWithOvertaker: [
+    (overtaker, place) => `Du wurdest von ${overtaker} überholt und belegst jetzt **Platz ${place}** unter den Top-Boostern.`,
+    (overtaker, place) => `${overtaker} hat dich überholt – du belegst jetzt **Platz ${place}** unter den Top-Boostern.`
+  ],
+  downrank: [
+    (place) => `Du wurdest überholt und belegst jetzt **Platz ${place}** unter den Top-Boostern.`,
+    (place) => `Du bist auf **Platz ${place}** unter den Top-Boostern zurückgefallen.`
+  ],
+  displaced: [
+    (overtaker) => `Du wurdest aus den Top 3 der Booster verdrängt${overtaker ? ` – ${overtaker} hat deinen Platz übernommen` : ''}.`,
+    (overtaker) => `Du bist aus den Top 3 der Booster gefallen${overtaker ? ` – deinen Platz hat ${overtaker} übernommen` : ''}.`
+  ]
+};
+const pickBoostTopPhrase = (pool, random = Math.random) => {
+  const variants = Array.isArray(pool) ? pool : [];
+  return variants[Math.floor(random() * variants.length)] ?? variants[0];
+};
+
+export const sendBoostTopPings = async (guild, conf, previous, next) => {
+  const lines = [];
+  const prevPlaces = new Map((previous || []).map((entry, index) => [String(entry.userId), index + 1]));
+  const nextPlaces = new Map((next || []).map((entry, index) => [String(entry.userId), index + 1]));
+  for (const [userId, place] of nextPlaces.entries()) {
+    const prevPlace = prevPlaces.get(userId);
+    const trophy = boostTopTrophy(guild, place);
+    if (prevPlace === undefined) {
+      lines.push({ userId, content: `<@${userId}> ${pickBoostTopPhrase(place === 1 ? BOOST_TOP_PING_PHRASES.uprankFirst : BOOST_TOP_PING_PHRASES.newTop3)(trophy, place)}` });
+    } else if (place < prevPlace) {
+      lines.push({ userId, content: `<@${userId}> ${pickBoostTopPhrase(place === 1 ? BOOST_TOP_PING_PHRASES.uprankFirst : BOOST_TOP_PING_PHRASES.uprank)(trophy, place)}` });
+    } else if (place > prevPlace) {
+      const overtakerId = [...nextPlaces.entries()].find(([id, candidatePlace]) => candidatePlace === prevPlace && id !== userId)?.[0] || '';
+      lines.push({ userId, content: `<@${userId}> ${pickBoostTopPhrase(BOOST_TOP_PING_PHRASES.downrankWithOvertaker)(overtakerId ? `<@${overtakerId}>` : '', place)}` });
+    }
+  }
+  // Verdrängt: waren in den Top 3, sind jetzt raus. Der Überholer ist der
+  // neue Einsteiger in die Top 3 (der letzte Platz wurde übernommen).
+  for (const [userId] of prevPlaces.entries()) {
+    if (nextPlaces.has(userId)) continue;
+    const overtakerId = [...nextPlaces.entries()].find(([id]) => !prevPlaces.has(id))?.[0] || '';
+    lines.push({ userId, content: `<@${userId}> ${pickBoostTopPhrase(BOOST_TOP_PING_PHRASES.displaced)(overtakerId ? `<@${overtakerId}>` : '')}` });
+  }
+  if (!lines.length) return 0;
+  const configuredPingChannel = String(conf?.pingChannelId || '').trim();
+  const channel = (configuredPingChannel ? guild?.channels?.cache?.get?.(configuredPingChannel) : null) || boostTopChannel(guild, conf);
+  if (!channel?.isTextBased?.()) return 0;
+  const lifetimeSeconds = Math.max(30, Number(conf?.pingLifetimeMinutes || 5) * 60);
+  let sent = 0;
+  for (const line of lines) {
+    const member = guild.members.cache.get(line.userId);
+    if (!member || member.user?.bot) continue;
+    try {
+      const message = await channel.send({ content: line.content, allowedMentions: { parse: ['users'], roles: [], repliedUser: false } });
+      const timer = setTimeout(() => message.delete().catch(() => null), lifetimeSeconds * 1000);
+      timer.unref?.();
+      sent += 1;
+    } catch {
+      // Kanal nicht erreichbar – still ignorieren.
+    }
+    // Ping-Burst entzerren: Discord erlaubt nur 5 Nachrichten pro 5 s pro Kanal.
+    // Mehrere Platzierungs-Änderungen gleichzeitig (z. B. direkt nach einem
+    // Bot-Neustart) würden sonst in 4-5 s Rate-Limit-Wartezeiten laufen.
+    if (sent < lines.length) {
+      await new Promise((resolve) => setTimeout(resolve, 1150));
+    }
+  }
+  return sent;
+};
+
+const boostTopRuntime = new Map();
+const ensureBoostTopPanel = async (guild, conf, {
+  force = false,
+  outsideFile = null,
+  outsideFileName = '',
+  removeOutsideImage = false
+} = {}) => {
+  const normalized = normalizeBoostTopConf(conf);
+  const guildId = String(guild?.id || '');
+  if (!guildId || !normalized.enabled) return null;
+  const runtime = boostTopRuntime.get(guildId) || { running: false, lastAt: 0, timer: null, lastError: '' };
+  boostTopRuntime.set(guildId, runtime);
+  if (runtime.running) {
+    // Ein laufendes Panel-Update (Boost-Event, Rollenabgleich oder
+    // Konfig-Refresh) blockiert gerade. Statt stillschweigend abzubrechen –
+    // wodurch ein gerade hochgeladenes Außenbild verloren ginge – kurz warten.
+    for (let attempt = 0; attempt < 100 && runtime.running; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (runtime.running) {
+      throw new Error('Ein laufendes Top-Booster-Panel-Update blockiert den Vorgang. Bitte kurz warten und erneut speichern.');
+    }
+  }
+  if (!force && Date.now() - runtime.lastAt < 30_000) return null;
+  runtime.running = true;
+  try {
+    // Server-Emojis (Trophäen) müssen im Cache liegen, sonst fallen die
+    // Podiums-Icons auf Standard-Emojis zurück.
+    await guild.emojis.fetch().catch(() => null);
+    const snapshot = await getBoostTopSnapshot(guild);
+    const holders = snapshot.top.map((entry) => ({ userId: entry.userId, count: entry.boostCount }));
+    const data = await loadLedger();
+    const guildLedger = getGuildLedger(data, guildId);
+    const stored = guildLedger.boostTop || { holders: [], initialized: false, channelId: '', messageId: '', updatedAt: '' };
+    const channel = boostTopChannel(guild, normalized);
+    if (!channel) throw new Error('Der Textkanal für die Top-Booster-Liga wurde nicht gefunden. Wähle einen Kanal aus oder benenne einen Kanal „top-booster“.');
+    let message = null;
+    if (stored.messageId && stored.channelId === channel.id) {
+      message = await channel.messages.fetch(stored.messageId).catch(() => null);
+    }
+    const savedAttachment = normalizeBoostTopAttachment(normalized.template?.outsideImageAttachment);
+    const payload = buildBoostTopPayload(guild, normalized, snapshot, {
+      outsideFile,
+      outsideFileName,
+      removeOutsideImage,
+      preserveAttachment: Boolean(message && !outsideFile && !removeOutsideImage && savedAttachment)
+    });
+    if (!message) {
+      if (stored.messageId && stored.channelId && stored.channelId !== channel.id) {
+        const oldChannel = guild.channels.cache.get(stored.channelId);
+        await oldChannel?.messages?.fetch?.(stored.messageId).then((old) => old.delete()).catch(() => null);
+      }
+      message = await channel.send(payload);
+    } else {
+      // Wichtig: Den Rückgabewert von edit() übernehmen – nur die aktualisierte
+      // Nachricht enthält die neu hochgeladenen Attachments. Die alte Referenz
+      // (vom Fetch vor dem Edit) hat sie nicht.
+      message = await message.edit(payload);
+    }
+    const holdersChanged = JSON.stringify(stored.holders || []) !== JSON.stringify(holders);
+    let pingsSent = 0;
+    if (holdersChanged && stored.initialized === true && normalized.pingsEnabled) {
+      pingsSent = await sendBoostTopPings(guild, normalized, stored.holders || [], holders);
+    }
+    guildLedger.boostTop = {
+      holders,
+      initialized: true,
+      channelId: channel.id,
+      messageId: message.id,
+      updatedAt: new Date().toISOString(),
+      lastError: ''
+    };
+    await persistLedger();
+    runtime.lastAt = Date.now();
+    runtime.lastError = '';
+    let attachment = message.attachments?.first?.();
+    if (!attachment && outsideFile) {
+      // Falls Discord den Anhang beim ersten Zugriff noch nicht auflistet,
+      // einmal frisch nachladen (force), damit die CDN-URL des hochgeladenen
+      // Bildes zuverlässig in der Konfiguration landet.
+      const fresh = await channel.messages.fetch({ message: message.id, force: true }).catch(() => null);
+      attachment = fresh?.attachments?.first?.();
+    }
+    return {
+      channelId: channel.id,
+      messageId: message.id,
+      snapshot,
+      holdersChanged,
+      pingsSent,
+      outsideImageAttachment: attachment ? {
+        id: String(attachment.id || ''),
+        url: String(attachment.url || ''),
+        name: String(attachment.name || outsideFileName || 'fallen-heaven-boosters.png'),
+        size: Number(attachment.size || 0)
+      } : null
+    };
+  } catch (error) {
+    runtime.lastError = String(error?.message || error).slice(0, 500);
+    recordDiagnosticError('boostRoles.boostTop', error, { featureId: 'boostRoles', hook: 'boostTop', guildId: guild?.id });
+    throw error;
+  } finally {
+    runtime.running = false;
+  }
+};
+
+const scheduleBoostTopRefresh = (guild, conf) => {
+  const guildId = String(guild?.id || '');
+  if (!guildId || conf?.boostTopEnabled !== true) return;
+  const runtime = boostTopRuntime.get(guildId) || { running: false, lastAt: 0, timer: null, lastError: '' };
+  boostTopRuntime.set(guildId, runtime);
+  if (runtime.timer) return;
+  runtime.timer = setTimeout(() => {
+    runtime.timer = null;
+    void ensureBoostTopPanel(guild, conf, { force: true }).catch(() => null);
+  }, 1500);
+  runtime.timer.unref?.();
+};
+
+export const getBoostTopStatus = async (guild, conf) => {
+  const normalized = normalizeBoostTopConf(conf);
+  const guildId = String(guild?.id || '');
+  const snapshot = await getBoostTopSnapshot(guild);
+  const data = await loadLedger();
+  const stored = getGuildLedger(data, guildId).boostTop || {};
+  const runtime = boostTopRuntime.get(guildId) || { running: false, lastAt: 0, lastError: '' };
+  return {
+    enabled: normalized.enabled,
+    channelId: normalized.channelId,
+    channelName: normalized.channelId ? guild?.channels?.cache?.get?.(normalized.channelId)?.name || '' : '',
+    pingsEnabled: normalized.pingsEnabled,
+    pingChannelId: normalized.pingChannelId,
+    pingLifetimeMinutes: normalized.pingLifetimeMinutes,
+    template: normalized.template,
+    panel: {
+      channelId: String(stored.channelId || ''),
+      channelName: stored.channelId ? guild?.channels?.cache?.get?.(stored.channelId)?.name || '' : '',
+      messageId: String(stored.messageId || ''),
+      updatedAt: String(stored.updatedAt || ''),
+      holders: Array.isArray(stored.holders) ? stored.holders : []
+    },
+    snapshot: {
+      measuredAt: snapshot.measuredAt,
+      top: snapshot.top,
+      activeBoosterCount: snapshot.activeBoosterCount,
+      boostCount: snapshot.boostCount,
+      assignedBoostCount: snapshot.assignedBoostCount
+    },
+    running: runtime.running === true,
+    lastError: runtime.lastError || ''
+  };
+};
+
+export const refreshBoostTopPanel = async ({ guild, conf } = {}) => {
+  const normalized = normalizeBoostTopConf(conf);
+  if (!normalized.enabled) throw new Error('Die Top-Booster-Liga ist nicht aktiviert.');
+  return ensureBoostTopPanel(guild, normalized, { force: true });
+};
+
+// Reine Entscheidungslogik für das Außenbild eines Design-Saves: Ein neu
+// hochgeladenes Bild (Daten-URI → outsideFile) ersetzt das alte, eine
+// explizite Entfernung (removeOutsideImage) löscht es, ein mitgeschickter
+// Anhang bleibt erhalten. Kommt GAR kein Bild an und wurde nichts entfernt,
+// wird das zuletzt gespeicherte Außenbild unverändert weitergeführt – ein
+// versehentlicher zweiter, bildloser Save kann es also nie überschreiben.
+export const resolveOutsideImagePreservation = ({ outsideFile = null, sourceOutsideImage = '', removeOutsideImage = false, incomingAttachment = null, previousTemplate = {} } = {}) => {
+  const previousAttachment = normalizeBoostTopAttachment(previousTemplate?.outsideImageAttachment);
+  const normalizedIncoming = normalizeBoostTopAttachment(incomingAttachment);
+  const preservePrevious = !outsideFile && !removeOutsideImage
+    && !String(sourceOutsideImage || '').trim() && !normalizedIncoming
+    && Boolean(String(previousTemplate?.outsideImageUrl || '').trim() || previousAttachment);
+  return {
+    outsideImageUrl: outsideFile ? '' : (String(sourceOutsideImage || '').trim() || (preservePrevious ? String(previousTemplate?.outsideImageUrl || '').trim() : '')),
+    outsideImageAttachment: outsideFile || removeOutsideImage
+      ? null
+      : (normalizedIncoming || (preservePrevious ? previousAttachment : null)),
+    preservePrevious
+  };
+};
+
+export const saveBoostTopDesign = async ({ guild, conf = {}, template = {}, channelId = '' } = {}) => {
+  if (!guild) throw new Error('Server wurde nicht gefunden.');
+  const embeds = Array.isArray(template?.embeds) && template.embeds.length ? template.embeds : [template?.embed || {}];
+  if (embeds.length !== 1) throw new Error('Die Top-Booster-Liga verwendet genau ein automatisch aktualisiertes Embed.');
+  // Außenbild: Ein vom Studio hochgeladenes Bild (Daten-URI) wird als Datei an
+  // Discord gesendet und dort dauerhaft gehalten. Ein bereits persistierter
+  // Anhang bleibt erhalten, ein HTTP(S)-Link wird als URL gespeichert.
+  const sourceOutsideImage = String(template?.outsideImageUrl || '').trim();
+  const dataImageMatch = sourceOutsideImage.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,([a-z0-9+/=\r\n]+)$/i);
+  let outsideFile = dataImageMatch ? Buffer.from(dataImageMatch[2], 'base64') : null;
+  if (sourceOutsideImage.startsWith('data:') && !outsideFile) throw new Error('Das ausgewählte Außenbild ist keine gültige PNG-, JPG-, WEBP- oder GIF-Datei.');
+  if (outsideFile && outsideFile.length > 25 * 1024 * 1024) throw new Error('Das Außenbild darf maximal 25 MB groß sein.');
+  // Lokal gespeichertes Bild (Studio lädt es beim Auswählen einmal auf den PC):
+  // Datei lesen und als normalen Discord-Anhang senden – ohne Kanal.
+  if (!outsideFile && template?.outsideImageAttachment?.localAsset === true) {
+    const local = await readLocalImage(template.outsideImageAttachment);
+    if (!local) throw new Error('Das lokale Außenbild wurde nicht gefunden. Bitte wähle es erneut aus.');
+    outsideFile = local.buffer;
+    template.outsideImageName = local.name;
+  }
+  // Schutz gegen versehentliches Bild-Verwerfen: Kommt in einem Save KEIN Bild
+  // an (kein Upload, keine URL, kein Anhang) und wurde keine Entfernung
+  // angefordert, wird das zuletzt gespeicherte Außenbild unverändert weiter
+  // geführt. So kann ein zweiter, bildloser Save das hochgeladene Bild nie
+  // überschreiben – es muss explizit ersetzt oder entfernt werden.
+  const removeOutsideImage = template?.removeOutsideImage === true;
+  const preservedImage = resolveOutsideImagePreservation({
+    outsideFile,
+    sourceOutsideImage,
+    removeOutsideImage,
+    incomingAttachment: outsideFile ? null : template?.outsideImageAttachment,
+    previousTemplate: conf?.boostTopTemplate
+  });
+  const effectiveOutsideUrl = preservedImage.outsideImageUrl;
+  const effectiveOutsideAttachment = preservedImage.outsideImageAttachment;
+  if (!outsideFile && !template?.outsideImageAttachment && sourceOutsideImage
+    && String(template?.content || '').length + sourceOutsideImage.length + 1 > 2_000) {
+    throw new Error('Nachricht und Außenbild-Link dürfen zusammen maximal 2.000 Zeichen enthalten.');
+  }
+  const normalizedTemplate = {
+    content: String(template?.content || ''),
+    outsideImageUrl: effectiveOutsideUrl,
+    outsideImageAttachment: effectiveOutsideAttachment,
+    embeds: embeds.slice(0, 1).map((embed) => ({
+      title: embed.title || '', url: embed.url || '', description: embed.description || '', color: embed.color || '#a596ff',
+      authorName: embed.authorName || '', authorIconUrl: embed.authorIconUrl || '', thumbnailUrl: embed.thumbnailUrl || '',
+      imageUrl: embed.imageUrl || '', footerText: embed.footerText || '', footerIconUrl: embed.footerIconUrl || '',
+      timestamp: embed.timestamp === true, fields: Array.isArray(embed.fields) ? embed.fields.slice(0, 25) : []
+    }))
+  };
+  const nextConf = normalizeBoostTopConf({
+    ...conf,
+    boostTopChannelId: String(channelId || conf?.boostTopChannelId || ''),
+    boostTopTemplate: normalizedTemplate
+  });
+  const panel = await ensureBoostTopPanel(guild, nextConf, {
+    force: true,
+    outsideFile,
+    outsideFileName: String(template?.outsideImageName || 'fallen-heaven-boosters.png').replace(/[^a-z0-9._-]/gi, '_').slice(-120),
+    removeOutsideImage
+  }).catch((error) => {
+    // Ohne Außenbild darf das Design auch gespeichert werden, wenn das Panel
+    // (z. B. wegen fehlendem Kanal) noch nicht erstellt werden kann. Bei einem
+    // Bild-Upload darf NIE stillschweigend ein bildloses Design gespeichert
+    // werden – sonst geht das hochgeladene Bild verloren.
+    if (outsideFile) throw error;
+    recordDiagnosticError('boostRoles.boostTopDesign', error, { featureId: 'boostRoles', hook: 'boostTopDesign', guildId: guild?.id });
+    return null;
+  });
+  // Nach dem Hochladen wird die Discord-CDN-URL + Anhang-Metadaten gespeichert,
+  // damit das Bild beim nächsten Öffnen des Studios nicht erneut ausgewählt
+  // werden muss und bei jeder Panel-Aktualisierung erhalten bleibt.
+  if (outsideFile && !panel?.outsideImageAttachment && panel?.messageId) {
+    // Ultimativer Fallback: Den hochgeladenen Anhang direkt von der frisch
+    // erstellten/bearbeiteten Panel-Nachricht holen (force, damit nicht die
+    // veraltete Cache-Version ohne Attachment zurückkommt).
+    const panelChannel = guild?.channels?.cache?.get?.(panel.channelId || channelId);
+    const freshMessage = panelChannel
+      ? await panelChannel.messages.fetch({ message: panel.messageId, force: true }).catch(() => null)
+      : null;
+    const freshAttachment = freshMessage?.attachments?.first?.();
+    if (freshAttachment) {
+      panel.outsideImageAttachment = {
+        id: String(freshAttachment.id || ''),
+        url: String(freshAttachment.url || ''),
+        name: String(freshAttachment.name || 'fallen-heaven-boosters.png'),
+        size: Number(freshAttachment.size || 0)
+      };
+    }
+  }
+  if (outsideFile && !panel?.outsideImageAttachment) {
+    throw new Error('Das Außenbild wurde nicht als Discord-Anhang bestätigt. Bitte erneut speichern.');
+  }
+  if (outsideFile && panel?.outsideImageAttachment) {
+    const attachment = panel.outsideImageAttachment;
+    normalizedTemplate.outsideImageUrl = String(attachment.url || '');
+    normalizedTemplate.outsideImageAttachment = {
+      id: String(attachment.id || ''),
+      url: String(attachment.url || ''),
+      name: String(attachment.name || 'fallen-heaven-boosters.png'),
+      size: Number(attachment.size || 0)
+    };
+  }
+  return { template: normalizedTemplate, channelId: nextConf.channelId, panel };
 };
 
 const removableColorRoleIds = (member, conf) => {
@@ -665,10 +1444,10 @@ const queueMemberSync = (member, conf, count, reason, removePerks = false, previ
         ].filter(Boolean).join(' | '));
       }
       if (toAdd.length) {
-        console.log(`[boostRoles] ${member.guild.name}: ${toAdd.length} Booster-Rolle(n) an ${member.user?.tag || member.id} vergeben (${verifiedCount} Boost${verifiedCount === 1 ? '' : 's'}).`);
+        quietLog(QUIET_LOG_SCOPE.boostRoles, null, `${member.guild.name}: ${toAdd.length} Booster-Rolle(n) an ${member.user?.tag || member.id} vergeben (${verifiedCount} Boost${verifiedCount === 1 ? '' : 's'})`);
       }
       if (toRemove.length) {
-        console.log(`[boostRoles] ${member.guild.name}: ${toRemove.length} veraltete Booster-Rolle(n) bei ${member.user?.tag || member.id} entfernt.`);
+        quietLog(QUIET_LOG_SCOPE.boostRoles, null, `${member.guild.name}: ${toRemove.length} veraltete Booster-Rolle(n) bei ${member.user?.tag || member.id} entfernt`);
       }
     }
     if (toAdd.length || toRemove.length) {
@@ -732,7 +1511,9 @@ const registerLedgerEvent = async ({ message, member, userId, type, delta = 1, r
   if (guildLedger.processedMessages.includes(message.id)) {
     const record = getMemberRecord(guildLedger, userId);
     const correctedCount = member && isActiveDiscordBooster(member)
-      ? verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport)
+      ? verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport, {
+        cycleStartedAt: effectiveBoostCycleStart(member, record)
+      })
       : Number(record.count || 0);
     record.count = correctedCount;
     record.automaticCount = correctedCount;
@@ -747,10 +1528,14 @@ const registerLedgerEvent = async ({ message, member, userId, type, delta = 1, r
     : type === 'expired' ? -1 : 0;
   const normalizedReportedCount = type === 'boost' ? Math.max(0, Math.floor(Number(reportedCount) || 0)) : 0;
   const nativeActive = isActiveDiscordBooster(member);
-  const cycleStartedAt = currentBoostCycleStart(member);
-  const belongsToCycle = !['boost', 'boost-info', 'expired'].includes(type) || isCurrentBoostCycleEvent(member, timestamp);
+  const record = getMemberRecord(guildLedger, userId);
+  // premiumSince springt bei jedem weiteren Boost nach vorn: für Zählung und
+  // Zyklusprüfung gilt der früheste bekannte Zeitpunkt der laufenden Periode,
+  // damit ältere Systemmeldungen dieser Periode erhalten bleiben.
+  const cycleStartedAt = effectiveBoostCycleStart(member, record);
+  const belongsToCycle = !['boost', 'boost-info', 'expired'].includes(type) || isCurrentBoostCycleEvent(member, timestamp, cycleStartedAt);
   const accepted = belongsToCycle && !(type === 'ended' && nativeActive);
-  const additionalBoost = positiveEvidence && accepted && isAdditionalBoostEvent(member, timestamp);
+  const additionalBoost = positiveEvidence && accepted && isAdditionalBoostEvent(member, timestamp, cycleStartedAt);
   const event = {
     messageId: message.id,
     type,
@@ -769,7 +1554,6 @@ const registerLedgerEvent = async ({ message, member, userId, type, delta = 1, r
   event.matchedUnits = 0;
   guildLedger.events.push(event);
   guildLedger.events = guildLedger.events.slice(-MAX_LEDGER_EVENTS);
-  const record = getMemberRecord(guildLedger, userId);
   if (nativeActive && cycleStartedAt && record.cycleStartedAt !== cycleStartedAt) {
     Object.assign(record, createMemberRecord(1, 'discord-system-role-baseline', cycleStartedAt));
   } else if (nativeActive && Number(record.count || 0) < 1) {
@@ -781,7 +1565,7 @@ const registerLedgerEvent = async ({ message, member, userId, type, delta = 1, r
   record.count = accepted && type === 'ended'
     ? 0
     : accepted && ['boost', 'boost-info', 'expired'].includes(type) && nativeActive
-      ? verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport)
+      ? verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport, { cycleStartedAt })
       : previousCount;
   event.countedDelta = record.count - previousCount;
   record.automaticCount = record.count;
@@ -827,7 +1611,7 @@ export const getBoostKnowledgeContext = async (guildId, { guild = null, discordB
   const latestBoost = events.find((event) => event.type === 'boost');
   const activeRows = Object.entries(guildLedger.members)
     .filter(([userId, record]) => Number(record?.count || 0) > 0 && isCurrentMember(userId))
-    .filter(([userId]) => !guild || Boolean(guild.members.cache.get(String(userId))?.premiumSinceTimestamp));
+    .filter(([userId]) => !guild || isActiveDiscordBooster(guild.members.cache.get(String(userId)), guild));
   const assignedBoostCount = activeRows.reduce((total, [, record]) => total + Number(record?.count || 0), 0);
   const expectedBoostCount = Number.isFinite(Number(discordBoostCount))
     ? Number(discordBoostCount)
@@ -871,20 +1655,35 @@ export const evaluateBoostConsistency = ({
     isNativeBoostLedgerEvent(event) ? Math.max(latest, Number(event?.timestamp || 0)) : latest
   ), 0);
   const evidenceAgeMs = latestEvidenceAt > 0 ? Math.max(0, Number(nowTimestamp || Date.now()) - latestEvidenceAt) : null;
-  const graceMs = rawDifference < 0 ? BOOST_LOSS_SYNC_GRACE_MS : BOOST_GAIN_SYNC_GRACE_MS;
-  const pending = rawDifference !== 0 && evidenceAgeMs !== null && evidenceAgeMs <= graceMs;
-  const state = rawDifference === 0 ? 'synchronized' : pending ? 'discord-pending' : 'mismatch';
+  // Discord zählt nach dem Ende eines Boosts bis zu drei Tage weiter
+  // („Restboost“), während die Boosterrolle sofort entfernt wird. Der Bot
+  // rechnet mit den Rollen – assigned < discord ist daher erwartbar und kein
+  // Fehler: kein Einfrieren der Rollen, keine Economy-Pausierung. Nur wenn der
+  // Bot MEHR zählt als Discord (assigned > discord), liegt eine echte
+  // Fehlverteilung vor, die nach der Sync-Gnadenfrist eingefroren wird.
+  const graceMs = rawDifference > 0 ? BOOST_GAIN_SYNC_GRACE_MS : BOOST_LOSS_SYNC_GRACE_MS;
+  const pending = rawDifference > 0 && evidenceAgeMs !== null && evidenceAgeMs <= graceMs;
+  const state = rawDifference === 0 ? 'synchronized' : rawDifference > 0 && !pending ? 'mismatch' : 'discord-pending';
   return {
     state,
     countsMatch: state !== 'mismatch',
     assignedBoostCount: assigned,
     discordBoostCount: discord,
     rawDifference,
-    boostCountDifference: pending ? 0 : rawDifference,
+    boostCountDifference: state === 'mismatch' ? rawDifference : 0,
     latestEvidenceAt: latestEvidenceAt ? new Date(latestEvidenceAt).toISOString() : null,
     evidenceAgeMs,
     distributionLocked: state === 'mismatch'
   };
+};
+
+export const getBoostLedgerMemberEvents = async (guildId, memberId) => {
+  if (!guildId || !memberId) return [];
+  const data = await loadLedger();
+  const guildLedger = getGuildLedger(data, String(guildId));
+  return [...(guildLedger.events || [])]
+    .filter((event) => String(event.userId || '') === String(memberId))
+    .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
 };
 
 export const getBoostStatusSnapshot = async (guild) => {
@@ -900,7 +1699,10 @@ export const getBoostStatusSnapshot = async (guild) => {
 
   const userIds = new Set(Object.keys(guildLedger.members || {}));
   guild.members.cache.forEach((member) => {
-    if (!member.user?.bot && isActiveDiscordBooster(member)) userIds.add(member.id);
+    if (member.user?.bot) return;
+    // Aktive Booster UND Mitglieder im Restboost-Fenster aufnehmen: Letztere
+    // sind nicht aktiv, ihre Boost-Anzahl bleibt aber manuell korrigierbar.
+    if (isActiveDiscordBooster(member) || isManualBoostCorrectionTarget(member, guild)) userIds.add(member.id);
   });
 
   const groups = { active: [], ended: [], unclear: [] };
@@ -910,8 +1712,11 @@ export const getBoostStatusSnapshot = async (guild) => {
     const record = guildLedger.members?.[userId] || createMemberRecord(0, 'discord-live');
     const latest = latestByUser.get(userId) || null;
     const nativeActive = Boolean(member && isActiveDiscordBooster(member));
+    const manuallyCorrectable = Boolean(member && isManualBoostCorrectionTarget(member, guild));
     const automaticBoostCount = nativeActive
-      ? verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport)
+      ? verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport, {
+        cycleStartedAt: effectiveBoostCycleStart(member, record)
+      })
       : 0;
     const effectiveBoostCount = nativeActive ? automaticBoostCount : 0;
     let status = 'ended';
@@ -930,10 +1735,11 @@ export const getBoostStatusSnapshot = async (guild) => {
       automaticBoostCount,
       reportedBoostCount: nativeActive ? Math.max(0, Number(record.highestReportedCount || 0)) : 0,
       nativeActive,
+      manuallyCorrectable,
       source: record.source || latest?.source || 'unknown',
       sourceLabel: BOOST_SOURCE_LABELS[record.source] || record.source || 'Unbekannt',
       confidence: record.confidence || (automaticBoostCount > 1 ? 'medium' : 'low'),
-      cycleStartedAt: currentBoostCycleStart(member) || Number(record.cycleStartedAt || 0),
+      cycleStartedAt: effectiveBoostCycleStart(member, record),
       evidenceCount: Array.isArray(record.evidenceMessageIds) ? record.evidenceMessageIds.length : 0,
       lastReconciledAt: record.lastReconciledAt || null,
       updatedAt: latest?.timestamp ? new Date(latest.timestamp).toISOString() : record.updatedAt || null,
@@ -946,6 +1752,15 @@ export const getBoostStatusSnapshot = async (guild) => {
     || new Date(a.premiumSince || 0) - new Date(b.premiumSince || 0));
   groups.ended.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   groups.unclear.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+
+  // Korrigierbare Mitglieder für den Basis-Editor: aktive Booster plus alle im
+  // Restboost-Fenster. Bewusst aus active/ended/unclear zusammengeführt, damit
+  // der Editor unabhängig vom Gruppierungs-Zustand des Mitglieds erreichbar
+  // bleibt und nicht mit der automatischen Rollenvergabe verwechselt wird.
+  const manualCorrection = [...groups.active, ...groups.unclear, ...groups.ended]
+    .filter((entry) => entry.manuallyCorrectable === true)
+    .sort((a, b) => Number(b.boostCount || 0) - Number(a.boostCount || 0)
+      || new Date(a.premiumSince || 0) - new Date(b.premiumSince || 0));
 
   const assignedBoostCount = groups.active.reduce((sum, member) => sum + Math.max(1, Number(member.boostCount || 0)), 0);
   const discordBoostCount = Math.max(0, Number(guild.premiumSubscriptionCount || 0));
@@ -963,6 +1778,7 @@ export const getBoostStatusSnapshot = async (guild) => {
     active: groups.active,
     ended: groups.ended.slice(0, 200),
     unclear: groups.unclear.slice(0, 200),
+    manualCorrection,
     summary: {
       activeBoosterCount: groups.active.length,
       assignedBoostCount,
@@ -1054,7 +1870,7 @@ export const verifyBoostCount = async ({ guild, conf, userId, actorId = '' }) =>
 
   const data = await loadLedger();
   const guildLedger = getGuildLedger(data, guild.id);
-  const cycleStartedAt = currentBoostCycleStart(member);
+  const cycleStartedAt = effectiveBoostCycleStart(member, guildLedger.members?.[member.id]);
   const nativeEvents = (guildLedger.events || []).filter((event) => event?.type === 'boost'
     && String(event.userId || '') === member.id
     && String(event.source || '').startsWith('native-system')
@@ -1066,7 +1882,7 @@ export const verifyBoostCount = async ({ guild, conf, userId, actorId = '' }) =>
     confirmedEventsById.set(String(event.messageId || event.id || ''), event);
   }
   const confirmedEvents = [...confirmedEventsById.values()].filter((event) => event.messageId || event.id);
-  const verifiedCount = verifiedBoostCountForMember(member, confirmedEvents, guildLedger.activityImport);
+  const verifiedCount = verifiedBoostCountForMember(member, confirmedEvents, guildLedger.activityImport, { cycleStartedAt });
   await queueMemberSync(member, conf, verifiedCount, `Discord-Boost-Anzahl verifiziert${actorId ? ` durch ${actorId}` : ''}`);
   return {
     userId: member.id,
@@ -1141,8 +1957,10 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
     const history = await fetchChannelHistory(plan.channel, {
       // The persistent server index below is the complete cross-channel source.
       // Keep the live Discord request deliberately small so startup cannot be
-      // held for minutes by years of messages in a busy system channel.
-      limit: fullHistory ? Math.min(100, compatibilityLimit) : compatibilityLimit,
+      // held for minutes by years of messages in a busy system channel. 500
+      // reichen, damit frische Boosts auch in belebten Systemkanälen (viele
+      // Nachrichten zwischen letztem Checkpoint und Boost) gefunden werden.
+      limit: fullHistory ? Math.min(500, compatibilityLimit) : compatibilityLimit,
       oldestTimestamp: checkpoint.newestMessageId ? 0 : oldestActiveCycle,
       afterMessageId: checkpoint.newestMessageId || ''
     });
@@ -1159,6 +1977,11 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
   if (histories.length && !histories.some((history) => history.ok)) return false;
 
   const events = [];
+  // Gedächtnis für den Start der laufenden Boost-Periode: premiumSince springt
+  // bei jedem weiteren Boost nach vorn. Ohne diesen Stand würden die älteren
+  // Systemmeldungen derselben Periode schon beim Historie-Scan wegfallen.
+  const historyLedger = await loadLedger();
+  const historyRecords = { ...(historyLedger.guilds?.[guild.id]?.members || {}) };
   reportProgress({ progress: 55, stage: 'Boost-Ereignisse werden ausgewertet' });
   for (const message of histories.flatMap((history) => history.messages)) {
     const trustedLoss = parseTrustedBoostLossMessage(message, conf);
@@ -1170,7 +1993,11 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
       || await guild.members.fetch(userId).catch(() => null);
     if (!member || !isActiveDiscordBooster(member)) continue;
     const eventTimestamp = Number(message.createdTimestamp || 0);
-    if (!isCurrentBoostCycleEvent(member, eventTimestamp)) continue;
+    if (!isCurrentBoostCycleEvent(
+      member,
+      eventTimestamp,
+      effectiveBoostCycleStart(member, historyRecords[userId])
+    )) continue;
     events.push({
       id: message.id,
       messageId: message.id,
@@ -1205,7 +2032,7 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
       maxLegacyChecks: 0
     });
     const evidenceChannelIds = getBoostEvidenceChannels(guild, conf).map((channel) => channel.id);
-    const indexedEvidence = getIndexedBoostEvidenceEvents({
+    const indexedEvidence = await getIndexedBoostEvidenceEvents({
       guildId: guild.id,
       channelIds: evidenceChannelIds,
       activeUserIds,
@@ -1225,6 +2052,10 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
 
   await mutateLedger((data) => {
     const guildLedger = getGuildLedger(data, guild.id);
+    // Gedächtnis für den Start der laufenden Boost-Periode sichern, BEVOR die
+    // Ledgerstände neu aufgebaut werden: premiumSince springt bei jedem weiteren
+    // Boost nach vorn und würde die älteren Systemmeldungen verwerfen.
+    const previousRecords = { ...(guildLedger.members || {}) };
     const mergedEvents = new Map();
     for (const event of (guildLedger.events || []).filter(isNativeBoostLedgerEvent)) {
       const eventId = String(event.messageId || event.id || '');
@@ -1246,7 +2077,11 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
       })
       .filter((event) => {
         const member = guild.members.cache.get(String(event.userId || ''));
-        return isCurrentBoostCycleEvent(member, Number(event.timestamp || 0));
+        return isCurrentBoostCycleEvent(
+          member,
+          Number(event.timestamp || 0),
+          effectiveBoostCycleStart(member, previousRecords[String(event.userId || '')])
+        );
       })
       .sort((left, right) => Number(left.timestamp || 0) - Number(right.timestamp || 0))
       .slice(-MAX_LEDGER_EVENTS);
@@ -1255,19 +2090,23 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
     guildLedger.events = [];
     for (const member of guild.members.cache.values()) {
       if (member.user?.bot || !isActiveDiscordBooster(member)) continue;
-      guildLedger.members[member.id] = createMemberRecord(1, 'discord-system-role-baseline', currentBoostCycleStart(member));
+      guildLedger.members[member.id] = createMemberRecord(
+        1,
+        'discord-system-role-baseline',
+        effectiveBoostCycleStart(member, previousRecords[member.id])
+      );
     }
     for (const event of chronologicalEvents) {
       event.matchedUnits = 0;
       event.corroboratedBy = [];
       const member = guild.members.cache.get(String(event.userId || '')) || null;
-      const cycleStartedAt = currentBoostCycleStart(member);
+      const cycleStartedAt = effectiveBoostCycleStart(member, previousRecords[String(event.userId || '')]);
       const record = getMemberRecord(guildLedger, event.userId);
-      const additionalBoost = isAdditionalBoostEvent(member, event.timestamp);
+      const additionalBoost = isAdditionalBoostEvent(member, event.timestamp, cycleStartedAt);
       const previousCount = Math.max(1, Number(record.count || 1));
       const reportedCount = additionalBoost ? Math.max(0, Number(event.reportedCount || 0)) : 0;
       guildLedger.events.push(event);
-      record.count = verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport);
+      record.count = verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport, { cycleStartedAt });
       event.countedDelta = Math.max(0, record.count - previousCount);
       record.automaticCount = record.count;
       record.highestReportedCount = Math.max(reportedCount, Number(record.highestReportedCount || 1));
@@ -1292,7 +2131,6 @@ const rebuildLedgerFromHistory = async (guild, conf, options = {}) => {
     guildLedger.lastHistoryScanAt = new Date().toISOString();
     guildLedger.evidenceSchemaVersion = 1;
   });
-  console.log(`[boostRoles] ${guild.name}: ${events.length} relevante Boost-Events aus den Quellkanälen rekonstruiert.`);
   return true;
 };
 
@@ -1331,10 +2169,18 @@ const reconcileGuild = async (guild, conf, options = {}) => {
     const guildLedger = getGuildLedger(data, guild.id);
     previousManagedRoleIds = parseRoleIds(guildLedger.managedRoleIds);
     guildLedger.managedRoleIds = configuredManagedRoleIds;
+    // Bestehende Ledgerstände als Gedächtnis für den Periodenstart sichern:
+    // premiumSince springt bei jedem weiteren Boost nach vorn und würde sonst
+    // die Systemmeldungen der laufenden Periode als „veraltet“ löschen.
+    const previousRecords = { ...(guildLedger.members || {}) };
     guildLedger.events = (guildLedger.events || []).filter((event) => {
       if (!isNativeBoostLedgerEvent(event)) return false;
       const member = members.get(String(event.userId || ''));
-      return isCurrentBoostCycleEvent(member, event.timestamp);
+      return isCurrentBoostCycleEvent(
+        member,
+        event.timestamp,
+        effectiveBoostCycleStart(member, previousRecords[String(event.userId || '')])
+      );
     });
     guildLedger.processedMessages = guildLedger.events
       .map((event) => String(event.messageId || event.id || ''))
@@ -1343,7 +2189,6 @@ const reconcileGuild = async (guild, conf, options = {}) => {
     for (const member of members.values()) {
       if (member.user?.bot) continue;
       const activeBooster = isActiveDiscordBooster(member);
-      const cycleStartedAt = currentBoostCycleStart(member);
       if (!activeBooster) {
         const record = guildLedger.members[member.id];
         if (record && Number(record.count || 0) > 0) {
@@ -1352,7 +2197,8 @@ const reconcileGuild = async (guild, conf, options = {}) => {
         continue;
       }
       const memberEvents = guildLedger.events.filter((event) => String(event.userId || '') === member.id);
-      const verifiedCount = verifiedBoostCountForMember(member, memberEvents, guildLedger.activityImport);
+      const cycleStartedAt = effectiveBoostCycleStart(member, previousRecords[member.id]);
+      const verifiedCount = verifiedBoostCountForMember(member, memberEvents, guildLedger.activityImport, { cycleStartedAt });
       const hasImportedActivity = guildLedger.activityImport?.rows?.some((row) => String(row.userId || '') === member.id);
       const currentRecord = createMemberRecord(
         verifiedCount,
@@ -1364,7 +2210,7 @@ const reconcileGuild = async (guild, conf, options = {}) => {
       currentRecord.confidence = verifiedCount > 1 ? 'high' : 'medium';
       currentRecord.lastReconciledAt = new Date().toISOString();
       currentRecord.highestReportedCount = Math.max(verifiedCount, ...memberEvents.map((event) => Number(event.reportedCount || 0)));
-      currentRecord.reportedCountConfirmed = memberEvents.some((event) => isAdditionalBoostEvent(member, event.timestamp) && Number(event.reportedCount || 0) > 1);
+      currentRecord.reportedCountConfirmed = memberEvents.some((event) => isAdditionalBoostEvent(member, event.timestamp, cycleStartedAt) && Number(event.reportedCount || 0) > 1);
       for (const event of memberEvents) {
         updateRecordEvidence(currentRecord, event);
       }
@@ -1399,7 +2245,6 @@ const reconcileGuild = async (guild, conf, options = {}) => {
     || member.roles.cache.some((role) => managedRoleIds.has(role.id))
     || removableColorRoleIds(member, conf).length > 0
   ));
-  console.log(`[boostRoles] ${guild.name}: ${candidates.size} Booster-/Rollen-Kandidaten werden synchronisiert.`);
   let synchronized = 0;
   reportProgress({
     progress: 84,
@@ -1434,8 +2279,14 @@ const reconcileGuild = async (guild, conf, options = {}) => {
       totalUnits: candidates.size
     });
   }
-  console.log(`[boostRoles] ${guild.name}: Rollenabgleich abgeschlossen.`);
   reportProgress({ progress: 100, stage: 'Booster-Abgleich abgeschlossen' });
+  // Nach jedem vollständigen Abgleich wird die Top-Booster-Liga aktualisiert,
+  // damit geänderte Boost-Zahlen auch ohne neuen Boost im Panel ankommen.
+  if (conf?.boostTopEnabled === true) {
+    void ensureBoostTopPanel(guild, conf, { force: true }).catch((error) => {
+      recordDiagnosticError('boostRoles.boostTop', error, { featureId: 'boostRoles', hook: 'reconcileBoostTop', guildId: guild?.id });
+    });
+  }
 };
 
 const guildReconcileJobs = new Map();
@@ -1742,7 +2593,9 @@ export const updateBoostBaselineMember = async ({ guild, conf, userId, count, ac
   }
   const member = guild.members.cache.get(targetId) || await guild.members.fetch(targetId).catch(() => null);
   if (!member || member.user?.bot) throw new Error('Das ausgewählte Mitglied wurde nicht gefunden.');
-  if (!isActiveDiscordBooster(member)) throw new Error('Discord führt dieses Mitglied aktuell nicht als aktiven Booster.');
+  // Bewusst die lockere Prüfung: die manuelle Korrektur bleibt auch im
+  // Restboost-Fenster möglich, in dem die Systemrolle schon entfernt ist.
+  if (!isManualBoostCorrectionTarget(member, guild)) throw new Error('Discord führt dieses Mitglied aktuell nicht als aktiven Booster.');
 
   const editedAt = Date.now();
   let summary = null;
@@ -1754,11 +2607,15 @@ export const updateBoostBaselineMember = async ({ guild, conf, userId, count, ac
     guildLedger.activityImport.version = 2;
     guildLedger.activityImport.memberBaselines ||= {};
     guildLedger.activityImport.editAudit ||= [];
-    const previousCount = verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport);
+    // premiumSince springt bei jedem weiteren Boost nach vorn: für Zählung und
+    // Basisvergleich gilt der Start der laufenden Boost-Periode.
+    const previousRecord = guildLedger.members?.[member.id] || guildLedger.members?.[targetId] || null;
+    const cycleStartedAt = effectiveBoostCycleStart(member, previousRecord);
+    const previousCount = verifiedBoostCountForMember(member, guildLedger.events, guildLedger.activityImport, { cycleStartedAt });
     guildLedger.activityImport.memberBaselines[targetId] = {
       count: targetCount,
       snapshotAt: editedAt,
-      cycleStartedAt: currentBoostCycleStart(member),
+      cycleStartedAt,
       source: 'manual-baseline-correction',
       editedAt: new Date(editedAt).toISOString(),
       editedBy: String(actorId || '')
@@ -1771,13 +2628,18 @@ export const updateBoostBaselineMember = async ({ guild, conf, userId, count, ac
       editedBy: String(actorId || '')
     });
     guildLedger.activityImport.editAudit = guildLedger.activityImport.editAudit.slice(-500);
-    const record = createMemberRecord(targetCount, 'discord-activity-baseline-edit', currentBoostCycleStart(member));
+    const record = createMemberRecord(targetCount, 'discord-activity-baseline-edit', cycleStartedAt);
     record.confidence = 'high';
     record.lastReconciledAt = new Date(editedAt).toISOString();
     guildLedger.members[targetId] = record;
     const activeMembers = guild.members.cache.filter((entry) => !entry.user?.bot && isActiveDiscordBooster(entry));
     const calculatedBoostCount = activeMembers.reduce(
-      (total, entry) => total + verifiedBoostCountForMember(entry, guildLedger.events, guildLedger.activityImport),
+      (total, entry) => total + verifiedBoostCountForMember(
+        entry,
+        guildLedger.events,
+        guildLedger.activityImport,
+        { cycleStartedAt: effectiveBoostCycleStart(entry, guildLedger.members?.[entry.id]) }
+      ),
       0
     );
     const discordBoostCount = Math.max(0, Number(guild.premiumSubscriptionCount || 0));
@@ -1857,6 +2719,7 @@ export const feature = {
   async onConfigUpdate({ guild, cfg, patch }) {
     if (!patch || !Object.prototype.hasOwnProperty.call(patch, 'boostRoles')) return;
     ensurePeriodicReconcile(guild, cfg?.boostRoles);
+    scheduleBoostTopRefresh(guild, cfg?.boostRoles);
     void runTrackedOperation('Booster-Konfiguration wird angewendet', {
       featureId: 'boostRoles',
       hook: 'configReconcile',
@@ -1895,6 +2758,7 @@ export const feature = {
           'Bestätigte Boost-Beendigung aus Boost-Log',
           !isActiveDiscordBooster(member) || result.count <= 0
         );
+        scheduleBoostTopRefresh(message.guild, conf);
       }
       return;
     }
@@ -1912,6 +2776,7 @@ export const feature = {
       });
       if (!result.duplicate && result.stateChanged && member) {
         scheduleVerifiedBoostSync(member, conf, result.count, 'Bestätigte Boost-Info');
+        scheduleBoostTopRefresh(message.guild, conf);
       }
       return;
     }
@@ -1926,8 +2791,14 @@ export const feature = {
       reportedCount: nativeReportedBoostCount(message),
       source: 'native-system'
     });
-    if (!result.duplicate && result.stateChanged) {
+    // accepted ist nur true, wenn das Mitglied laut Discord aktuell aktiver
+    // Booster ist (premiumSince) und die Meldung in den aktuellen Zyklus fällt.
+    // So wird jede echte Discord-Systemmeldung genau einmal angekündigt, aber
+    // niemals für jemanden, der laut Discord gar nicht (mehr) boostet.
+    if (!result.duplicate && result.accepted) {
       if (member) scheduleVerifiedBoostSync(member, conf, result.count, 'Nativer Discord Server-Boost');
+      if (member) void sendBoostAnnouncement(message.guild, member, conf, result.count);
+      scheduleBoostTopRefresh(message.guild, conf);
     }
   },
 
@@ -1944,13 +2815,47 @@ export const feature = {
     if (wasBoosting === isBoosting && !cycleChanged) return;
 
     if (isBoosting && (!wasBoosting || cycleChanged)) {
-      const count = 1;
+      // Discord setzt premiumSince bei jedem weiteren Boost eines bereits
+      // boostenden Mitglieds auf den Zeitpunkt des letzten Boosts. Für ein
+      // Mitglied, das laut altem Stand bereits boostete, ist das KEIN neuer
+      // Zyklus, sondern ein weiterer Boost: der Ledgerstand wird nicht auf 1
+      // zurückgesetzt und die älteren Systemmeldungen bleiben erhalten.
+      const additionalBoost = wasBoosting && cycleChanged;
+      let count = 1;
       await mutateLedger((data) => {
         const guildLedger = getGuildLedger(data, newMember.guild.id);
+        const existing = guildLedger.members[newMember.id] || null;
+        if (additionalBoost && existing && Number(existing.count || 0) >= 1) {
+          const cycleStartedAt = effectiveBoostCycleStart(newMember, existing);
+          existing.cycleStartedAt = cycleStartedAt;
+          existing.count = verifiedBoostCountForMember(
+            newMember,
+            guildLedger.events,
+            guildLedger.activityImport,
+            { cycleStartedAt }
+          );
+          existing.automaticCount = existing.count;
+          existing.active = existing.count > 0;
+          existing.lastReconciledAt = new Date().toISOString();
+          existing.updatedAt = new Date().toISOString();
+          guildLedger.members[newMember.id] = existing;
+          count = Math.max(1, Number(existing.count) || 1);
+          return;
+        }
         guildLedger.members[newMember.id] = createMemberRecord(count, 'discord-system-role-baseline', currentBoostCycleStart(newMember));
       });
-      await queueMemberSync(newMember, conf, count, 'Discord-System-Boosterrolle bestätigt');
+      await queueMemberSync(
+        newMember,
+        conf,
+        count,
+        additionalBoost ? 'Weiterer Discord Server-Boost bestätigt' : 'Discord-System-Boosterrolle bestätigt'
+      );
       void scheduleGuildReconcile(newMember.guild, conf, { fetchMembers: false, rebuildHistory: false });
+      // Keine eigene Announcement hier: Die Discord-Systemmeldung (Typ 8) löst
+      // die Benachrichtigung mit der verifizierten Gesamtzahl aus. Eine zweite
+      // Announcement aus diesem Pfad würde denselben Boost doppelt senden
+      // (bekannter Fehler: „1×“ und „3×“ für einen Boost).
+      scheduleBoostTopRefresh(newMember.guild, conf);
     }
     if (wasBoosting && !isBoosting) {
       await mutateLedger((data) => {
@@ -1958,14 +2863,18 @@ export const feature = {
         guildLedger.members[newMember.id] = createMemberRecord(0, 'discord-system-role-removed');
       });
       await queueMemberSync(newMember, conf, 0, 'Discord Boost vollständig beendet', true);
+      // Boost-Ende: den Booster sofort aus der Top-3-Liga entfernen.
+      scheduleBoostTopRefresh(newMember.guild, conf);
     }
   },
 
-  async onGuildMemberRemove({ member }) {
+  async onGuildMemberRemove({ member, cfg }) {
     if (!member?.guild?.id || !member.id) return;
     await mutateLedger((data) => {
       const members = data.guilds?.[member.guild.id]?.members;
       if (members) delete members[member.id];
     });
+    // Serververlassen: den ehemaligen Booster sofort aus der Top-3-Liga entfernen.
+    scheduleBoostTopRefresh(member.guild, cfg?.boostRoles);
   }
 };

@@ -42,7 +42,7 @@
     if (document.querySelector('link[data-live-diagnostics-v2]')) return;
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = 'live-diagnostics-v2.css';
+    link.href = 'ui-base.css';
     link.dataset.liveDiagnosticsV2 = 'true';
     document.head.append(link);
   }
@@ -147,6 +147,8 @@
       eventLoop: { available: false, meanDelayMs: null, p95DelayMs: null, maxDelayMs: null, healthy: null },
       discord: { ready: discordReady, pingMs: hasValue(runtimeHealth?.pingMs) ? Number(runtimeHealth.pingMs) : null, guildCount: hasValue(runtimeHealth?.guildCount) ? Number(runtimeHealth.guildCount) : null, user: runtimeHealth?.discordUserTag || null },
       jobs: { available: false, counters: { started: 0, completed: 0, failed: 0, overdue: 0 }, sessionCounters: { started: 0, completed: 0, failed: 0, overdue: 0 }, failureSummary: { totalOccurrences: 0, sessionOccurrences: 0, storedOccurrences: 0, storedGroups: 0, withoutStoredDetails: 0, lastFailureAt: null }, active: [], recent: [], failures: [], running: 0, timedOut: 0 },
+      interactions: { available: false, started: 0, acked: 0, unacked: 0, lateAcks: 0, slowHandlers: 0, lastLateAck: null, lastSlowHandler: null, lateAckThresholdMs: 2800, slowHandlerThresholdMs: 2500, recent: [] },
+      rateLimits: { available: false, total: 0, global: 0, last: null, recent: [], byRoute: [] },
       index: [],
       indexTelemetry: { available: false, refreshing: true, measuredAt: null, error: payload?.diagnosticsError || null },
       totals: { messages: null, channels: null, users: null, incompleteChannels: null, errorChannels: null },
@@ -227,6 +229,22 @@
     return `<article class="diagnostics-index"><header><div><span>SERVERINDEX · ${safe(index.engine || 'SQLite')}</span><h3>${safe(index.guildName)}</h3></div><b class="${index.errorChannels ? 'critical' : 'good'}">${index.errorChannels ? `${num(index.errorChannels)} Fehler` : 'Live-Index betriebsbereit'}</b></header><div class="diagnostics-index-stats"><div><strong>${num(index.totalMessages)}</strong><span>Nachrichten</span></div><div><strong>${num(index.channelCount)}</strong><span>Checkpoints</span></div><div><strong>${displayNum(index.userCount)}</strong><span>Nutzer</span></div><div><strong>${displayNum(index.eventCount)}</strong><span>Systemevents</span></div></div><section class="diagnostics-meter"><div><span>Betriebsbereite Indexabdeckung</span><b>${pct(index.coveragePercent)}</b></div><i><span style="width:${pct(index.coveragePercent)}"></span></i><small>${num(index.operationalChannels)} Checkpoints mit Daten · ${num(index.activeBackfills)} aktive Nachladungen · Checkpoint ${safe(ago(index.lastCheckpointAt))}</small></section><section class="diagnostics-meter boost"><div><span>Boost-Systemindex</span><b>${pct(boost.progress)}</b></div><i><span style="width:${pct(boost.progress)}"></span></i><small>${safe(boost.detail || 'Noch kein Boost-Abgleich gestartet.')} ${boost.total ? `(${num(boost.completed)}/${num(boost.total)})` : ''}</small></section><div class="diagnostics-index-meta"><span><b>Live-Ingestion</b>${safe(index.ingestion?.nextTrigger || 'Nächste Discord-Nachricht')}</span><span><b>Index-Zeitraum</b>${safe(stamp(index.oldestMessageAt))}<br>bis ${safe(stamp(index.newestMessageAt))}</span><span><b>Nächster Boost-Abgleich</b><em${schedule.nextSyncAt ? ` data-deadline="${safe(schedule.nextSyncAt)}"` : ''}>${schedule.nextSyncAt ? 'wird berechnet' : 'nach Synchronisierung'}</em></span></div>${pending.length ? `<details><summary>Aktive oder fehlerhafte Indexjobs (${num(pending.length)})</summary><div>${pending.map((channel) => `<span><b># ${safe(channel.name)}</b><em>${num(channel.count)} Nachrichten · ${safe(channel.scanState)}</em>${channel.error ? `<small>${safe(channel.error)}</small>` : ''}</span>`).join('')}</div></details>` : ''}</article>`;
   }
 
+  function rateLimitPanel(rateLimits = {}) {
+    if (rateLimits.available === false) {
+      return `<section class="diagnostics-panel diagnostics-jobs-unavailable"><header><div><span>DISCORD REST</span><h2>Rate-Limits</h2></div><b>Wird verbunden</b></header><div class="diagnostics-loading inline"><i></i><strong>Noch keine Rate-Limit-Telemetrie</strong><span>Discord-Wartezeiten werden ab hier automatisch erfasst.</span></div></section>`;
+    }
+    const total = Number(rateLimits.total || 0);
+    const global = Number(rateLimits.global || 0);
+    const routes = Array.isArray(rateLimits.byRoute) ? rateLimits.byRoute.slice(0, 6) : [];
+    const recent = Array.isArray(rateLimits.recent) ? rateLimits.recent.slice(0, 5) : [];
+    const last = rateLimits.last || null;
+    const routeRow = (entry) => `<tr><td><b>${safe(entry.method || 'GET')}</b><small>${safe(entry.route)}</small></td><td>${num(entry.count)}</td><td>${span(entry.totalWaitMs)}</td><td>${safe(ago(entry.lastAt))}</td></tr>`;
+    const recentRow = (entry) => `<tr><td><b>${safe(entry.method || 'GET')}</b><small>${safe(entry.route)}</small></td><td>${num(entry.timeoutMs)} ms${entry.global ? ' <mark class="critical">global</mark>' : ''}</td><td colspan="2">${safe(ago(entry.at))}</td></tr>`;
+    const routeRows = routes.length ? routes.map(routeRow).join('') : '<tr><td colspan="4" class="empty">Keine Rate-Limits seit Bot-Start.</td></tr>';
+    const recentRows = recent.length ? recent.map(recentRow).join('') : '';
+    return `<section class="diagnostics-panel diagnostics-rate-limits"><header><div><span>DISCORD REST</span><h2>Rate-Limits</h2></div><b class="${total ? 'watch' : ''}">${num(total)} seit Start</b></header><div class="diagnostics-interaction-stats"><div><strong class="${total ? 'watch' : ''}">${num(total)}</strong><span>Rate-Limit-Events</span></div><div><strong class="${global ? 'critical' : ''}">${num(global)}</strong><span>global (alle Requests)</span></div><div><strong>${last ? span(last.timeoutMs) : '—'}</strong><span>letzte Wartezeit</span></div><div><strong>${last ? safe(last.method) : '—'}</strong><span>letzte Route ${last ? safe(last.route) : ''}</span></div></div><div class="diagnostics-table"><table><thead><tr><th>Endpoint</th><th>Treffer</th><th>Gewartet</th><th>Zeit</th></tr></thead><tbody>${routeRows}${recentRows}</tbody></table></div></section>`;
+  }
+
   function jobsPanel(jobs = {}) {
     if (jobs.available === false) {
       return `<section class="diagnostics-panel diagnostics-jobs-unavailable"><header><div><span>JOB MANAGER</span><h2>Hintergrundarbeiten</h2></div><b>Wird verbunden</b></header><div class="diagnostics-loading inline"><i></i><strong>Noch keine Job-Detailmessung</strong><span>Historische Fehler werden nicht als aktuelle Nullwerte dargestellt. Die App lädt den echten Fehlerspeicher automatisch nach.</span></div></section>`;
@@ -247,6 +265,24 @@
     const sessionFailures = Number(jobs.sessionCounters?.failed ?? jobs.failureSummary?.sessionOccurrences ?? 0);
     const totalFailures = Number(jobs.failureSummary?.totalOccurrences ?? jobs.counters?.failed ?? 0);
     return `${num(jobs.timedOut)} aktive Timeouts · ${num(sessionFailures)} seit Start · ${num(totalFailures)} gesamt`;
+  }
+
+  function interactionsPanel(interactions = {}) {
+    if (interactions.available === false) {
+      return `<section class="diagnostics-panel diagnostics-jobs-unavailable"><header><div><span>INTERAKTIONEN</span><h2>Antwortzeiten</h2></div><b>Wird verbunden</b></header><div class="diagnostics-loading inline"><i></i><strong>Noch keine Interaktions-Telemetrie</strong><span>Die App misst ab der nächsten Interaktion, wie schnell der Bot bestätigt und verarbeitet.</span></div></section>`;
+    }
+    const started = Number(interactions.started || 0);
+    const acked = Number(interactions.acked || 0);
+    const unacked = Number(interactions.unacked || 0);
+    const lateAcks = Number(interactions.lateAcks || 0);
+    const slowHandlers = Number(interactions.slowHandlers || 0);
+    const recent = Array.isArray(interactions.recent) ? interactions.recent.slice(0, 8) : [];
+    const lastLate = interactions.lastLateAck || null;
+    const lastSlow = interactions.lastSlowHandler || null;
+    const row = (entry) => `<tr><td><b>${safe(entry.type)}</b><small>${safe(entry.customId || '—')}</small></td><td>${hasValue(entry.ackLatencyMs) ? `${num(entry.ackLatencyMs)} ms` : '<mark>kein Ack</mark>'}</td><td>${hasValue(entry.handlerMs) ? `${num(entry.handlerMs)} ms` : '—'}</td><td>${safe(ago(entry.at))}</td></tr>`;
+    const recentRows = recent.length ? recent.map(row).join('') : '<tr><td colspan="4" class="empty">Noch keine Interaktion gemessen.</td></tr>';
+    const warn = (value, kind) => value ? `<tr><td><b>${kind}</b><small>${safe(value.customId || '—')} · ${safe(value.type)}</small></td><td>${kind === 'Später Ack' ? `${num(value.ackLatencyMs)} ms` : `${num(value.handlerMs)} ms`}</td><td colspan="2">${safe(ago(value.at))}</td></tr>` : '';
+    return `<section class="diagnostics-panel diagnostics-interactions"><header><div><span>INTERAKTIONEN</span><h2>Antwortzeiten („hat nicht rechtzeitig reagiert“)</h2></div><b>${num(started)} gemessen</b></header><div class="diagnostics-interaction-stats"><div><strong>${num(acked)}</strong><span>rechtzeitig bestätigt</span></div><div><strong>${num(unacked)}</strong><span>ohne Ack</span></div><div><strong class="${lateAcks ? 'critical' : ''}">${num(lateAcks)}</strong><span>späte Acks (&gt;${num(interactions.lateAckThresholdMs)} ms)</span></div><div><strong class="${slowHandlers ? 'watch' : ''}">${num(slowHandlers)}</strong><span>langsame Handler (&gt;${num(interactions.slowHandlerThresholdMs)} ms)</span></div></div><div class="diagnostics-table"><table><thead><tr><th>Typ</th><th>Bestätigung</th><th>Handler</th><th>Zeit</th></tr></thead><tbody>${warn(lastLate, 'Später Ack')}${warn(lastSlow, 'Langsamer Handler')}${recentRows}</tbody></table></div></section>`;
   }
 
   function render(payload) {
@@ -301,6 +337,8 @@
     <div class="diagnostics-observe"><section class="diagnostics-panel diagnostics-chart"></section><section class="diagnostics-panel diagnostics-scheduler"><header><div><span>SCHEDULER</span><h2>Nächste Aktionen</h2></div></header>${scheduleRow('Diagnose aktualisieren', 'wird berechnet', 'Prozess, Discord und Jobs', new Date(nextRefreshAt).toISOString(), 'live')}${scheduleRow('Serverindex', serverIndexState, live.indexTelemetry?.refreshing ? 'Läuft unabhängig von der Oberfläche im Hintergrund' : 'Bei der nächsten Discord-Nachricht', '', serverIndexTone)}${scheduleRow('Boost-Abgleich', nextBoost ? 'wird berechnet' : 'wartet', 'Rollen- und Systemnachrichten-Abgleich', nextBoost, nextBoost ? 'live' : 'watch')}${scheduleRow('Index-Reparatur', !indexAvailable ? 'noch nicht bewertet' : live.totals?.errorChannels ? `${num(live.totals.errorChannels)} Fehler` : 'nicht erforderlich', !indexAvailable ? 'Wird nach dem Index-Ladevorgang bewertet' : live.totals?.incompleteChannels ? `${num(live.totals.incompleteChannels)} aktive Nachladungen` : 'Keine aktiven oder fehlerhaften Indexjobs', '', !indexAvailable ? 'watch' : live.totals?.errorChannels ? 'critical' : 'good')}</section></div>
     <section class="diagnostics-index-area"><header><div><span>DATENEBENE</span><h2>Server- und Boost-Indizes</h2></div><p>Fortschritt, Betriebsbereitschaft und Synchronisierung pro Server.</p></header><div>${indexes.length ? indexes.map(indexCard).join('') : indexEmpty}</div></section>
     ${jobsPanel(live.jobs)}
+    ${interactionsPanel(live.interactions)}
+    ${rateLimitPanel(live.rateLimits)}
     <footer class="diagnostics-runtime"><span>PID ${displayNum(live.process.pid)}</span><span>Laufzeit ${span(Number(live.process.uptimeSeconds || 0) * 1000)}</span><span>${displayNum(live.process.activeHandles)} Handles</span><span>ArrayBuffers ${mb(live.process.arrayBuffersBytes)}</span><span>${stamp(live.measuredAt)}</span></footer>`;
     renderPerformancePanel(target);
     if (view && previousScrollTop > 0) requestAnimationFrame(() => { view.scrollTop = previousScrollTop; });

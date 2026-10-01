@@ -11,6 +11,7 @@
 
   const glowTargets = [
     '.command-card', '.metric-card', '.quick-card', '.timeline-card',
+    '.fh-server-strip', '.fh-metric', '.fh-service', '.fh-quick', '.fh-timeline',
     '.history-card', '.form-section', '.system-health-card',
     '.system-data-panel', '.log-panel', '.editor-panel',
     '.app-editor-preview', '.community-shell', '.module-list',
@@ -28,7 +29,7 @@
     if (reduceMotion.matches) return;
     const view = document.querySelector('.view.active');
     if (!view) return;
-    const targets = Array.from(view.querySelectorAll('.page-head, .dashboard-grid > *, .community-shell > *, .module-layout > *, .studio-shell > *, .system-workspace > *, .editor-workspace > *')).slice(0, 18);
+    const targets = Array.from(view.querySelectorAll('.page-head, .fh-console-head, .fh-server-strip, .fh-metrics, .fh-main, .dashboard-grid > *, .community-shell > *, .module-layout > *, .studio-shell > *, .system-workspace > *, .editor-workspace > *')).slice(0, 18);
     targets.forEach((node, index) => {
       node.classList.remove('fh-reveal-visible');
       node.classList.add('fh-reveal');
@@ -40,22 +41,34 @@
   enhanceSurfaces();
 
   // A soft light reacts directly under the native pointer. There is no custom
-  // cursor and no delayed trail.
+  // cursor and no delayed trail. getBoundingClientRect() erzwingt Layout -
+  // deshalb wird pro Animation-Frame maximal einmal aktualisiert (rAF-Throttle),
+  // statt bei jedem pointermove-Ereignis (Layout-Thrash).
+  let pointerFrame = 0;
+  let pendingPointerEvent = null;
   document.addEventListener('pointermove', (event) => {
     if (reduceMotion.matches) return;
-    const access = event.target.closest?.('#access-scene');
-    if (access) {
-      const rect = access.getBoundingClientRect();
-      access.style.setProperty('--login-x', `${event.clientX - rect.left}px`);
-      access.style.setProperty('--login-y', `${event.clientY - rect.top}px`);
-      access.style.setProperty('--ref-mouse-x', `${event.clientX - rect.left}px`);
-      access.style.setProperty('--ref-mouse-y', `${event.clientY - rect.top}px`);
-    }
-    const card = event.target.closest?.('.fh-glow-card');
-    if (!card) return;
-    const rect = card.getBoundingClientRect();
-    card.style.setProperty('--card-x', `${event.clientX - rect.left}px`);
-    card.style.setProperty('--card-y', `${event.clientY - rect.top}px`);
+    pendingPointerEvent = event;
+    if (pointerFrame) return;
+    pointerFrame = requestAnimationFrame(() => {
+      pointerFrame = 0;
+      const current = pendingPointerEvent;
+      pendingPointerEvent = null;
+      if (!current) return;
+      const access = current.target.closest?.('#access-scene');
+      if (access) {
+        const rect = access.getBoundingClientRect();
+        access.style.setProperty('--login-x', `${current.clientX - rect.left}px`);
+        access.style.setProperty('--login-y', `${current.clientY - rect.top}px`);
+        access.style.setProperty('--ref-mouse-x', `${current.clientX - rect.left}px`);
+        access.style.setProperty('--ref-mouse-y', `${current.clientY - rect.top}px`);
+      }
+      const card = current.target.closest?.('.fh-glow-card');
+      if (!card) return;
+      const rect = card.getBoundingClientRect();
+      card.style.setProperty('--card-x', `${current.clientX - rect.left}px`);
+      card.style.setProperty('--card-y', `${current.clientY - rect.top}px`);
+    });
   }, { passive: true });
 
   document.addEventListener('fh:view-change', () => {

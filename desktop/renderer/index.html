@@ -147,11 +147,11 @@
       .fh-preboot-bar i { width: 100%; transform: none; }
     }
   </style>
-<link rel="stylesheet" href="ui-base.css?v=3.9.309" data-live-diagnostics-v2>
-  <link rel="stylesheet" href="ui-aurora.css?v=3.9.309">
-  <link rel="stylesheet" href="ui-system.css?v=3.9.309">
+<link rel="stylesheet" href="ui-base.css?v=4.0.0" data-live-diagnostics-v2>
+  <link rel="stylesheet" href="ui-aurora.css?v=4.0.0">
+  <link rel="stylesheet" href="ui-system.css?v=4.0.0">
   </head>
-<body data-theme="dark" class="auth-restoring">
+<body data-theme="dark">
   <div class="app-shell">
     <header class="titlebar">
       <div class="title-drag">
@@ -617,18 +617,35 @@
         <button class="ghost-button" id="update-check" type="button">Nach Updates suchen</button>
       </div>
       <div class="update-folder-row">
-        <label for="update-folder">Update-Ordner (auch Netzwerkfreigabe möglich)</label>
+        <label for="update-repo">Release-Repository (empfohlen)</label>
+        <div class="update-folder-input">
+          <input id="update-repo" type="text" placeholder="z. B. fallenangel/fhcc-releases" spellcheck="false" autocomplete="off">
+          <button class="ghost-button" id="update-repo-save" type="button">Speichern</button>
+        </div>
+        <label for="update-token">GitHub-Token (fine-grained, Leserecht auf dieses Repository)</label>
+        <div class="update-folder-input">
+          <input id="update-token" type="password" placeholder="Nur zum Speichern – danach wird das Feld geleert" spellcheck="false" autocomplete="off">
+          <button class="ghost-button" id="update-token-save" type="button">Token speichern</button>
+        </div>
+        <div class="update-folder-input">
+          <button class="ghost-button" id="update-channel-test" type="button">Verbindung testen</button>
+          <span class="update-token-hint" id="update-token-hint"></span>
+        </div>
+        <p class="system-privacy-note">Der Token wird über Windows DPAPI verschlüsselt und nur für dieses Benutzerkonto gespeichert – niemals im Klartext, niemals in der App. Ohne Token sind private Repositories nicht lesbar; der Kanal bleibt dann auf den Ordner zurückgestellt.</p>
+      </div>
+      <div class="update-folder-row">
+        <label for="update-folder">Update-Ordner (Rückfall, auch Netzwerkfreigabe möglich)</label>
         <div class="update-folder-input">
           <input id="update-folder" type="text" placeholder="z. B. C:\FHCC-Updates oder \\SERVER\Freigabe" spellcheck="false">
           <button class="ghost-button" id="update-folder-save" type="button">Speichern</button>
         </div>
       </div>
-      <div class="update-status" id="update-status">Update-Ordner noch nicht konfiguriert.</div>
+      <div class="update-status" id="update-status">Noch kein Update-Kanal konfiguriert.</div>
       <div class="update-actions">
         <button class="primary-button" id="update-install" type="button" disabled>Update installieren</button>
         <button class="text-button" id="update-open-folder" type="button">Ordner öffnen</button>
       </div>
-      <p class="system-privacy-note"><strong>Sicher:</strong> Die Update-Datei wird vor der Installation anhand des SHA-512-Werts aus <code>latest.yml</code> geprüft und in den Temp-Ordner kopiert – die Freigabe muss während der Installation nicht mehr erreichbar sein. Die Installation läuft still (silent), die App startet danach neu.</p>
+      <p class="system-privacy-note"><strong>Sicher:</strong> Die Update-Datei wird vor der Installation anhand des SHA-512-Werts aus <code>latest.yml</code> geprüft und in den Temp-Ordner kopiert – der Kanal muss während der Installation nicht mehr erreichbar sein. Die Installation läuft still (silent), die App startet danach neu.</p>
     </article>
     <article class="log-panel">
       <div class="system-panel-head">
@@ -676,24 +693,24 @@
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   <script src="stability.js"></script>
   <script src="runtime-state.js"></script>
-<script src="modern-ui-v5.js?v=3.9.309"></script>
-<script src="discord-reference-v7.js?v=3.9.309"></script>
-<script src="discord-reference-v8.js?v=3.9.309"></script>
-<script src="activity-race-studio.js?v=3.9.309"></script>
-<script src="studio-components.js?v=3.9.309"></script>
-<script src="temp-voice-ui.js?v=3.9.309"></script>
-<script src="economy-panel-studio.js?v=3.9.309"></script>
-<script src="studio-json-import.js?v=3.9.309"></script>
-<script src="message-emoji-loader.js?v=3.9.309"></script>
-<script src="counting-panel.js?v=3.9.309"></script>
-<script src="inactive-reminder-panel.js?v=3.9.309"></script>
-<script src="levels-panel.js?v=3.9.309"></script>
-<script src="app-editor.js?v=3.9.309"></script>
-<script src="module-config-inputs.js?v=3.9.309"></script>
-<script src="app.js?v=3.9.309"></script>
+<script src="modern-ui-v5.js?v=4.0.0"></script>
+<script src="discord-reference-v7.js?v=4.0.0"></script>
+<script src="discord-reference-v8.js?v=4.0.0"></script>
+<script src="activity-race-studio.js?v=4.0.0"></script>
+<script src="studio-components.js?v=4.0.0"></script>
+<script src="temp-voice-ui.js?v=4.0.0"></script>
+<script src="economy-panel-studio.js?v=4.0.0"></script>
+<script src="studio-json-import.js?v=4.0.0"></script>
+<script src="message-emoji-loader.js?v=4.0.0"></script>
+<script src="counting-panel.js?v=4.0.0"></script>
+<script src="inactive-reminder-panel.js?v=4.0.0"></script>
+<script src="levels-panel.js?v=4.0.0"></script>
+<script src="app-editor.js?v=4.0.0"></script>
+<script src="module-config-inputs.js?v=4.0.0"></script>
+<script src="app.js?v=4.0.0"></script>
     <!-- three.js + skinview3d werden erst beim ersten Öffnen des Skin Studios nachgeladen (skin-editor.js → loadViewerLibraries) -->
-<script src="skin-editor.js?v=3.9.309"></script>
-<script src="server-management.js?v=3.9.309"></script>
+<script src="skin-editor.js?v=4.0.0"></script>
+<script src="server-management.js?v=4.0.0"></script>
     <script src="theme-bridge.js"></script>
   <script src="admin-safety.js"></script>
   <script src="media-resilience.js"></script>

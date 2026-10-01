@@ -1,0 +1,115 @@
+{
+  "name": "fhcc",
+  "version": "3.9.198",
+  "description": "Native Discord Control App für FALLEN HEAVEN",
+  "author": "FALLEN HEAVEN",
+  "productName": "FHCC",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "engines": {
+    "node": ">=24.16.0 <27",
+    "npm": ">=11"
+  },
+  "packageManager": "npm@11.13.0",
+  "dependencies": {
+    "better-sqlite3": "13.0.2",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.6",
+    "discord-rpc": "4.0.1",
+    "discord.js": "14.27.0",
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "helmet": "8.3.0",
+    "jsonwebtoken": "9.0.3",
+    "skinview3d": "3.4.2"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.7",
+    "nodemon": "3.1.14"
+  },
+  "overrides": {
+    "@discordjs/rest": "2.6.3",
+    "body-parser": "1.20.6",
+    "discord-rpc": {
+      "register-scheme": "0.0.2"
+    },
+    "undici": "6.28.0"
+  },
+  "build": {
+    "appId": "de.fallenheaven.discordbot",
+    "productName": "FHCC",
+    "asar": true,
+    "icon": "public/assets/fallen-heaven-app-icon.png",
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "win": {
+      "icon": "public/assets/fallen-heaven-app.ico",
+      "executableName": "FHCC",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "FHCC"
+    },
+    "artifactName": "FHCC-Setup-${version}-${arch}.${ext}",
+    "files": [
+      "**/*",
+      "!**/.env",
+      "!**/.env.*",
+      "!data/**",
+      "!runtime/**",
+      "!installer/**",
+      "!dist/**",
+      "!build/**",
+      "!docs/**",
+      "!harness/**",
+      "!src/ai/**",
+      "!scripts/ai-*.mjs",
+      "!.desktop-runtime/**",
+      "!FHCC-Projekt-Login-Fix/**",
+      "!**/*.rar",
+      "!**/*.zip",
+      "!**/*.7z",
+      "!scripts/**/*.log",
+      "!**/tmp-*",
+      "!**/tmp-*/**",
+      "!.freebuff/**",
+      "!index.html"
+    ]
+  },
+  "copyright": "Copyright © 2026 FALLEN HEAVEN",
+  "scripts": {
+    "start": "electron .",
+    "build:dir": "npm run test:release && electron-builder --win --dir && npm run test:packaged",
+    "build:win": "npm run test:release && electron-builder --win nsis && node scripts/generate-update-manifest.cjs && npm run test:packaged && npm run test:artifact && node scripts/cleanup-dist.cjs",
+    "auth:doctor": "node scripts/auth-login-doctor.cjs",
+    "test:auth": "node scripts/auth-reliability-smoke.mjs",
+    "test:economy": "node scripts/heaven-economy-admin-smoke.mjs && node scripts/heaven-economy-migration-smoke.mjs && node scripts/heaven-economy-ui-smoke.mjs && node scripts/boost-economy-reliability-smoke.mjs && node scripts/vip-panels-smoke.mjs",
+    "test:moderation": "node scripts/moderation-assistant-smoke.mjs",
+    "test:security": "node scripts/moderation-assistant-smoke.mjs && node scripts/antiraid-shield-smoke.mjs && node scripts/server-logging-smoke.mjs",
+    "test:backup": "node scripts/server-backup-cleaner-smoke.mjs && node scripts/server-backup-ui-smoke.mjs",
+    "test:roles": "node scripts/managed-role-service-smoke.mjs && node scripts/boost-auto-role-smoke.mjs && node scripts/boost-evidence-index-smoke.mjs && node scripts/boost-sqlite-backfill-smoke.mjs && node scripts/boost-ai-baseline-smoke.mjs && node scripts/server-tag-tracker-smoke.mjs && node scripts/role-swap-smoke.mjs",
+    "test:community": "node scripts/ticket-panel-smoke.mjs && node scripts/leveling-autoresponder-smoke.mjs && node scripts/welcome-verification-smoke.mjs && node scripts/activity-race-smoke.mjs && node scripts/forum-cleaner-smoke.mjs && node scripts/voice-chat-cleaner-smoke.mjs && node scripts/temp-voice-smoke.mjs && node scripts/state-restore-smoke.mjs && node scripts/public-call-vote-smoke.mjs && node scripts/member-privacy-smoke.mjs && node scripts/emoji-manager-smoke.mjs && node scripts/steam-workshop-smoke.mjs && node scripts/member-verify-smoke.mjs && node scripts/role-saver-smoke.mjs && node scripts/inactive-reminder-smoke.mjs && node scripts/counting-smoke.mjs",
+    "test:intelligence": "node scripts/server-embed-knowledge-smoke.mjs && node scripts/member-intelligence-permission-smoke.mjs && node scripts/server-index-discovery-smoke.mjs && node scripts/skin-editor-layered-ai-smoke.mjs",
+    "test:design-pipeline": "node scripts/embed-design-pipeline-smoke.mjs && node scripts/leveling-autoresponder-smoke.mjs && node scripts/counting-smoke.mjs",
+    "test:quality": "node scripts/atomic-json-store-smoke.mjs && node scripts/feature-dispatcher-smoke.mjs && node scripts/moderation-assistant-smoke.mjs && node scripts/antiraid-shield-smoke.mjs && node scripts/server-logging-smoke.mjs && node scripts/server-backup-ui-smoke.mjs && node scripts/managed-role-service-smoke.mjs && node scripts/ticket-panel-smoke.mjs && node scripts/leveling-autoresponder-smoke.mjs && node scripts/skin-editor-layered-ai-smoke.mjs && node scripts/module-readiness-smoke.mjs && node scripts/diagnostics-access-smoke.mjs && node scripts/channel-order-smoke.mjs && node scripts/workspace-forum-timeline-smoke.mjs && node scripts/server-management-ui-smoke.mjs && node scripts/ui-recovery-layout-smoke.mjs && node scripts/embed-link-preview-smoke.mjs && node scripts/embed-asset-cache-smoke.mjs && node scripts/boost-announce-embed-smoke.mjs && node scripts/case-sensitive-import-audit.cjs && node scripts/quality-gate.cjs && node scripts/ui-field-audit.mjs && node scripts/auto-update-smoke.mjs && node scripts/interaction-timeout-guard-smoke.mjs && node scripts/interaction-timing-telemetry-smoke.mjs && node scripts/server-watchdog-smoke.mjs && node scripts/watchdog-soak-stress.mjs --duration 12 --rate 20 --max-io 3500 --seed 7",
+    "test:packaged": "node scripts/packaged-bot-runtime-smoke.cjs",
+    "test:artifact": "node scripts/package-artifact-audit.cjs",
+    "test:release": "node scripts/verify-bot-imports.mjs && npm run test:auth && npm run test:economy && npm run test:security && npm run test:backup && npm run test:roles && npm run test:community && npm run test:intelligence && npm run test:design-pipeline && npm run test:quality && node scripts/release-readiness.cjs"
+  }
+}

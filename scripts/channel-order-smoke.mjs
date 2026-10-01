@@ -1,29 +1,4 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import vm from 'node:vm';
-
-const root = process.cwd();
-const source = fs.readFileSync(path.join(root, 'src', 'index.js'), 'utf8');
-const start = source.indexOf("const dashboardOrderCollator =");
-const end = source.indexOf("const DASHBOARD_CONFIG_CHANNEL_TYPES =");
-if (start < 0 || end <= start) throw new Error('Kanal-Sortierlogik konnte nicht isoliert werden.');
-
-const context = {
-  Intl,
-  BigInt,
-  ChannelType: {
-    GuildText: 0,
-    GuildVoice: 2,
-    GuildCategory: 4,
-    GuildAnnouncement: 5,
-    GuildStageVoice: 13,
-    GuildForum: 15,
-    GuildMedia: 16
-  },
-  THREAD_CHANNEL_TYPES: new Set([10, 11, 12])
-};
-vm.createContext(context);
-vm.runInContext(`${source.slice(start, end)}\nglobalThis.sortForDashboard = withDashboardDisplayOrder;`, context);
+import { withDashboardDisplayOrder } from '../src/dashboard/sorting.js';
 
 const rows = [
   { id: '101', name: 'Root später', type: 2, rawPosition: 1, position: 1, parentId: null, isVoice: true },
@@ -35,7 +10,7 @@ const rows = [
   { id: '201', name: 'Text Anfang A', type: 0, rawPosition: 1, position: 1, parentId: '200', isText: true }
 ];
 
-const ordered = context.sortForDashboard(rows).map((entry) => entry.name);
+const ordered = withDashboardDisplayOrder(rows).map((entry) => entry.name);
 const expected = ['Root zuerst', 'Root später', 'TEAM', 'Text Anfang A', 'Text Anfang B', 'Voice Mitte', 'Text Ende'];
 if (JSON.stringify(ordered) !== JSON.stringify(expected)) {
   throw new Error(`Discord-Reihenfolge falsch. Erwartet ${JSON.stringify(expected)}, erhalten ${JSON.stringify(ordered)}.`);

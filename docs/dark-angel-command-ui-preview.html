@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FALLEN HEAVEN · Dark Angel Command Preview</title>
+  <style>
+    :root {
+      --bg: #020307;
+      --panel: rgba(9, 11, 18, .82);
+      --panel-2: rgba(15, 18, 28, .76);
+      --line: rgba(213, 229, 255, .14);
+      --line-hot: rgba(230, 241, 255, .38);
+      --text: #f3f7ff;
+      --muted: #8b96a9;
+      --subtle: #596273;
+      --ice: #dcecff;
+      --blue: #95bfff;
+      --violet: #b8a6ff;
+      --danger: #ff4969;
+      --ok: #91ffd2;
+      --shadow: 0 28px 100px rgba(0, 0, 0, .72);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      color: var(--text);
+      background: #000;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(0,0,0,.16), rgba(0,0,0,.82) 46%, rgba(0,0,0,.92)),
+        linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.92)),
+        url("file:///E:/SSD%20NEW/Bilder/file_0000000050c871f4ae43434149bbd119.png") center / cover no-repeat;
+      filter: saturate(.78) contrast(1.1);
+      transform: scale(1.02);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(circle at 60% 45%, #000, transparent 75%);
+      opacity: .42;
+    }
+
+    .app {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 84px minmax(0, 1fr);
+      height: 100vh;
+      padding: 18px 18px 18px 0;
+      gap: 18px;
+    }
+
+    .rail {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      align-items: start;
+      padding: 18px 12px;
+      border-right: 1px solid rgba(220, 236, 255, .12);
+      background: linear-gradient(180deg, rgba(2,3,7,.88), rgba(7,9,14,.74));
+      box-shadow: 18px 0 70px rgba(0,0,0,.38);
+    }
+
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 22px;
+      border: 1px solid var(--line-hot);
+      border-radius: 14px;
+      color: var(--ice);
+      background: radial-gradient(circle at 50% 20%, rgba(220,236,255,.3), rgba(25,30,42,.84));
+      box-shadow: 0 0 28px rgba(184, 211, 255, .18), inset 0 1px rgba(255,255,255,.2);
+      font-weight: 950;
+      letter-spacing: -.08em;
+    }
+
+    .nav { display: grid; gap: 10px; }
+    .nav button, .mini {
+      width: 56px;
+      height: 56px;
+      border: 1px solid transparent;
+      border-radius: 16px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-weight: 900;
+    }
+    .nav button.active {
+      color: var(--text);
+      border-color: rgba(220,236,255,.28);
+      background: linear-gradient(180deg, rgba(226,238,255,.14), rgba(128,154,210,.06));
+      box-shadow: 0 0 28px rgba(186, 215, 255, .15);
+    }
+    .mini {
+      display: grid;
+      place-items: center;
+      border-color: var(--line);
+      font-size: 11px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: 72px minmax(0, 1fr);
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .topbar, .panel, .module-list, .studio {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(18,21,32,.78), rgba(6,8,14,.76));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(22px);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border-radius: 20px;
+    }
+    .server-title small, .metric span, .section-label, .module-card small, .event small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .server-title h1 {
+      margin: 3px 0 0;
+      font-size: 23px;
+      letter-spacing: -.04em;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+    .status-line i {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 18px rgba(145,255,210,.9);
+    }
+    .search {
+      width: min(390px, 34vw);
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      color: var(--text);
+      background: rgba(0,0,0,.34);
+      padding: 0 14px;
+      outline: none;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: minmax(280px, .82fr) minmax(460px, 1.42fr) minmax(340px, .92fr);
+      gap: 18px;
+      min-height: 0;
+    }
+
+    .panel, .module-list, .studio {
+      min-height: 0;
+      overflow: hidden;
+      border-radius: 24px;
+    }
+
+    .panel { padding: 22px; }
+    .hero {
+      min-height: 252px;
+      display: grid;
+      align-content: end;
+      position: relative;
+    }
+    .hero::before {
+      content: "FALLEN HEAVEN";
+      position: absolute;
+      top: 10px;
+      left: 0;
+      color: rgba(222,236,255,.055);
+      font-size: 62px;
+      font-weight: 950;
+      letter-spacing: -.08em;
+      line-height: .82;
+    }
+    .hero h2 {
+      position: relative;
+      margin: 0 0 10px;
+      font-size: 38px;
+      letter-spacing: -.06em;
+      line-height: .92;
+    }
+    .hero p {
+      position: relative;
+      margin: 0;
+      max-width: 420px;
+      color: #aab5c8;
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .metric {
+      min-height: 96px;
+      padding: 14px;
+      border: 1px solid rgba(220,236,255,.1);
+      border-radius: 16px;
+      background: rgba(255,255,255,.035);
+    }
+    .metric b {
+      display: block;
+      margin-top: 12px;
+      font-size: 28px;
+      letter-spacing: -.05em;
+    }
+    .metric.good b { color: var(--ok); }
+    .metric.warn b { color: #ffd18f; }
+
+    .module-list {
+      display: grid;
+      grid-template-rows: auto auto minmax(0,1fr);
+      padding: 18px;
+    }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+    .section-head h3 {
+      margin: 3px 0 0;
+      font-size: 22px;
+      letter-spacing: -.04em;
+    }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .tabs button {
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(0,0,0,.26);
+      font-weight: 800;
+    }
+    .tabs button.active {
+      color: var(--text);
+      border-color: var(--line-hot);
+      background: rgba(220,236,255,.12);
+    }
+    .cards {
+      display: grid;
+      gap: 10px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .module-card {
+      display: grid;
+      grid-template-columns: 42px minmax(0,1fr) auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 82px;
+      padding: 13px;
+      border: 1px solid rgba(220,236,255,.1);
+      border-radius: 16px;
+      background: rgba(0,0,0,.3);
+    }
+    .module-card.active {
+      border-color: rgba(220,236,255,.32);
+      background: linear-gradient(90deg, rgba(220,236,255,.12), rgba(149,191,255,.035));
+      box-shadow: inset 2px 0 0 var(--ice);
+    }
+    .module-card i {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 13px;
+      color: var(--ice);
+      background: rgba(220,236,255,.08);
+      font-style: normal;
+      font-weight: 950;
+    }
+    .module-card b { display: block; margin-bottom: 3px; }
+    .pill {
+      padding: 6px 9px;
+      border: 1px solid rgba(145,255,210,.22);
+      border-radius: 999px;
+      color: var(--ok);
+      background: rgba(145,255,210,.06);
+      font-size: 10px;
+      font-weight: 900;
+    }
+    .pill.off {
+      color: var(--subtle);
+      border-color: var(--line);
+      background: rgba(255,255,255,.025);
+    }
+
+    .studio {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      padding: 18px;
+    }
+    .preview-card {
+      padding: 14px;
+      border: 1px solid rgba(220,236,255,.12);
+      border-radius: 18px;
+      background: rgba(0,0,0,.36);
+    }
+    .discord {
+      overflow: hidden;
+      border-radius: 14px;
+      background: #15161b;
+      border-left: 4px solid #dcecff;
+    }
+    .discord img {
+      width: 100%;
+      height: 116px;
+      object-fit: cover;
+      opacity: .86;
+      display: block;
+    }
+    .embed-copy { padding: 14px; }
+    .embed-copy h4 { margin: 0 0 8px; }
+    .embed-copy p {
+      margin: 0;
+      color: #d0d5de;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .editor {
+      display: grid;
+      gap: 12px;
+      overflow: auto;
+      margin: 16px 0;
+      padding-right: 4px;
+    }
+    label {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      color: var(--text);
+      background: rgba(0,0,0,.34);
+      padding: 12px;
+      font: inherit;
+      outline: none;
+    }
+    textarea { min-height: 116px; resize: vertical; }
+    input:focus, textarea:focus, select:focus {
+      border-color: rgba(220,236,255,.46);
+      box-shadow: 0 0 0 3px rgba(220,236,255,.08);
+    }
+
+    .placeholder-box {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 12px;
+      border: 1px solid rgba(220,236,255,.1);
+      border-radius: 16px;
+      background: rgba(0,0,0,.24);
+    }
+    code {
+      padding: 6px 8px;
+      border: 1px solid rgba(220,236,255,.16);
+      border-radius: 8px;
+      color: var(--ice);
+      background: rgba(220,236,255,.07);
+      font-size: 11px;
+    }
+    .sendbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(220,236,255,.1);
+    }
+    .btn {
+      height: 42px;
+      padding: 0 15px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      color: var(--text);
+      background: rgba(255,255,255,.055);
+      font-weight: 900;
+    }
+    .btn.primary {
+      border-color: rgba(220,236,255,.44);
+      color: #071018;
+      background: linear-gradient(180deg, #f3f8ff, #a9c8f5);
+      box-shadow: 0 12px 34px rgba(169,200,245,.22);
+    }
+
+    .events {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .event {
+      padding: 13px;
+      border: 1px solid rgba(220,236,255,.09);
+      border-radius: 15px;
+      background: rgba(0,0,0,.26);
+    }
+    .event b { display: block; margin-top: 5px; font-size: 13px; }
+
+    @media (max-width: 1180px) {
+      body { overflow: auto; }
+      .app { min-height: 100vh; height: auto; grid-template-columns: 1fr; padding: 14px; }
+      .rail { grid-template-columns: auto 1fr auto; grid-template-rows: auto; border-right: 0; border-bottom: 1px solid var(--line); border-radius: 20px; }
+      .mark { margin: 0; }
+      .nav { display: flex; justify-content: center; }
+      .main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="rail">
+      <div class="mark">FH</div>
+      <nav class="nav" aria-label="Hauptnavigation">
+        <button class="active" title="Übersicht">⌁</button>
+        <button title="Server">#</button>
+        <button title="Module">▦</button>
+        <button title="Studio">✎</button>
+        <button title="System">⚙</button>
+      </nav>
+      <div class="mini">3.9</div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div class="server-title">
+          <small>Dark Angel Command</small>
+          <h1>FALLEN HEAVEN Control Center</h1>
+        </div>
+        <input class="search" value="" placeholder="Server, Modul oder Kanal suchen">
+        <div class="status-line"><i></i><span>Bot online · Gateway stabil · 37 Module</span></div>
+      </header>
+
+      <section class="main">
+        <article class="panel">
+          <div class="hero">
+            <h2>Serverführung ohne Mischmasch.</h2>
+            <p>Alles ist nach Arbeit sortiert: Server prüfen, Module steuern, Embeds bauen und Systemzustand sehen. Cinematic, aber nicht chaotisch.</p>
+          </div>
+          <div class="metrics">
+            <div class="metric good"><span>Online</span><b>99%</b></div>
+            <div class="metric"><span>Aktiv</span><b>28</b></div>
+            <div class="metric warn"><span>Warnungen</span><b>3</b></div>
+          </div>
+          <div class="events">
+            <div class="event"><small>Gerade eben</small><b>Level-Up-Info Placeholder-Migration bereit</b></div>
+            <div class="event"><small>Vor 4 Min.</small><b>Boost-Farben-Buttons erkannt und importierbar</b></div>
+            <div class="event"><small>Vor 11 Min.</small><b>Serverindex aktualisiert 1.242 Nachrichten</b></div>
+          </div>
+        </article>
+
+        <section class="module-list">
+          <div class="section-head">
+            <div>
+              <span class="section-label">Module</span>
+              <h3>Gruppierte Systeme</h3>
+            </div>
+            <span class="pill">28 aktiv</span>
+          </div>
+          <div class="tabs">
+            <button class="active">Level & Rollen</button>
+            <button>Moderation</button>
+            <button>Community</button>
+            <button>Content</button>
+            <button>System</button>
+          </div>
+          <div class="cards">
+            <article class="module-card active"><i>XP</i><div><b>Leveling</b><small>Kanal, Rollen, Info-Embed, XP-Regeln</small></div><span class="pill">Live</span></article>
+            <article class="module-card"><i>BR</i><div><b>Boost-Rollen</b><small>Farben, Top-Booster, Automatik</small></div><span class="pill">Live</span></article>
+            <article class="module-card"><i>RS</i><div><b>Role Saver</b><small>Rollen nach Rejoin wiederherstellen</small></div><span class="pill">Live</span></article>
+            <article class="module-card"><i>AR</i><div><b>AutoRole</b><small>Beitritt, Regeln und Safety-Checks</small></div><span class="pill off">Setup</span></article>
+            <article class="module-card"><i>TV</i><div><b>TempVoice</b><small>Private Sprachkanäle mit Sperren</small></div><span class="pill">Live</span></article>
+          </div>
+        </section>
+
+        <aside class="studio">
+          <div class="section-head">
+            <div>
+              <span class="section-label">Embed Studio</span>
+              <h3>Level-Up-Info</h3>
+            </div>
+            <span class="pill">Platzhalter sichtbar</span>
+          </div>
+          <div class="preview-card">
+            <div class="discord">
+              <img src="file:///E:/SSD%20NEW/Bilder/file_0000000050c871f4ae43434149bbd119.png" alt="">
+              <div class="embed-copy">
+                <h4>𑣲 Leveling auf Fallen Heaven 🪽</h4>
+                <p>{rulesChatFieldText}<br>{rulesVoiceFieldText}<br><br>Nutze /level, um deinen Rang zu prüfen.</p>
+              </div>
+            </div>
+          </div>
+          <div class="editor">
+            <label>Kanal<select><option>#level-up</option></select></label>
+            <label>Beschreibung<textarea>Durch deine Aktivität auf **{guild}** sammelst du XP.
+
+**{rulesChatFieldName}**
+{rulesChatFieldText}
+
+**{rulesVoiceFieldName}**
+{rulesVoiceFieldText}</textarea></label>
+            <div class="placeholder-box">
+              <code>{guild}</code><code>{rulesChatFieldName}</code><code>{rulesChatFieldText}</code><code>{rulesVoiceFieldName}</code><code>{rulesVoiceFieldText}</code><code>{noXpRoleNames}</code>
+            </div>
+          </div>
+          <footer class="sendbar">
+            <button class="btn">Entwurf</button>
+            <button class="btn primary">Speichern & aktualisieren</button>
+          </footer>
+        </aside>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

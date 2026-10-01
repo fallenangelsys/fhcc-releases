@@ -677,6 +677,7 @@ git commit -m "feat: make tempvoice interface fully editable"
 - Produces: `permissionTriState(overwrite, permission) -> true|false|null`
 - Produces: `captureAccessBaseline(channel, entry, userId) -> Promise<Entry>`
 - Produces: `applyAccessMode({ channel, entry, userId, mode }) -> Promise<{ entry, message }>`
+- Produces: `captureLockBaseline(channel, entry) -> Promise<Entry>`
 - Modes: exact strings `allow`, `revoke`, `block`, `unblock`
 
 - [ ] **Step 1: Add failing locked-channel allow/revoke tests**
@@ -696,6 +697,8 @@ assert.deepEqual(permissionEdits.at(-1).data, { ViewChannel: null, Connect: null
 ```
 
 Also test an existing member overwrite with `ViewChannel:true, Connect:false`; revoke/unblock must restore those exact tri-state values.
+
+Add lock/open cases for an original `@everyone.Connect` value of `true`, `false` and `null`. Opening must restore the exact original tri-state instead of always applying `null`.
 
 - [ ] **Step 2: Run RED**
 
@@ -718,6 +721,8 @@ accessBaselines: {
 
 Persist this entry before the first access edit. Never copy `accessBaselines` into `profiles`.
 
+Capture `lockBaseline.connect` once before the first lock operation. This active-channel-only baseline is restored by Open; a private category whose original `@everyone.Connect` is `false` must therefore remain private.
+
 - [ ] **Step 4: Implement all four access modes**
 
 Apply exact payloads:
@@ -734,6 +739,8 @@ For `revoke` and `unblock`, restore the captured tri-state values. `block` disco
 - [ ] **Step 5: Replace two main buttons with one access menu**
 
 Keep the old `fh_tv:block:*` and `fh_tv:unblock:*` handlers as compatibility aliases. The refreshed main interface uses one `fh_tv:access` button. It opens a string select with the four modes, followed by a `UserSelectMenuBuilder` whose custom ID is `fh_tv:access:<mode>:pick`.
+
+Bind every picker custom ID to the originating channel ID. On submit, resolve that exact channel and require a tracked entry from the same guild plus the expected owner. Switching calls between opening and submitting a picker must never mutate the newly joined channel. Use an explicit member overwrite type for raw user IDs that are not cached.
 
 The full main interface remains at most two rows of five buttons by combining Access and Profile Reset with the existing setting, owner and delete actions.
 
@@ -770,6 +777,7 @@ git commit -m "feat: add safe tempvoice access controls"
 - Consumes: profile CRUD and access baseline helpers
 - Produces: `deleteTrackedChannel(channel, reason) -> Promise<{ deleted: boolean, error?: string }>`
 - Produces: `transferOwnership({ channel, entry, nextOwner }) -> Promise<Entry>`
+- Produces: `runChannelOperation(guildId, channelId, task) -> Promise<unknown>`
 
 - [ ] **Step 1: Add failing deletion-state tests**
 
@@ -791,6 +799,8 @@ assert.equal(await findOwnedChannel('g1', 'delete-ok'), null);
 
 Seed different profiles for old and new owner, transfer the active channel, and assert both profiles remain byte-for-byte equal. Also assert the new owner receives explicit `ViewChannel:true, Connect:true` permissions.
 
+Capture the old owner's original `ViewChannel`/`Connect` baseline at channel creation. Transfer and Claim must restore that baseline after the new owner has been authorized. Add parallel Claim/Transfer tests proving that exactly one revalidated channel operation wins.
+
 - [ ] **Step 3: Run RED**
 
 Run `node scripts/temp-voice-smoke.mjs`.
@@ -799,16 +809,20 @@ Expected: deletion failure still removes state, and ownership changes do not gua
 
 - [ ] **Step 4: Centralize tracked deletion**
 
-Implement `deleteTrackedChannel` so `setChannelEntry(channel.id, null)` happens only after `channel.delete(reason)` resolves or the guild cache proves the channel no longer exists. Return the error without pretending success. Use this helper from scheduled cleanup, manual delete and partial-creation cleanup.
+Implement `deleteTrackedChannel` so `setChannelEntry(channel.id, null)` happens only after `channel.delete(reason)` resolves or Discord explicitly returns Unknown Channel (`10003`). A cache miss alone is not proof of deletion. Return permission and network errors without pretending success. Use this helper from scheduled cleanup, manual delete and partial-creation cleanup. Add an external `onChannelDelete` cleanup hook.
+
+Serialize cleanup, manual deletion, Claim and Transfer per `guildId:channelId`. Recheck immediately before deletion that the channel is still empty; a rejoin during asynchronous cleanup cancels deletion. Do not remove the interface message or timer state before Discord channel deletion is confirmed.
 
 - [ ] **Step 5: Centralize owner transfer**
 
 `transferOwnership` must:
 
 1. edit the new owner to `{ ViewChannel: true, Connect: true }`,
-2. update only active `ownerId` and `ownerName`,
-3. preserve both users' profiles,
-4. refresh the interface after persistence.
+2. restore the old owner's captured pre-owner permission baseline,
+3. revalidate the current owner inside the serialized channel operation,
+4. update only active `ownerId` and `ownerName`,
+5. preserve both users' profiles,
+6. refresh the interface after persistence.
 
 Claim and explicit transfer both call this helper. They do not write name, limit or region profiles.
 

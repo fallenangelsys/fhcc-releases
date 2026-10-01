@@ -41,8 +41,10 @@ const freshMember = async (member) => member?.guild?.members?.fetch
   ? await member.guild.members.fetch({ user: member.id, force: true }).catch(() => member)
   : member;
 
-const runRolePolicy = async ({ member, addRoleIds = [], removeRoleIds = [], reason = '', verify = true, requireAll = true } = {}) => {
-  member = await freshMember(member);
+const runRolePolicy = async ({ member, addRoleIds = [], removeRoleIds = [], reason = '', verify = true, requireAll = true, skipFresh = false } = {}) => {
+  // skipFresh: Der Aufrufer hat die Mitglieder gerade frisch von Discord geladen
+  // (z. B. Level-Rollen-Wipe) – dann sparen wir die zweite Fetch-Runde ein.
+  if (!skipFresh) member = await freshMember(member);
   if (!member?.guild || !member.roles) throw new Error('Discord-Mitglied für den Rollenabgleich fehlt.');
   if (!member.manageable) throw new Error('Dieses Mitglied liegt über der Bot-Rolle und kann nicht verwaltet werden.');
 

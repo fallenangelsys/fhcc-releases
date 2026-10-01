@@ -7,25 +7,43 @@ import {
   ChannelType,
   EmbedBuilder,
   MessageFlags,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  StringSelectMenuBuilder
 } from 'discord.js';
 
 import { atomicWriteJson, readJsonWithRecovery } from '../runtime/atomicJsonStore.js';
 import { applyManagedRolePolicy } from '../runtime/managedRoleService.js';
+import { materializeOutsideImageTemplate } from '../runtime/localImageStore.js';
+import { quietLog, QUIET_LOG_SCOPE } from '../runtime/quietLog.js';
+import { finiteInteger, resolveAvatarUrl } from '../runtime/utils.js';
+import { buildStudioEmbedPayload } from '../runtime/studioEmbedPayload.js';
 import { getServerIndexActivityMessages, getServerIndexSnapshot } from '../serverIndexStore.js';
+import { getIndexedVoiceLogSessions, runVoiceLogBackfill } from './voiceLogImport.js';
+import { DATA_DIR } from '../shared/paths.js';
 
-const DATA_ROOT = process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_ROOT = DATA_DIR;
 const DATA_FILE = path.join(DATA_ROOT, 'activity-race.json');
-const DATA_VERSION = 5;
+const DATA_VERSION = 7;
 const PANEL_PREFIX = 'fh-activity-race:';
 const PING_AUTO_DELETE_MS = 5 * 60_000; // Platzierungs-Pings löschen sich nach 5 Minuten selbst.
+const PING_COOLDOWN_MS = 60 * 60_000; // Pro User + Scope: max. 1 Ping pro 60 Minuten.
 const TICK_MS = 30_000;
 const SAVE_DELAY_MS = 2_000;
-const ROLE_RECONCILE_DEBOUNCE_MS = 4_000;
-const PANEL_REFRESH_DEBOUNCE_MS = 5_000;
+const ROLE_RECONCILE_DEBOUNCE_MS = 2_000;
+const PANEL_REFRESH_DEBOUNCE_MS = 2_000;
 const RETENTION_DAYS = 400;
 const INDEX_RECONCILE_MIN_INTERVAL_MS = 60_000;
 const INDEX_PAGE_SIZE = 10_000;
+// Offline-/Online-Tracking: Der Bot schreibt regelmäßig einen Heartbeat
+// (winzige separate Datei – nicht das große activity-race.json). Ist der
+// Heartbeat beim Start älter als OFFLINE_GRACE_MS, war der Bot offline. Dann
+// wird NUR Chat aus dem Index über das exakte Offline-Fenster nachgezogen.
+// Voice-Zeit wird niemals aus der Besetzung beim Neustart abgeleitet: Discord
+// liefert keine historischen Voice-States, daher wäre diese Zeit unbeweisbar.
+const HEARTBEAT_FILE = path.join(DATA_ROOT, 'activity-race-heartbeat.json');
+const OFFLINE_GRACE_MS = 90_000;
+const HEARTBEAT_PERSIST_MS = 60_000;
+const RECENT_RECONCILE_DAYS = 3;
 const TROPHY_EMOJIS = {
   1: { name: 'trophy1', id: '1533907289604493502', fallback: '🥇' },
   2: { name: 'trophy2', id: '1533907288379625673', fallback: '🥈' },
@@ -66,14 +84,57 @@ const LEGACY_DEFAULT_ROLE_NAMES = new Set([
 
 const PERIODS = {
   daily: { label: 'HEUTE', title: 'Heute', color: 0x6fd8ff },
-  weekly: { label: 'WOCHENWERTUNG', title: 'Letzte abgeschlossene Woche', color: 0xa98aff },
-  monthly: { label: 'MONATSWERTUNG', title: 'Letzter abgeschlossener Monat', color: 0xf2c66d }
+  weekly: { label: 'WOCHENWERTUNG', title: 'Vergangene Woche', color: 0xa98aff },
+  monthly: { label: 'MONATSWERTUNG', title: 'Vergangener Monat', color: 0xf2c66d }
 };
 const PERIOD_COMPLETION_COPY = {
   daily: 'Die Tagesrollen zeigen den aktuellen Stand und wechseln automatisch, sobald sich Platz 1 bis 3 verändern.',
   weekly: 'Die Rollen werden erst am Wochenabschluss für die vollständige Kalenderwoche vergeben.',
   monthly: 'Die Rollen werden erst am Monatsabschluss für den vollständigen Kalendermonat vergeben.'
 };
+// Editierbare Textbausteine des Liga-Embeds (im Modul konfigurierbar).
+// Alle Werte unterstützen Platzhalter ({server}, {period}, {status}, {range},
+// {nextEvaluation}, {completion}). Die Ranglisten-Zeile kann zusätzlich
+// {marker}, {mention}, {value} und {rank} verwenden.
+const DEFAULT_PANEL_TEXTS = () => ({
+  completionDaily: PERIOD_COMPLETION_COPY.daily,
+  completionWeekly: PERIOD_COMPLETION_COPY.weekly,
+  completionMonthly: PERIOD_COMPLETION_COPY.monthly,
+  chatFieldName: 'CHAT',
+  voiceFieldName: 'SPRACHCHAT',
+  nextEvaluationFieldName: 'NÄCHSTE AUSWERTUNG',
+  rangeFieldName: 'ZEITRAUM',
+  rankingLineTemplate: '{marker} {mention}\n> **{value}**',
+  rankingEmptyText: 'Noch keine Aktivität erfasst.',
+  rulesButtonLabel: 'REGELN',
+  personalButtonLabel: 'MEIN RANG',
+  // Beschreibung des Liga-Embeds: Leer lassen = der ausgeschriebene
+  // Vollständigkeits-Text der Periode ({completion} → completionDaily/Weekly/
+  // Monthly). Eigener Text kann einzelne Platzhalter nutzen.
+  panelDescription: ''
+});
+const panelTexts = (conf) => {
+  const defaults = DEFAULT_PANEL_TEXTS();
+  return {
+    completionDaily: safeText(conf?.completionDaily, defaults.completionDaily, 4_096),
+    completionWeekly: safeText(conf?.completionWeekly, defaults.completionWeekly, 4_096),
+    completionMonthly: safeText(conf?.completionMonthly, defaults.completionMonthly, 4_096),
+    chatFieldName: safeText(conf?.chatFieldName, defaults.chatFieldName, 256),
+    voiceFieldName: safeText(conf?.voiceFieldName, defaults.voiceFieldName, 256),
+    nextEvaluationFieldName: safeText(conf?.nextEvaluationFieldName, defaults.nextEvaluationFieldName, 256),
+    rangeFieldName: safeText(conf?.rangeFieldName, defaults.rangeFieldName, 256),
+    rankingLineTemplate: safeText(conf?.rankingLineTemplate, defaults.rankingLineTemplate, 1_024),
+    rankingEmptyText: safeText(conf?.rankingEmptyText, defaults.rankingEmptyText, 1_024),
+    rulesButtonLabel: safeText(conf?.rulesButtonLabel, defaults.rulesButtonLabel, 80),
+    personalButtonLabel: safeText(conf?.personalButtonLabel, defaults.personalButtonLabel, 80),
+    panelDescription: safeText(conf?.panelDescription ?? defaults.panelDescription, defaults.panelDescription, 4_096)
+  };
+};
+// Snapshot-Texte mit Fallback auf Defaults – für Tests ohne panelTexts.
+const snapshotTexts = (snapshot) => ({
+  ...DEFAULT_PANEL_TEXTS(),
+  ...(snapshot?.panelTexts || {})
+});
 
 const emptyStore = () => ({ version: DATA_VERSION, guilds: {} });
 let store = null;
@@ -83,32 +144,10 @@ let saveQueue = Promise.resolve();
 const runtimes = new Map();
 const rolePlans = new Map();
 const messageGuards = new Map();
-
-const finiteInteger = (value, fallback, minimum, maximum) => {
-  const parsed = Math.floor(Number(value));
-  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
-};
-
-const resolveActivityRaceAvatar = (member, options = { size: 128, extension: 'png' }) => {
-  const user = member?.user || null;
-  if (!user?.id) return '';
-  const resolved = member?.displayAvatarURL?.(options) || user?.displayAvatarURL?.(options);
-  if (resolved) return String(resolved);
-  const guildAvatar = String(member?.avatar || '').trim();
-  if (guildAvatar && member?.guild?.id) {
-    const extension = String(guildAvatar.startsWith('a_') ? 'gif' : (options.extension || 'png')).replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
-    const size = Number(options.size || 128);
-    const normalizedSize = Number.isFinite(size) && size > 0 ? Math.min(4096, Math.max(16, Math.round(size))) : 128;
-    return `https://cdn.discordapp.com/guilds/${String(member.guild.id)}/users/${String(user.id)}/avatars/${guildAvatar}.${extension}?size=${normalizedSize}`;
-  }
-  if (user.avatar) {
-    const extension = String(user.avatar.startsWith('a_') ? 'gif' : (options.extension || 'png')).replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
-    const size = Number(options.size || 128);
-    const normalizedSize = Number.isFinite(size) && size > 0 ? Math.min(4096, Math.max(16, Math.round(size))) : 128;
-    return `https://cdn.discordapp.com/avatars/${String(user.id)}/${String(user.avatar)}.${extension}?size=${normalizedSize}`;
-  }
-  return '';
-};
+// In-Memory-Timer für persistierte Ping-Löschungen (Ledger in der Guild-Data).
+// Der Ledger sorgt dafür, dass Platzierungs-Pings auch dann entfernt werden,
+// wenn der Bot zum Ablaufzeitpunkt offline war (Catch-up beim nächsten Start/Tick).
+const pendingPingDeleteTimers = new Map();
 
 const uniqueIds = (value) => [...new Set((Array.isArray(value) ? value : String(value || '').split(/[\r\n,]+/))
   .map((entry) => String(entry || '').trim()).filter(Boolean))];
@@ -122,6 +161,20 @@ const safeColor = (value, fallback = '#6fd8ff') => {
   const normalized = String(value || '').trim();
   return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : fallback;
 };
+// Status-Felder des Liga-Embeds: CHAT, SPRACHCHAT, NÄCHSTE AUSWERTUNG, ZEITRAUM.
+// Seit 3.9.231 sind sie Teil der editierbaren Studio-Vorlage (Embed-Felder)
+// statt hartkodiert im Renderer – man kann Überschriften und Text um die
+// Platzhalter herum frei bearbeiten. Der Bot setzt die Ranglisten
+// ({chatRanking}, {voiceRanking}), die nächste Auswertung ({nextEvaluation})
+// und den Zeitraum ({range}) automatisch ein. Die Namen können über
+// {chatFieldName}/{voiceFieldName}/{nextEvaluationFieldName}/{rangeFieldName}
+// an die Modul-Felder gekoppelt werden (Default: ausgeschrieben).
+const defaultStatusFields = (names = {}) => [
+  { name: names.chat ?? 'CHAT', value: '{chatMarker1} {chat1} > **{chatValue1}**\n{chatMarker2} {chat2} > **{chatValue2}**\n{chatMarker3} {chat3} > **{chatValue3}**', inline: true },
+  { name: names.voice ?? 'SPRACHCHAT', value: '{voiceMarker1} {voice1} > **{voiceValue1}**\n{voiceMarker2} {voice2} > **{voiceValue2}**\n{voiceMarker3} {voice3} > **{voiceValue3}**', inline: true },
+  { name: names.next ?? 'NÄCHSTE AUSWERTUNG', value: '{nextEvaluation}', inline: true },
+  { name: names.range ?? 'ZEITRAUM', value: '{range}', inline: true }
+];
 const defaultPanelDesign = () => ({
   content: '',
   outsideImageUrl: '',
@@ -129,7 +182,7 @@ const defaultPanelDesign = () => ({
   embed: {
     title: '{period}',
     url: '',
-    description: 'Die aktivsten Mitglieder im Chat und Sprachchat.\n*{completion}*',
+    description: '{completion}',
     color: '',
     authorName: 'FALLEN HEAVEN · AKTIVITÄTS-LIGA',
     authorIconUrl: '',
@@ -138,7 +191,7 @@ const defaultPanelDesign = () => ({
     footerText: '{period} · nachvollziehbar und automatisch ausgewertet',
     footerIconUrl: '',
     timestamp: true,
-    fields: []
+    fields: defaultStatusFields()
   }
 });
 const normalizePanelAttachment = (value) => {
@@ -172,48 +225,133 @@ const normalizePanelDesign = (value = {}) => {
       footerText: safeText(embed.footerText, fallback.embed.footerText, 2_048),
       footerIconUrl: safeHttpUrl(embed.footerIconUrl),
       timestamp: embed.timestamp !== false,
-      fields: (Array.isArray(embed.fields) ? embed.fields : [])
-        .slice(0, 21)
-        .map((field) => ({
-          name: safeText(field?.name, '', 256),
-          value: safeText(field?.value, '', 1_024),
-          inline: field?.inline === true
-        }))
-        .filter((field) => field.name || field.value)
+      // Die vier Status-Felder (CHAT, SPRACHCHAT, NÄCHSTE AUSWERTUNG, ZEITRAUM)
+      // bleiben immer Teil des Designs – fehlt eines (z. B. in alten Configs),
+      // wird es automatisch ergänzt. So ist das komplette Embed im Studio
+      // sichtbar und bearbeitbar; der Bot ersetzt nur die Platzhalter.
+      fields: (() => {
+        const normalizedFields = (Array.isArray(embed.fields) ? embed.fields : [])
+          .slice(0, 21)
+          .map((field) => ({
+            name: safeText(field?.name, '', 256),
+            value: safeText(migratePanelFieldValue(field?.value), '', 1_024),
+            inline: field?.inline === true
+          }))
+          .filter((field) => field.name || field.value);
+        // Sobald mindestens vier Felder gespeichert sind, besitzt das Studio
+        // bereits eine vollständige Nutzer-Vorlage. Dann dürfen umbenannte oder
+        // komplett neu gestaltete Status-Felder nicht wieder durch die alten
+        // CHAT/SPRACHCHAT-Defaults ergänzt werden (sonst entstehen Duplikate).
+        const missing = normalizedFields.length >= defaultStatusFields().length
+          ? []
+          : defaultStatusFields()
+            .filter((field) => !normalizedFields.some((entry) =>
+              entry.name === field.name || String(entry.value) === field.value));
+        return [...missing, ...normalizedFields].slice(0, 25);
+      })()
     }
   };
 };
+// Entfernt die Nachrichten-Ebene (Content + Außenbild) aus einem Design:
+// Wochen- und Monats-Embeds liegen in derselben Nachricht wie das Heute-Embed
+// und können deshalb kein eigenes Außenbild oder eigenen Content haben.
+const stripPanelMessageParts = (design) => ({
+  ...(design || {}),
+  content: '',
+  outsideImageUrl: '',
+  outsideImageAttachment: null
+});
+const panelDesignKeyForPeriod = (period) => (
+  period === 'weekly' ? 'panelDesignWeekly' : period === 'monthly' ? 'panelDesignMonthly' : 'panelDesign'
+);
 const normalizedRoleName = (conf, definition) => {
   const current = safeRoleName(conf?.[definition.nameKey], definition.defaultName);
   return LEGACY_DEFAULT_ROLE_NAMES.has(current) ? definition.defaultName : current;
 };
-const normalizeConfig = (conf = {}) => ({
-  enabled: conf?.enabled === true,
-  panelChannelId: String(conf?.panelChannelId || '').trim(),
-  ignoredChannelIds: uniqueIds(conf?.ignoredChannelIds),
-  excludedRoleIds: uniqueIds(conf?.excludedRoleIds),
-  messageCooldownSeconds: finiteInteger(conf?.messageCooldownSeconds, 10, 0, 300),
-  duplicateWindowMinutes: finiteInteger(conf?.duplicateWindowMinutes, 10, 0, 1440),
-  minimumMessageLength: finiteInteger(conf?.minimumMessageLength, 3, 1, 500),
-  voiceMinimumParticipants: finiteInteger(conf?.voiceMinimumParticipants, 2, 2, 20),
-  excludeDeafened: conf?.excludeDeafened !== false,
-  placementPings: conf?.placementPings !== false,
-  placementPingChannelId: String(conf?.placementPingChannelId || '').trim(),
-  placementPingLifetimeMinutes: finiteInteger(conf?.placementPingLifetimeMinutes, 5, 1, 60),
-  announceCompletedPeriods: conf?.announceCompletedPeriods !== false,
-  announcementChannelId: String(conf?.announcementChannelId || '').trim(),
-  panelDesign: normalizePanelDesign(conf?.panelDesign),
-  ...Object.fromEntries(ACTIVITY_RACE_ROLE_DEFINITIONS.flatMap((definition) => [
-    [definition.key, String(conf?.[definition.key] || '').trim()],
-    [definition.nameKey, normalizedRoleName(conf, definition)]
-  ]))
-});
+// Koppelt die Feld-Überschriften an die Modul-Felder (chatFieldName usw.), solange
+// das Design noch exakt die Standard-Status-Felder trägt. Sobald der Nutzer ein
+// Feld im Embed Studio anpasst (Name/Text geändert oder gelöscht), übernimmt das
+// Design die volle Kontrolle – die Modul-Felder wirken dann nur noch über die
+// Platzhalter {chatFieldName} usw.
+const applyStatusFieldNames = (design, texts) => {
+  const defaults = defaultStatusFields();
+  const fields = design?.embed?.fields || [];
+  const isDefaultSet = fields.length === defaults.length
+    && fields.every((field, index) => field?.name === defaults[index].name
+      && field?.value === defaults[index].value
+      && field?.inline === defaults[index].inline);
+  if (!isDefaultSet) return design;
+  return {
+    ...design,
+    embed: {
+      ...design.embed,
+      fields: defaultStatusFields({
+        chat: texts.chatFieldName,
+        voice: texts.voiceFieldName,
+        next: texts.nextEvaluationFieldName,
+        range: texts.rangeFieldName
+      })
+    }
+  };
+};
+const normalizeConfig = (conf = {}) => {
+  const texts = panelTexts(conf);
+  return {
+    enabled: conf?.enabled === true,
+    panelChannelId: String(conf?.panelChannelId || '').trim(),
+    ignoredChannelIds: uniqueIds(conf?.ignoredChannelIds),
+    excludedRoleIds: uniqueIds(conf?.excludedRoleIds),
+    messageCooldownSeconds: finiteInteger(conf?.messageCooldownSeconds, 10, 0, 300),
+    duplicateWindowMinutes: finiteInteger(conf?.duplicateWindowMinutes, 10, 0, 1440),
+    minimumMessageLength: finiteInteger(conf?.minimumMessageLength, 3, 1, 500),
+    voiceMinimumParticipants: finiteInteger(conf?.voiceMinimumParticipants, 1, 1, 20),
+    excludeDeafened: conf?.excludeDeafened !== false,
+    placementPings: conf?.placementPings !== false,
+    placementPingChannelId: String(conf?.placementPingChannelId || '').trim(),
+    placementPingLifetimeMinutes: finiteInteger(conf?.placementPingLifetimeMinutes, 5, 1, 60),
+    announceCompletedPeriods: conf?.announceCompletedPeriods !== false,
+    announcementChannelId: String(conf?.announcementChannelId || '').trim(),
+    rankingDisplayCount: finiteInteger(conf?.rankingDisplayCount, 3, 3, 20),
+    ...texts,
+    panelDesign: applyStatusFieldNames(normalizePanelDesign(conf?.panelDesign), texts),
+    // Wochen- und Monats-Embeds erben bis zur ersten eigenen Bearbeitung das
+    // Tages-Embed-Design (Backfill). Content und Außenbild bleiben dem Tages-Embed
+    // vorbehalten – die Nachricht kann nur EIN Außenbild haben.
+    panelDesignWeekly: applyStatusFieldNames(normalizePanelDesign(conf?.panelDesignWeekly ?? stripPanelMessageParts(conf?.panelDesign)), texts),
+    panelDesignMonthly: applyStatusFieldNames(normalizePanelDesign(conf?.panelDesignMonthly ?? stripPanelMessageParts(conf?.panelDesign)), texts),
+    pingToggleButtonLabel: String(conf?.pingToggleButtonLabel || 'LIGA-PINGS EIN/AUS').slice(0, 80),
+    pingInfoDesign: conf?.pingInfoDesign && typeof conf.pingInfoDesign === 'object'
+      ? structuredClone(conf.pingInfoDesign)
+      : {
+          content: '',
+          embeds: [{
+            title: 'Aktivitäts-Liga · Benachrichtigungen',
+            description: 'Du entscheidest selbst, ob du bei Änderungen deiner Liga-Platzierung erwähnt wirst. Mit dem Button kannst du deine persönlichen Liga-Pings jederzeit ein- oder ausschalten.',
+            color: '#6fd8ff',
+            authorName: '{server}',
+            fields: [],
+            timestamp: false
+          }]
+        },
+    ...Object.fromEntries(ACTIVITY_RACE_ROLE_DEFINITIONS.flatMap((definition) => [
+      [definition.key, String(conf?.[definition.key] || '').trim()],
+      [definition.nameKey, normalizedRoleName(conf, definition)]
+    ]))
+  };
+};
 
 const normalizeUserDay = (value = {}) => ({
   messages: finiteInteger(value.messages, 0, 0, Number.MAX_SAFE_INTEGER),
   voiceMilliseconds: finiteInteger(value.voiceMilliseconds, 0, 0, Number.MAX_SAFE_INTEGER)
 });
 const normalizeHolderIds = (value) => uniqueIds(value).slice(0, 3);
+const normalizePendingPingDeletes = (value) => (Array.isArray(value) ? value : [])
+  .map((entry) => ({
+    channelId: String(entry?.channelId || ''),
+    messageId: String(entry?.messageId || ''),
+    deleteAt: finiteInteger(entry?.deleteAt, 0, 0, Number.MAX_SAFE_INTEGER)
+  }))
+  .filter((entry) => entry.channelId && entry.messageId && entry.deleteAt > 0);
 const normalizeHolderRange = (value = {}) => ({
   start: /^\d{4}-\d{2}-\d{2}$/.test(String(value?.start || '')) ? String(value.start) : '',
   end: /^\d{4}-\d{2}-\d{2}$/.test(String(value?.end || '')) ? String(value.end) : ''
@@ -230,11 +368,21 @@ const normalizeGuildData = (value = {}) => {
   ]));
   const earliestDay = Object.keys(days).sort()[0] || '';
   const storedCompleteFrom = String(value?.trackingCompleteFrom || '');
+  const trackingCompleteFrom = /^\d{4}-\d{2}-\d{2}$/.test(storedCompleteFrom)
+    ? storedCompleteFrom
+    : earliestDay ? nextUtcDateKey(earliestDay) : '';
+  const metricCompleteFrom = value?.trackingCompleteFromByMetric || {};
   return {
     days,
-    trackingCompleteFrom: /^\d{4}-\d{2}-\d{2}$/.test(storedCompleteFrom)
-      ? storedCompleteFrom
-      : earliestDay ? nextUtcDateKey(earliestDay) : '',
+    trackingCompleteFrom,
+    trackingCompleteFromByMetric: {
+      chat: /^\d{4}-\d{2}-\d{2}$/.test(String(metricCompleteFrom?.chat || ''))
+        ? String(metricCompleteFrom.chat)
+        : trackingCompleteFrom,
+      voice: /^\d{4}-\d{2}-\d{2}$/.test(String(metricCompleteFrom?.voice || ''))
+        ? String(metricCompleteFrom.voice)
+        : trackingCompleteFrom
+    },
     holders: {
       daily: { chat: normalizeHolderIds(value?.holders?.daily?.chat), voice: normalizeHolderIds(value?.holders?.daily?.voice) },
       weekly: { chat: normalizeHolderIds(value?.holders?.weekly?.chat), voice: normalizeHolderIds(value?.holders?.weekly?.voice) },
@@ -253,8 +401,48 @@ const normalizeGuildData = (value = {}) => {
     },
     panel: {
       channelId: String(value?.panel?.channelId || ''),
-      messageId: String(value?.panel?.messageId || '')
+      messageId: String(value?.panel?.messageId || ''),
+      messages: Object.fromEntries(Object.keys(PERIODS).map((period) => {
+        const entry = value?.panel?.messages?.[period] || {};
+        return [period, {
+          channelId: String(entry?.channelId || value?.panel?.channelId || ''),
+          messageId: String(entry?.messageId || (period === 'daily' ? value?.panel?.messageId || '' : ''))
+        }];
+      })),
+      pingInfo: {
+        channelId: String(value?.panel?.pingInfo?.channelId || ''),
+        messageId: String(value?.panel?.pingInfo?.messageId || ''),
+        fingerprint: String(value?.panel?.pingInfo?.fingerprint || '')
+      }
     },
+    pingOptOuts: Object.fromEntries(
+      Object.entries(value?.pingOptOuts || {})
+        .map(([userId, disabledAt]) => [String(userId).trim(), String(disabledAt || '')])
+        .filter(([userId]) => userId.length > 0 && userId.length <= 100)
+    ),
+    // Ledger der noch zu löschenden Platzierungs-Pings: übersteht Bot-Ausfälle,
+    // damit Pings nicht für immer stehen bleiben, wenn der Bot offline war.
+    pendingPingDeletes: normalizePendingPingDeletes(value?.pendingPingDeletes),
+    // Letztes Offline-Fenster (Diagnose): der Heartbeat selbst liegt in einer
+    // eigenen winzigen Datei, damit activity-race.json nicht minütlich neu
+    // geschrieben werden muss.
+    runtime: {
+      lastOffline: {
+        since: String(value?.runtime?.lastOffline?.since || ''),
+        until: String(value?.runtime?.lastOffline?.until || '')
+      }
+    },
+    // Persistenter Ping-Cooldown: überlebt Bot-Neustarts damit dieselbe
+    // Person nach einem Neustart nicht sofort erneut gepingt wird.
+    pingCooldowns: Object.fromEntries(
+      Object.entries(value?.pingCooldowns || {})
+        .filter(([key, ts]) => typeof ts === 'number' && ts > 0 && (Date.now() - ts) < PING_COOLDOWN_MS * 2)
+        .slice(0, 10_000)
+    ),
+    // Persistenter Ranking-Fingerprint: verhindert Spam nach Neustarts.
+    rankingFingerprint: value?.rankingFingerprint && typeof value.rankingFingerprint === 'object'
+      ? Object.fromEntries(Object.entries(value.rankingFingerprint).filter(([, v]) => typeof v === 'string'))
+      : {},
     indexBackfill: {
       rangeStart: /^\d{4}-\d{2}-\d{2}$/.test(String(value?.indexBackfill?.rangeStart || '')) ? String(value.indexBackfill.rangeStart) : '',
       rangeEnd: /^\d{4}-\d{2}-\d{2}$/.test(String(value?.indexBackfill?.rangeEnd || '')) ? String(value.indexBackfill.rangeEnd) : '',
@@ -265,6 +453,16 @@ const normalizeGuildData = (value = {}) => {
       recoveredMessages: finiteInteger(value?.indexBackfill?.recoveredMessages, 0, 0, Number.MAX_SAFE_INTEGER),
       totalRecoveredMessages: finiteInteger(value?.indexBackfill?.totalRecoveredMessages, 0, 0, Number.MAX_SAFE_INTEGER),
       lastError: String(value?.indexBackfill?.lastError || '').slice(0, 500)
+    },
+    voiceIndexBackfill: {
+      channelId: String(value?.voiceIndexBackfill?.channelId || ''),
+      channelSource: String(value?.voiceIndexBackfill?.channelSource || ''),
+      revision: String(value?.voiceIndexBackfill?.revision || ''),
+      rangeStart: /^\d{4}-\d{2}-\d{2}$/.test(String(value?.voiceIndexBackfill?.rangeStart || '')) ? String(value.voiceIndexBackfill.rangeStart) : '',
+      rangeEnd: /^\d{4}-\d{2}-\d{2}$/.test(String(value?.voiceIndexBackfill?.rangeEnd || '')) ? String(value.voiceIndexBackfill.rangeEnd) : '',
+      sessions: finiteInteger(value?.voiceIndexBackfill?.sessions, 0, 0, Number.MAX_SAFE_INTEGER),
+      skippedIncompleteDays: finiteInteger(value?.voiceIndexBackfill?.skippedIncompleteDays, 0, 0, Number.MAX_SAFE_INTEGER),
+      completedAt: String(value?.voiceIndexBackfill?.completedAt || '')
     },
     updatedAt: String(value?.updatedAt || '')
   };
@@ -297,6 +495,88 @@ const scheduleSave = () => {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => void flush().catch((error) => console.warn(`[activityRace] Speichern fehlgeschlagen: ${error?.message || error}`)), SAVE_DELAY_MS);
   saveTimer.unref?.();
+};
+
+// ---- Platzierungs-Ping-Löschungen: persistiert + Catch-up ----
+// Die Pings löschen sich zwar per Timer selbst, aber ein Timer überlebt keinen
+// Bot-Neustart. Deshalb wird jeder Lösch-Termin im Guild-Ledger festgehalten und
+// beim Start bzw. Tick nachgeholt – so bleiben keine Pings stehen, wenn der Bot
+// zum Ablaufzeitpunkt kurz offline war.
+const registerPendingPingDelete = async (guildId, channelId, messageId, deleteAt) => {
+  const data = await guildData(guildId);
+  const entry = {
+    channelId: String(channelId || ''),
+    messageId: String(messageId || ''),
+    deleteAt: Math.max(0, Math.floor(Number(deleteAt) || 0))
+  };
+  if (!entry.channelId || !entry.messageId || !entry.deleteAt) return;
+  data.pendingPingDeletes ||= [];
+  const existing = data.pendingPingDeletes.find((item) => item.channelId === entry.channelId && item.messageId === entry.messageId);
+  if (existing) existing.deleteAt = entry.deleteAt;
+  else data.pendingPingDeletes.push(entry);
+  data.updatedAt = new Date().toISOString();
+  scheduleSave();
+};
+const removePendingPingDelete = async (guildId, channelId, messageId) => {
+  const data = await guildData(guildId);
+  const before = data.pendingPingDeletes?.length || 0;
+  data.pendingPingDeletes = (data.pendingPingDeletes || []).filter((item) => item.channelId !== String(channelId) || item.messageId !== String(messageId));
+  if (data.pendingPingDeletes.length !== before) {
+    data.updatedAt = new Date().toISOString();
+    scheduleSave();
+  }
+};
+const armPendingPingDelete = (runtime, channel, message, messageId, deleteAt) => {
+  const id = String(messageId || message?.id || '');
+  if (!id) return;
+  const key = `${String(channel.id)}:${id}`;
+  const previous = pendingPingDeleteTimers.get(key);
+  if (previous?.timer) clearTimeout(previous.timer);
+  const delay = Math.max(0, Number(deleteAt) - Date.now());
+  const timer = setTimeout(() => {
+    pendingPingDeleteTimers.delete(key);
+    void removePendingPingDelete(runtime.guild.id, channel.id, id);
+    const deletion = message?.delete
+      ? message.delete()
+      : channel.messages?.fetch(id).then((fetched) => fetched.delete());
+    void Promise.resolve(deletion).catch(() => null);
+  }, delay);
+  timer.unref?.();
+  pendingPingDeleteTimers.set(key, { timer, guildId: String(runtime.guild.id) });
+};
+const catchUpPendingPingDeletes = async (runtime) => {
+  const data = await guildData(runtime.guild.id);
+  const pending = data.pendingPingDeletes || [];
+  if (!pending.length) return;
+  const now = Date.now();
+  const remaining = [];
+  let changed = false;
+  for (const entry of pending) {
+    const channel = runtime.guild.channels.cache.get(entry.channelId);
+    if (!channel?.isTextBased?.()) {
+      // Kanal existiert nicht mehr – die Nachricht ist damit ebenfalls weg.
+      changed = true;
+      continue;
+    }
+    if (entry.deleteAt <= now) {
+      // Ablaufzeitpunkt liegt in der Vergangenheit (Bot war offline) – jetzt löschen.
+      changed = true;
+      try {
+        const message = await channel.messages.fetch(entry.messageId).catch(() => null);
+        if (message) await message.delete().catch(() => null);
+      } catch {
+        // Best effort – der Ledger-Eintrag wird trotzdem entfernt.
+      }
+      continue;
+    }
+    remaining.push(entry);
+    armPendingPingDelete(runtime, channel, null, entry.messageId, entry.deleteAt);
+  }
+  if (changed) {
+    data.pendingPingDeletes = remaining;
+    data.updatedAt = new Date().toISOString();
+    scheduleSave();
+  }
 };
 
 const localDateKey = (timestamp = Date.now(), timezone = 'Europe/Berlin') => {
@@ -379,22 +659,76 @@ const memberIsRankable = (guild, userId) => {
   const member = guild?.members?.cache?.get?.(String(userId));
   return Boolean(member && !member.user?.bot);
 };
-const ensureCompleteMemberCache = async (guild) => {
+// Discord-Snowflake → Erstellungs-Zeitstempel in Millisekunden (Discord-Epoch
+// 1420070400000). Wird genutzt, um KANÄLE OHNE FETCH auszusortieren: Wenn die
+// letzte Nachricht eines Kanals vor dem Zählzeitraum liegt, hat er dort sicher
+// 0 Nachrichten – der teure messages.fetch entfällt komplett.
+const snowflakeTimestampMs = (snowflake) => {
+  const id = String(snowflake || '');
+  if (!/^\d{17,20}$/.test(id)) return null;
+  try {
+    return Number(BigInt(id) >> 22n) + 1420070400000;
+  } catch {
+    return null;
+  }
+};
+const lastMessageTimestampMs = (channel) => {
+  if (channel?.lastMessageId) {
+    const timestamp = snowflakeTimestampMs(channel.lastMessageId);
+    if (timestamp !== null) return timestamp;
+  }
+  if (channel?.lastMessage?.createdTimestamp) return Number(channel.lastMessage.createdTimestamp);
+  return null;
+};
+// Voll-Scans aller Mitglieder (guild.members.fetch → Gateway-Opcode 8) sind
+// teuer und werden von Discords Gateway rate-limited. Wiederholte 10-Minuten-
+// Nachzüge haben dadurch den „Request with opcode 8 was rate limited“-Sturm
+// ausgelöst. Nach einem Versuch (erfolgreich ODER rate-limited) gilt eine
+// Abkühlzeit: kein erneuter Voll-Scan innerhalb von 15 Minuten.
+const MEMBER_CACHE_FETCH_COOLDOWN_MS = 15 * 60_000;
+const memberCacheFetchCooldownUntil = new Map();
+const ensureCompleteMemberCache = async (guild, { force = false } = {}) => {
   const cached = Number(guild?.members?.cache?.size || 0);
   const expected = Number(guild?.memberCount || 0);
   if (cached > 0 && (!expected || cached >= expected)) return;
+  const guildId = String(guild?.id || '');
+  if (!force && Date.now() < Number(memberCacheFetchCooldownUntil.get(guildId) || 0)) return;
   await guild?.members?.fetch?.().catch(() => null);
+  memberCacheFetchCooldownUntil.set(guildId, Date.now() + MEMBER_CACHE_FETCH_COOLDOWN_MS);
 };
 const periodIncumbents = (data, period, metric, start, end) => {
   const range = data?.holderRanges?.[period];
   if (!range || range.start !== start || range.end !== end) return [];
   return data?.holders?.[period]?.[metric] || [];
 };
+// Wettbewerbs-Platzgruppen: gleicher Wert = gleicher Platz (Dense-Ranking).
+// Liefert pro Platz (absteigend) die User-IDs – bei Gleichstand gehören mehrere
+// User zum selben Platz. Beispiel [100, 100, 90] → [[u1, u2], [u3]]
+// (Platz 1: u1+u2, Platz 2: u3). Nur Werte > 0 werden berücksichtigt, damit
+// Mitglieder ohne Aktivität nie als Gewinner eingeplant werden.
+const placementGroups = (rows, limit = 3) => {
+  const groups = [];
+  let lastValue = null;
+  for (const entry of rows || []) {
+    const value = Number(entry?.value || 0);
+    if (value <= 0) continue;
+    if (lastValue === null || value !== lastValue) {
+      if (groups.length >= Math.max(1, Math.floor(Number(limit) || 3))) break;
+      groups.push([]);
+    }
+    groups[groups.length - 1].push(String(entry?.userId || ''));
+    lastValue = value;
+  }
+  return groups;
+};
 const rankMetric = (guild, aggregate, metric, incumbentIds = []) => {
   const incumbents = normalizeHolderIds(incumbentIds);
+  // Voice-Werte auf Minuten runden, damit Users mit gleicher angezeigter Zeit
+  // auch denselben Rang/Platz bei Rollenvergabe bekommen.
+  const rounding = metric === 'voiceMilliseconds' ? 60000 : 1;
   return Object.entries(aggregate.users || {})
   .filter(([userId]) => memberIsRankable(guild, userId))
-  .map(([userId, row]) => ({ userId, value: finiteInteger(row?.[metric], 0, 0, Number.MAX_SAFE_INTEGER) }))
+  .map(([userId, row]) => ({ userId, value: Math.round(finiteInteger(row?.[metric], 0, 0, Number.MAX_SAFE_INTEGER) / rounding) * rounding }))
   .filter((entry) => entry.value > 0)
   .sort((left, right) => right.value - left.value
     || ((incumbents.indexOf(left.userId) === -1 ? Number.MAX_SAFE_INTEGER : incumbents.indexOf(left.userId))
@@ -402,14 +736,15 @@ const rankMetric = (guild, aggregate, metric, incumbentIds = []) => {
     || left.userId.localeCompare(right.userId));
 };
 const fullRankMetric = (guild, aggregate, metric) => {
+  const rounding = metric === 'voiceMilliseconds' ? 60000 : 1;
   const members = [...(guild?.members?.cache?.values?.() || [])]
     .filter((member) => !member.user?.bot)
     .map((member) => ({
       userId: String(member.id),
       displayName: String(member.displayName || member.user?.globalName || member.user?.username || 'Mitglied'),
       username: String(member.user?.username || ''),
-      avatarUrl: resolveActivityRaceAvatar(member, { size: 64, extension: 'png' }),
-      value: finiteInteger(aggregate?.users?.[member.id]?.[metric], 0, 0, Number.MAX_SAFE_INTEGER)
+      avatarUrl: resolveAvatarUrl(member, { size: 64, extension: 'png' }),
+      value: Math.round(finiteInteger(aggregate?.users?.[member.id]?.[metric], 0, 0, Number.MAX_SAFE_INTEGER) / rounding) * rounding
     }))
     .sort((left, right) => right.value - left.value
       || left.displayName.localeCompare(right.displayName, 'de-DE', { sensitivity: 'base' })
@@ -424,7 +759,7 @@ const fullRankMetric = (guild, aggregate, metric) => {
 };
 const attachFullRankings = (guild, data, snapshot, timezone, today = localDateKey(Date.now(), timezone)) => {
   for (const [period, value] of Object.entries(snapshot?.periods || {})) {
-    if (period !== 'daily' && value?.fullyTracked !== true) {
+    if (period !== 'daily' && (value?.visible === false || !value?.start || !value?.end)) {
       value.fullChat = [];
       value.fullVoice = [];
       value.memberCount = [...(guild?.members?.cache?.values?.() || [])].filter((member) => !member.user?.bot).length;
@@ -466,20 +801,58 @@ const buildSnapshot = (guild, data, conf, timezone) => ({
 });
 const completedPeriodSnapshot = (guild, data, period, timezone, today = localDateKey(Date.now(), timezone)) => {
   const range = completedPeriodRange(period, today);
-  const fullyTracked = Boolean(data.trackingCompleteFrom && range.start >= data.trackingCompleteFrom);
+  const chatCompleteFrom = data.trackingCompleteFromByMetric?.chat || data.trackingCompleteFrom;
+  const voiceCompleteFrom = data.trackingCompleteFromByMetric?.voice || data.trackingCompleteFrom;
+  const fullyTrackedByMetric = {
+    chat: Boolean(chatCompleteFrom && range.start >= chatCompleteFrom),
+    voice: Boolean(voiceCompleteFrom && range.start >= voiceCompleteFrom)
+  };
+  const fullyTracked = fullyTrackedByMetric.chat && fullyTrackedByMetric.voice;
   const aggregate = aggregateRange(data, range.start, range.end);
   const rankedChat = rankMetric(guild, aggregate, 'messages', periodIncumbents(data, period, 'chat', range.start, range.end));
   const rankedVoice = rankMetric(guild, aggregate, 'voiceMilliseconds', periodIncumbents(data, period, 'voice', range.start, range.end));
-  const chat = fullyTracked ? rankedChat : [];
-  const voice = fullyTracked ? rankedVoice : [];
+  const chat = fullyTrackedByMetric.chat ? rankedChat : [];
+  const voice = fullyTrackedByMetric.voice ? rankedVoice : [];
   return {
     period,
     ...range,
     fullyTracked,
+    fullyTrackedByMetric,
     chat,
     voice,
     chatWinnerIds: chat.slice(0, 3).map((entry) => entry.userId),
     voiceWinnerIds: voice.slice(0, 3).map((entry) => entry.userId)
+  };
+};
+const historicalPanelPeriodSnapshot = (guild, data, period, timezone, today = localDateKey(Date.now(), timezone)) => {
+  const range = completedPeriodRange(period, today);
+  const aggregate = aggregateRange(data, range.start, range.end);
+  const chat = rankMetric(guild, aggregate, 'messages', periodIncumbents(data, period, 'chat', range.start, range.end));
+  const voice = rankMetric(guild, aggregate, 'voiceMilliseconds', periodIncumbents(data, period, 'voice', range.start, range.end));
+  const chatCompleteFrom = data.trackingCompleteFromByMetric?.chat || data.trackingCompleteFrom;
+  const voiceCompleteFrom = data.trackingCompleteFromByMetric?.voice || data.trackingCompleteFrom;
+  const fullyTrackedByMetric = {
+    chat: Boolean(chatCompleteFrom && range.start >= chatCompleteFrom),
+    voice: Boolean(voiceCompleteFrom && range.start >= voiceCompleteFrom)
+  };
+  const fullyTracked = fullyTrackedByMetric.chat && fullyTrackedByMetric.voice;
+  const visible = chat.length > 0 || voice.length > 0;
+  const chatWinnerIds = chat.slice(0, 3).map((entry) => entry.userId);
+  const voiceWinnerIds = voice.slice(0, 3).map((entry) => entry.userId);
+  return {
+    period,
+    ...range,
+    historical: true,
+    fullyTracked,
+    fullyTrackedByMetric,
+    partial: visible && !fullyTracked,
+    visible,
+    chat,
+    voice,
+    chatWinnerIds,
+    voiceWinnerIds,
+    chatWinnerId: chatWinnerIds[0] || '',
+    voiceWinnerId: voiceWinnerIds[0] || ''
   };
 };
 const buildAwardSnapshot = (guild, data, conf, timezone, today = localDateKey(Date.now(), timezone)) => ({
@@ -494,16 +867,28 @@ const buildAwardSnapshot = (guild, data, conf, timezone, today = localDateKey(Da
     monthly: completedPeriodSnapshot(guild, data, 'monthly', timezone, today)
   }
 });
-const buildPanelSnapshot = (guild, data, conf, timezone) => {
-  const today = localDateKey(Date.now(), timezone);
+const buildPanelSnapshot = (guild, data, conf, timezone, today = localDateKey(Date.now(), timezone)) => {
+  // Heute bleibt live. Woche und Monat zeigen dagegen immer den unmittelbar
+  // vorherigen abgeschlossenen Kalenderzeitraum, sofern dort Daten existieren.
+  // Teilhistorien dürfen angezeigt werden, bleiben für die Rollenvergabe aber
+  // gesperrt; buildAwardSnapshot nutzt dafür weiterhin completedPeriodSnapshot.
+  const weekly = historicalPanelPeriodSnapshot(guild, data, 'weekly', timezone, today);
+  const monthly = historicalPanelPeriodSnapshot(guild, data, 'monthly', timezone, today);
   return {
     measuredAt: new Date().toISOString(),
     timezone,
+    rankingDisplayCount: finiteInteger(conf?.rankingDisplayCount, 3, 3, 20),
+    panelTexts: panelTexts(conf),
     panelDesign: normalizePanelDesign(conf?.panelDesign),
+    panelDesigns: {
+      daily: normalizePanelDesign(conf?.panelDesign),
+      weekly: normalizePanelDesign(conf?.panelDesignWeekly ?? conf?.panelDesign),
+      monthly: normalizePanelDesign(conf?.panelDesignMonthly ?? conf?.panelDesign)
+    },
     periods: {
       daily: periodSnapshot(guild, data, conf, 'daily', timezone, today),
-      weekly: completedPeriodSnapshot(guild, data, 'weekly', timezone, today),
-      monthly: completedPeriodSnapshot(guild, data, 'monthly', timezone, today)
+      weekly,
+      monthly
     }
   };
 };
@@ -511,6 +896,10 @@ const buildPanelSnapshot = (guild, data, conf, timezone) => {
 const ensureTrackingWindow = (data, timezone) => {
   if (data.trackingCompleteFrom) return false;
   data.trackingCompleteFrom = shiftDateKey(localDateKey(Date.now(), timezone), 1);
+  data.trackingCompleteFromByMetric = {
+    chat: data.trackingCompleteFrom,
+    voice: data.trackingCompleteFrom
+  };
   data.updatedAt = new Date().toISOString();
   scheduleSave();
   return true;
@@ -628,9 +1017,21 @@ const reconstructIndexedChatDays = (options) => {
   const state = accumulateIndexedChatRecords({ ...options, accumulator: createIndexedChatAccumulator() });
   return { days: state.days, analyzedMessages: state.analyzedMessages, creditedMessages: state.creditedMessages };
 };
-const mergeIndexedChatDays = (data, reconstructed) => {
+const markMetricTrackingCoverage = (data, metric, rangeStart) => {
+  const start = String(rangeStart || '');
+  if (!['chat', 'voice'].includes(metric) || !/^\d{4}-\d{2}-\d{2}$/.test(start)) return false;
+  data.trackingCompleteFromByMetric ||= {
+    chat: String(data.trackingCompleteFrom || ''),
+    voice: String(data.trackingCompleteFrom || '')
+  };
+  const previous = String(data.trackingCompleteFromByMetric[metric] || '');
+  if (previous && previous <= start) return false;
+  data.trackingCompleteFromByMetric[metric] = start;
+  return true;
+};
+const mergeIndexedChatDays = (data, reconstructed, { rangeStart = '' } = {}) => {
   let recoveredMessages = 0;
-  let changed = false;
+  let changed = markMetricTrackingCoverage(data, 'chat', rangeStart);
   for (const [dayKey, users] of Object.entries(reconstructed?.days || {})) {
     data.days[dayKey] ||= { users: {} };
     for (const [userId, indexedCount] of Object.entries(users || {})) {
@@ -655,7 +1056,10 @@ const ensureRuntime = (guild, conf = {}) => {
     conf: normalizeConfig(conf),
     timezone: 'Europe/Berlin',
     voiceStates: new Map(),
+    voiceLogConfig: {},
+    lastVoiceLogRevision: '',
     lastVoiceTickAt: Date.now(),
+    lastHeartbeatPersistAt: 0,
     tickTimer: null,
     roleTimer: null,
     panelTimer: null,
@@ -664,6 +1068,8 @@ const ensureRuntime = (guild, conf = {}) => {
     lastIndexAttemptAt: 0,
     lastIndexSignature: '',
     indexSyncPromise: null,
+    lastDiscordRecoverAt: 0,
+    discordRecoverPromise: null,
     panelRunning: false,
     rolesRunning: false,
     lastError: '',
@@ -680,12 +1086,16 @@ const voiceStateRow = (state) => ({
   selfDeaf: state?.selfDeaf === true,
   serverDeaf: state?.serverDeaf === true
 });
-const hydrateVoiceStates = (runtime) => {
+const reconcileVoiceStates = (runtime) => {
   runtime.voiceStates.clear();
-  for (const state of runtime.guild.voiceStates.cache.values()) {
-    if (state?.member?.user?.bot) continue;
+  for (const state of runtime.guild?.voiceStates?.cache?.values?.() || []) {
+    if (!state?.channelId || state?.member?.user?.bot) continue;
     runtime.voiceStates.set(String(state.id), voiceStateRow(state));
   }
+  return runtime.voiceStates;
+};
+const hydrateVoiceStates = (runtime) => {
+  reconcileVoiceStates(runtime);
   runtime.lastVoiceTickAt = Date.now();
 };
 const voiceEligibility = (runtime, userId, state) => {
@@ -697,10 +1107,176 @@ const voiceEligibility = (runtime, userId, state) => {
   if (runtime.conf.excludeDeafened && (state.selfDeaf || state.serverDeaf)) return false;
   return true;
 };
-const settleVoice = async (runtime, now = Date.now()) => {
+
+const addVoiceIntervalToDays = (totals, userId, startMs, endMs, timezone) => {
+  let cursor = Math.max(0, Number(startMs || 0));
+  const end = Math.max(cursor, Number(endMs || 0));
+  while (cursor < end) {
+    const dayKey = localDateKey(cursor, timezone);
+    let boundary = end;
+    if (localDateKey(end - 1, timezone) !== dayKey) {
+      let low = cursor + 1;
+      let high = end;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (localDateKey(middle, timezone) === dayKey) low = middle + 1;
+        else high = middle;
+      }
+      boundary = low;
+    }
+    totals[dayKey] ||= {};
+    totals[dayKey][userId] = finiteInteger(totals[dayKey][userId], 0, 0, Number.MAX_SAFE_INTEGER) + (boundary - cursor);
+    cursor = boundary;
+  }
+};
+
+const buildVoiceLogDailyTotals = ({ sessions = [], timezone = 'Europe/Berlin', minimumParticipants = 1 } = {}) => {
+  const totals = {};
+  const byChannel = new Map();
+  for (const session of sessions) {
+    const userId = String(session?.userId || '');
+    const channelId = String(session?.channelId || session?.channelName || '');
+    const startMs = Number(session?.startMs || 0);
+    const endMs = Number(session?.endMs || 0);
+    if (!userId || !channelId || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    if (!byChannel.has(channelId)) byChannel.set(channelId, []);
+    byChannel.get(channelId).push({ userId, startMs, endMs });
+  }
+  const required = finiteInteger(minimumParticipants, 1, 1, 99);
+  for (const channelSessions of byChannel.values()) {
+    const events = new Map();
+    for (const session of channelSessions) {
+      if (!events.has(session.startMs)) events.set(session.startMs, { starts: [], ends: [] });
+      if (!events.has(session.endMs)) events.set(session.endMs, { starts: [], ends: [] });
+      events.get(session.startMs).starts.push(session.userId);
+      events.get(session.endMs).ends.push(session.userId);
+    }
+    const active = new Set();
+    let previousAt = null;
+    for (const at of [...events.keys()].sort((left, right) => left - right)) {
+      if (previousAt !== null && at > previousAt && active.size >= required) {
+        for (const userId of active) addVoiceIntervalToDays(totals, userId, previousAt, at, timezone);
+      }
+      const event = events.get(at);
+      for (const userId of event.ends) active.delete(userId);
+      for (const userId of event.starts) active.add(userId);
+      previousAt = at;
+    }
+  }
+  return totals;
+};
+
+const replaceVoiceDaysFromLogs = (data, totals, startDay, endDay, { skipDays = new Set() } = {}) => {
+  let changed = false;
+  for (let dayKey = startDay; dayKey <= endDay; dayKey = shiftDateKey(dayKey, 1)) {
+    if (skipDays.has(dayKey)) continue;
+    const indexedUsers = totals?.[dayKey] || {};
+    const day = data.days?.[dayKey];
+    if (day) {
+      for (const row of Object.values(day.users || {})) {
+        if (finiteInteger(row?.voiceMilliseconds, 0, 0, Number.MAX_SAFE_INTEGER) !== 0) changed = true;
+        row.voiceMilliseconds = 0;
+      }
+    }
+    for (const [userId, milliseconds] of Object.entries(indexedUsers)) {
+      data.days[dayKey] ||= { users: {} };
+      data.days[dayKey].users[userId] ||= { messages: 0, voiceMilliseconds: 0 };
+      const next = finiteInteger(milliseconds, 0, 0, Number.MAX_SAFE_INTEGER);
+      if (data.days[dayKey].users[userId].voiceMilliseconds !== next) changed = true;
+      data.days[dayKey].users[userId].voiceMilliseconds = next;
+    }
+  }
+  return changed;
+};
+
+const resolveLoggedVoiceChannel = (guild, channelName) => {
+  const value = String(channelName || '');
+  const direct = guild?.channels?.cache?.get?.(value);
+  if (direct) return direct;
+  const normalized = value.toLowerCase();
+  return [...(guild?.channels?.cache?.values?.() || [])].find((channel) => String(channel?.name || '').toLowerCase() === normalized)
+    || { id: value, name: value, parentId: '', parent: null };
+};
+
+const reliableVoiceLogStartDay = (indexed, timezone) => {
+  let startDay = localDateKey(indexed?.firstVoiceRecordMs || indexed?.firstEventMs || Date.now(), timezone);
+  let latestUnparsedMs = 0;
+  for (const timestamp of indexed?.unparsedVoiceEventMs || []) {
+    if (Number.isFinite(timestamp) && timestamp > latestUnparsedMs) latestUnparsedMs = timestamp;
+  }
+  if (latestUnparsedMs > 0) {
+    const afterUnparsedDay = shiftDateKey(localDateKey(latestUnparsedMs, timezone), 1);
+    if (afterUnparsedDay > startDay) startDay = afterUnparsedDay;
+  }
+  return startDay;
+};
+
+const reconcileVoiceFromLogs = async (runtime, { force = false, now = Date.now() } = {}) => {
+  if (!runtime?.conf?.enabled) return { skipped: true, reason: 'disabled' };
+  const indexed = await getIndexedVoiceLogSessions({
+    guild: runtime.guild,
+    cfg: { voiceLogImport: runtime.voiceLogConfig || {} },
+    force
+  });
+  if (!indexed?.firstEventMs || !indexed?.firstVoiceRecordMs || !['ok', 'unchanged'].includes(indexed.status)) return { skipped: true, reason: indexed?.status || 'unavailable' };
+  if (!force && indexed.revisionKey === runtime.lastVoiceLogRevision) return { skipped: true, reason: 'unchanged' };
+
+  const sessions = [];
+  const addSession = (session, currentState = null) => {
+    const userId = String(session?.userId || '');
+    const member = runtime.guild.members.cache.get(userId);
+    const channel = currentState?.channelId
+      ? runtime.guild.channels.cache.get(String(currentState.channelId))
+      : resolveLoggedVoiceChannel(runtime.guild, session?.channelName || session?.channelId);
+    if (!member || member.user?.bot || !channel || excludedMember(member, runtime.conf) || ignoredChannel(channel, runtime.conf)) return;
+    if (String(runtime.guild.afkChannelId || '') === String(channel.id || '')) return;
+    sessions.push({ userId, channelId: String(channel.id || session?.channelName || ''), startMs: session.startMs, endMs: session.endMs });
+  };
+  for (const session of indexed.sessions || []) addSession(session);
+  for (const [userId, open] of indexed.openSessions || []) {
+    const current = runtime.guild.voiceStates.cache.get(String(userId));
+    if (!current?.channelId || now <= Number(open?.startMs || 0)) continue;
+    addSession({ ...open, endMs: now }, current);
+  }
+
+  const totals = buildVoiceLogDailyTotals({
+    sessions,
+    timezone: runtime.timezone,
+    minimumParticipants: runtime.conf.voiceMinimumParticipants
+  });
+  const data = await guildData(runtime.guild.id);
+  const startDay = reliableVoiceLogStartDay(indexed, runtime.timezone);
+  const endDay = localDateKey(now, runtime.timezone);
+  const incompleteDays = new Set((indexed.unparsedVoiceEventMs || []).map((timestamp) => localDateKey(timestamp, runtime.timezone)));
+  const changed = replaceVoiceDaysFromLogs(data, totals, startDay, endDay, { skipDays: incompleteDays });
+  const coverageChanged = markMetricTrackingCoverage(data, 'voice', startDay);
+  data.voiceIndexBackfill = {
+    channelId: indexed.channelId,
+    channelSource: indexed.channelSource,
+    revision: indexed.revisionKey,
+    rangeStart: startDay,
+    rangeEnd: endDay,
+    sessions: sessions.length,
+    skippedIncompleteDays: incompleteDays.size,
+    completedAt: new Date(now).toISOString()
+  };
+  runtime.lastVoiceLogRevision = indexed.revisionKey;
+  runtime.lastVoiceTickAt = now;
+  if (changed || coverageChanged) {
+    data.updatedAt = new Date(now).toISOString();
+    scheduleSave();
+  }
+  return { changed: changed || coverageChanged, ...data.voiceIndexBackfill };
+};
+const settleVoice = async (runtime, now = Date.now(), { reconcile = true } = {}) => {
   const elapsed = Math.max(0, Math.min(5 * 60_000, now - Number(runtime.lastVoiceTickAt || now)));
   runtime.lastVoiceTickAt = now;
   if (!runtime.conf.enabled || elapsed < 250) return 0;
+  // Gateway-Events können bei Reconnects ausfallen. Vor regulären Ticks und
+  // UI-Snapshots deshalb immer Discord als Quelle der Wahrheit verwenden.
+  // Der Voice-Event-Handler setzt reconcile=false, damit er den Zeitraum bis
+  // zum Event noch mit oldState abrechnen kann.
+  if (reconcile) reconcileVoiceStates(runtime);
   const byChannel = new Map();
   for (const [userId, state] of runtime.voiceStates.entries()) {
     if (!voiceEligibility(runtime, userId, state)) continue;
@@ -723,14 +1299,94 @@ const settleVoice = async (runtime, now = Date.now()) => {
   return credited;
 };
 
-const reconcileActivityFromServerIndex = async (runtime, { force = false } = {}) => {
+/* ---------------------- Offline-/Online-Tracking (Heartbeat) -------------- */
+// Der Heartbeat liegt in einer winzigen separaten Datei, damit das große
+// activity-race.json nicht bei jedem Tick neu geschrieben wird. Aktualisiert
+// wird er minütlich (Tick) und beim sauberen Herunterfahren (SIGINT/SIGTERM).
+let heartbeat = null;
+let heartbeatLoadPromise = null;
+let heartbeatSaveTimer = null;
+let heartbeatSaveQueue = Promise.resolve();
+
+const ensureHeartbeatLoaded = async () => {
+  if (heartbeat) return heartbeat;
+  if (!heartbeatLoadPromise) {
+    heartbeatLoadPromise = readJsonWithRecovery(HEARTBEAT_FILE, { fallback: { version: 1, guilds: {} }, backupLimit: 3 })
+      .then((result) => {
+        heartbeat = (result?.value?.guilds && typeof result.value.guilds === 'object')
+          ? result.value
+          : { version: 1, guilds: {} };
+        return heartbeat;
+      })
+      .finally(() => { heartbeatLoadPromise = null; });
+  }
+  return heartbeatLoadPromise;
+};
+const flushHeartbeat = async () => {
+  clearTimeout(heartbeatSaveTimer);
+  heartbeatSaveTimer = null;
+  if (!heartbeat) return;
+  const snapshot = JSON.parse(JSON.stringify(heartbeat));
+  heartbeatSaveQueue = heartbeatSaveQueue.catch(() => null)
+    .then(() => atomicWriteJson(HEARTBEAT_FILE, snapshot, { backupLimit: 3 }));
+  await heartbeatSaveQueue;
+};
+const scheduleHeartbeatSave = () => {
+  clearTimeout(heartbeatSaveTimer);
+  heartbeatSaveTimer = setTimeout(() => void flushHeartbeat().catch((error) => console.warn(`[activityRace] Heartbeat-Speichern fehlgeschlagen: ${error?.message || error}`)), 500);
+  heartbeatSaveTimer.unref?.();
+};
+const touchHeartbeat = async (guildId, now = Date.now()) => {
+  const store = await ensureHeartbeatLoaded();
+  store.guilds[String(guildId)] = new Date(now).toISOString();
+};
+const heartbeatPersistDue = (runtime, now = Date.now()) => {
+  if (now - Number(runtime.lastHeartbeatPersistAt || 0) < HEARTBEAT_PERSIST_MS) return false;
+  runtime.lastHeartbeatPersistAt = now;
+  return true;
+};
+
+// Ermittelt das Offline-Fenster beim Start. Rückgaben:
+//   { kind: 'first-boot' }  – nie ein Heartbeat geschrieben (Erststart)
+//   null                    – Heartbeat frisch, Bot lief durch
+//   { kind: 'offline', sinceMs, untilMs, ms } – Bot war offline
+const computeOfflineWindow = async (guildId, now = Date.now()) => {
+  const store = await ensureHeartbeatLoaded();
+  const lastSeenMs = Date.parse(store?.guilds?.[String(guildId)] || '');
+  if (!Number.isFinite(lastSeenMs) || lastSeenMs <= 0) return { kind: 'first-boot' };
+  const ms = now - lastSeenMs;
+  if (ms < OFFLINE_GRACE_MS) return null;
+  return { kind: 'offline', sinceMs: lastSeenMs, untilMs: now, ms };
+};
+
+// Das Offline-Fenster für die Diagnose im Store festhalten (nur Info).
+const recordOfflineWindow = async (guildId, offline) => {
+  const data = await guildData(guildId);
+  data.runtime.lastOffline = {
+    since: new Date(offline.sinceMs).toISOString(),
+    until: new Date(offline.untilMs).toISOString()
+  };
+  data.updatedAt = new Date().toISOString();
+  scheduleSave();
+};
+
+// Enges Index-Fenster für den regulären Tick/Snapshot: nur die letzten
+// RECENT_RECONCILE_DAYS Tage statt der 400-Tage-Retention. Die Live-Zählung
+// deckt alles ab, was während der Laufzeit passiert – der Nachzug prüft nur
+// das jüngste Fenster als Sicherheitsnetz gegen verpasste Events.
+const recentBackfillRange = (timezone, now = Date.now()) => {
+  const today = localDateKey(now, timezone);
+  return { start: shiftDateKey(today, -RECENT_RECONCILE_DAYS), end: today, endExclusive: shiftDateKey(today, 1) };
+};
+
+const reconcileActivityFromServerIndex = async (runtime, { force = false, rangeOverride = null } = {}) => {
   if (!runtime?.conf?.enabled) return null;
   if (runtime.indexSyncPromise) return runtime.indexSyncPromise;
   if (!force && Date.now() - Number(runtime.lastIndexAttemptAt || 0) < INDEX_RECONCILE_MIN_INTERVAL_MS) return null;
   runtime.lastIndexAttemptAt = Date.now();
   runtime.indexSyncPromise = (async () => {
     const data = await guildData(runtime.guild.id);
-    const range = indexedBackfillRange(runtime.timezone);
+    const range = rangeOverride || indexedBackfillRange(runtime.timezone);
     try {
       await ensureCompleteMemberCache(runtime.guild);
       const indexSnapshot = await getServerIndexSnapshot(runtime.guild.id);
@@ -762,7 +1418,7 @@ const reconcileActivityFromServerIndex = async (runtime, { force = false } = {})
         afterMessageId = last.id;
         if (page.length < INDEX_PAGE_SIZE) break;
       }
-      const merged = mergeIndexedChatDays(data, accumulator);
+      const merged = mergeIndexedChatDays(data, accumulator, { rangeStart: range.start });
       const totalRecoveredMessages = finiteInteger(data.indexBackfill?.totalRecoveredMessages, 0, 0, Number.MAX_SAFE_INTEGER)
         + merged.recoveredMessages;
       data.indexBackfill = {
@@ -796,8 +1452,110 @@ const reconcileActivityFromServerIndex = async (runtime, { force = false } = {})
   return runtime.indexSyncPromise;
 };
 
+const messageToIndexedRecord = (message) => ({
+  id: String(message?.id || ''),
+  channelId: String(message?.channel?.id || ''),
+  parentChannelId: String(message?.channel?.parentId || ''),
+  createdAt: new Date(message?.createdTimestamp || Date.now()).toISOString(),
+  authorId: String(message?.author?.id || ''),
+  authorBot: Boolean(message?.author?.bot),
+  webhookId: String(message?.webhookId || ''),
+  content: String(message?.content || ''),
+  attachments: message?.attachments ? [...message.attachments.values()] : [],
+  stickers: message?.stickers ? [...message.stickers.values()] : []
+});
+
+// Discord-Nachzug der Tagesaktivität: zählt alle Nachrichten seit 0 Uhr (lokale
+// Zeitzone) direkt aus dem Kanalverlauf nach – auch solche, die geschrieben
+// wurden, während der Bot offline war. Nutzt dieselben Filter wie die Live-
+// Wertung (ausgeschlossene Kanäle/Rollen, Mindestlänge, Cooldown, Duplikate)
+// und merged per Math.max, damit bereits gezählte Nachrichten nie doppelt zählen.
+const DISCORD_RECOVER_MIN_INTERVAL_MS = 10 * 60_000;
+const DISCORD_RECOVER_MAX_PAGES = 25;
+const recoverDailyMessagesFromDiscord = async (runtime, { force = false, sinceMs = null } = {}) => {
+  if (!runtime?.conf?.enabled) return { skipped: true, reason: 'disabled' };
+  if (runtime.discordRecoverPromise) return runtime.discordRecoverPromise;
+  if (!force && Date.now() - Number(runtime.lastDiscordRecoverAt || 0) < DISCORD_RECOVER_MIN_INTERVAL_MS) {
+    return { skipped: true, reason: 'throttled' };
+  }
+  runtime.lastDiscordRecoverAt = Date.now();
+  runtime.discordRecoverPromise = (async () => {
+    const timezone = runtime.timezone;
+    const today = localDateKey(Date.now(), timezone);
+    // Untere Grenze: 0 Uhr heute ODER der Offline-Beginn, wenn der Bot
+    // zwischenzeitlich offline war (dann wird NUR der Ausfall-Zeitraum
+    // nachgezogen statt immer ab 0 Uhr). Der Host läuft in derselben Zeitzone
+    // wie die Konfiguration.
+    const midnightMs = Date.parse(`${today}T00:00:00`);
+    const boundaryMs = Math.max(midnightMs, Number.isFinite(Number(sinceMs)) ? Math.floor(Number(sinceMs)) : midnightMs);
+    const data = await guildData(runtime.guild.id);
+    await ensureCompleteMemberCache(runtime.guild);
+    const accumulator = createIndexedChatAccumulator();
+    // Pre-Filter über den Snowflake-Zeitstempel der letzten Nachricht: Kanäle,
+    // deren letzte Nachricht VOR der Grenze liegt, können keine Nachrichten im
+    // Fenster haben – sie werden OHNE messages.fetch übersprungen. Das reduziert
+    // den 924-Kanal-Scan auf die wenigen Kanäle mit Aktivität und beendet den
+    // Rate-Limit-Sturm (GET /channels/:id/messages mit 4-5 s Wartezeit).
+    const hasActivitySinceBoundary = (channel) => {
+      const lastAt = lastMessageTimestampMs(channel);
+      return lastAt === null || lastAt >= boundaryMs;
+    };
+    const candidates = [...(runtime.guild.channels?.cache?.values?.() || [])]
+      .filter((channel) => channel?.isTextBased?.()
+        && typeof channel?.messages?.fetch === 'function'
+        && !ignoredChannel(channel, runtime.conf)
+        && hasActivitySinceBoundary(channel));
+    let scanned = 0;
+    let scannedChannels = 0;
+    for (const channel of candidates) {
+      const permissions = channel.permissionsFor?.(runtime.guild.members.me);
+      if (!permissions?.has?.(PermissionFlagsBits.ReadMessageHistory) || !permissions.has(PermissionFlagsBits.ViewChannel)) continue;
+      scannedChannels += 1;
+      let before = null;
+      let pages = 0;
+      try {
+        while (pages < DISCORD_RECOVER_MAX_PAGES) {
+          const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
+          if (!page?.size) break;
+          const messages = [...page.values()];
+          const inWindow = messages.filter((message) => Number(message?.createdTimestamp || 0) >= boundaryMs);
+          if (inWindow.length) {
+            accumulateIndexedChatRecords({
+              guild: runtime.guild,
+              conf: runtime.conf,
+              timezone,
+              records: inWindow.map(messageToIndexedRecord),
+              range: { start: today, end: today },
+              accumulator
+            });
+            scanned += inWindow.length;
+          }
+          const oldest = messages[messages.length - 1];
+          if (page.size < 100 || Number(oldest?.createdTimestamp || 0) < boundaryMs) break;
+          before = oldest.id;
+          pages += 1;
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+      } catch {
+        // Best effort – ein einzelner Kanal darf den Nachzug nie abbrechen.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    const merged = mergeIndexedChatDays(data, accumulator);
+    if (merged.changed) {
+      data.updatedAt = new Date().toISOString();
+      scheduleSave();
+    }
+    return { scanned, credited: merged.recoveredMessages, channels: scannedChannels, changed: merged.changed };
+  })().finally(() => { runtime.discordRecoverPromise = null; });
+  return runtime.discordRecoverPromise;
+};
+
 const formatVoice = (milliseconds) => {
-  const totalMinutes = Math.floor(Math.max(0, Number(milliseconds || 0)) / 60_000);
+  // Math.round statt Math.floor: Anzeige muss exakt dem Rundungswert
+  // entsprechen der auch fuer Ranking verwendet wird (line 698).
+  // Sonst zeigen zwei Users '5 Std. 38 Min.' haben aber unterschiedliche Raenge.
+  const totalMinutes = Math.round(Math.max(0, Number(milliseconds || 0)) / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return hours ? `${hours} Std. ${minutes} Min.` : `${minutes} Min.`;
@@ -867,9 +1625,19 @@ const PING_PHRASES = {
     (trophy, place, scope) => `${trophy} **Platz ${place}** in der ${scope} – neu dabei in den Top 3!`
   ],
   displaced: [
-    (scope, overtaker) => `Du wurdest in der ${scope} aus den Top 3 verdrängt${overtaker ? ` – deinen Platz hat ${overtaker} übernommen` : ''}. Hol dir deinen Platz zurück!`,
-    (scope, overtaker) => `Du bist in der ${scope} aus den Top 3 gefallen${overtaker ? ` – ${overtaker} hat deinen Platz übernommen` : ''}. Gib nicht auf!`,
-    (scope, overtaker) => `Dein Platz in den Top 3 der ${scope} ist weg${overtaker ? ` – übernommen von ${overtaker}` : ''}. Hol dir deinen Platz zurück!`
+    (scope, overtaker) => `Du wurdest in der ${scope} aus den Top 3 verdrängt${overtaker ? ` – ${overtaker} hat deinen Platz übernommen` : ''}.`,
+    (scope, overtaker) => `Du bist aus den Top 3 der ${scope} gefallen${overtaker ? ` – deinen Platz hat ${overtaker} übernommen` : ''}.`,
+    (scope, overtaker) => `In der ${scope} hast du deinen Platz in den Top 3 verloren${overtaker ? ` – ${overtaker} belegt ihn jetzt` : ''}.`
+  ],
+  // Mehrere Verdrängungen derselben Person in einem Lauf (z. B. Chat und
+  // Sprachchat gleichzeitig) werden zu einem einzigen Satz gebündelt statt
+  // zwei fast gleiche Sätze aneinanderzureihen. Erwartet die gebündelte
+  // Bereichs-Bezeichnung („Tageswertung (Chat und Sprachchat)“) und die
+  // Überholer-Klausel.
+  displacedBundle: [
+    (scopeText, overtakerClause) => `Du wurdest in der ${scopeText} aus den Top 3 verdrängt${overtakerClause}.`,
+    (scopeText, overtakerClause) => `Du bist aus den Top 3 der ${scopeText} gefallen${overtakerClause}.`,
+    (scopeText, overtakerClause) => `Aus den Top 3 der ${scopeText} verdrängt${overtakerClause}.`
   ]
 };
 
@@ -948,7 +1716,9 @@ const placementPingLines = (runtime, changes, conf) => {
         userId: change.userId,
         headline: pickPhrase(PING_PHRASES.displaced)(scope, overtaker),
         scope,
-        place: 0
+        place: 0,
+        displaced: true,
+        overtaker
       });
     }
   }
@@ -960,8 +1730,20 @@ const rankValueText = (metric, value) => metric === 'messages'
   : formatVoice(value);
 const rankingBlock = (runtime, rows, metric, label) => {
   if (!rows?.length) return [];
-  return [`${label}:`, ...rows.slice(0, 3).map((entry, index) =>
-    `${trophyEmoji(runtime.guild, index + 1) || `${index + 1}.`} <@${entry.userId}> – ${rankValueText(metric, entry.value)}`)];
+  const lines = [`${label}:`];
+  let lastValue = null;
+  let place = 0;
+  for (const entry of rows || []) {
+    const value = Number(entry?.value || 0);
+    if (value <= 0) continue;
+    if (lastValue === null || value !== lastValue) {
+      place += 1;
+      if (place > 3) break;
+    }
+    lines.push(`${trophyEmoji(runtime.guild, place) || `${place}.`} <@${entry.userId}> – ${rankValueText(metric, entry.value)}`);
+    lastValue = value;
+  }
+  return lines;
 };
 const formatDateKey = (key) => {
   const parts = String(key || '').split('-');
@@ -1010,9 +1792,15 @@ const announceCompletedPeriods = async (runtime, data, awards, conf) => {
     const endKey = rank?.fullyTracked ? String(rank.end || '') : '';
     if (!endKey || data.announcedPeriods?.[period] === endKey) continue;
     const announcement = buildCompletionAnnouncement(runtime, awards, period);
-    if (!announcement) continue;
-    try {
-      await channel.send({ content: announcement });
+      if (!announcement) continue;
+      try {
+        // Auch die Abschluss-Ankündigung ist eine Platzierungsänderung und
+        // muss den Opt-out beachten - sonst werden alle Gewinner gepingt.
+        const safeAnnouncement = neutralizeOptedOutMentions(announcement, data, (id) => {
+          const winner = runtime.guild.members.cache.get(id);
+          return winner?.displayName || winner?.user?.username || '';
+        });
+        await channel.send({ content: safeAnnouncement });
       data.announcedPeriods ||= {};
       data.announcedPeriods[period] = endKey;
       sent += 1;
@@ -1032,6 +1820,118 @@ const placementPingChannel = (guild, conf) => {
   return panelChannel(guild, conf);
 };
 
+/* Bündelt mehrere Verdrängungen derselben Person (z. B. Chat + Sprachchat in
+   einem Lauf) zu einer gemeinsamen Bereichs-Bezeichnung wie
+   „Tageswertung (Chat und Sprachchat)“ plus einer Überholer-Klausel. */
+const buildDisplacedBundleParts = (lines) => {
+  const scopes = lines.map((line) => line.scope).filter(Boolean);
+  const overtakers = [...new Set(lines.map((line) => line.overtaker).filter(Boolean))];
+  if (!scopes.length) return { scopeText: '', overtakerClause: '' };
+  const first = scopes[0];
+  const sep = first.indexOf(' · ');
+  const prefix = sep > 0 ? first.slice(0, sep) : '';
+  const sharedPrefix = prefix && scopes.every((scope) => scope.startsWith(`${prefix} · `)) ? prefix : '';
+  const names = scopes.map((scope) => (sharedPrefix ? scope.slice(sharedPrefix.length + 3) : scope));
+  const scopeText = sharedPrefix ? `${sharedPrefix} (${names.join(' und ')})` : names.join(' und ');
+  const overtakerClause = overtakers.length === 1
+    ? ` – ${overtakers[0]} hat ${scopes.length > 1 ? 'einen deiner Plätze' : 'deinen Platz'} übernommen`
+    : overtakers.length > 1
+      ? ` – deine Plätze haben ${overtakers.join(' und ')} übernommen`
+      : '';
+  return { scopeText, overtakerClause };
+};
+
+/* Baut den Nachrichten-Inhalt für einen Nutzer: Mehrere Verdrängungen werden
+   zu einem Satz zusammengefasst (statt per Leerzeichen aneinandergereiht).
+   Die Reihenfolge der Meldungen bleibt dabei wie vorher (erst Auf-/Abstiege,
+   dann Verdrängungen) – nur der Text wird verdichtet. */
+// Ersetzt @Mentions von Personen, die ihre Liga-Pings abgestellt haben, durch
+// ihren Namen. Ohne das prueft der Empfaengerfilter nur line.userId - eine im
+// Satz eingebettete "Überholer"-Mention wuerde stumm durchgehen und genau die
+// Leute benachrichtigen, die sich ausdruecklich abgemeldet haben.
+const neutralizeOptedOutMentions = (text, data, resolveName) => {
+  const source = String(text || '');
+  if (!source.includes('<@')) return source;
+  return source.replace(/<@!?(\d{15,25})>/g, (match, id) => {
+    if (isPlacementPingEnabled(data, id)) return match;
+    const name = typeof resolveName === 'function' ? resolveName(id) : '';
+    return String(name || '').trim() || 'jemand';
+  });
+};
+
+const composePingContent = (userId, lines, data, resolveName) => {
+  const displaced = lines.filter((line) => line.displaced === true);
+  const parts = [];
+  let bundleEmitted = false;
+  for (const line of lines) {
+    if (line.displaced === true) {
+      if (!bundleEmitted) {
+        bundleEmitted = true;
+        if (displaced.length > 1) {
+          const { scopeText, overtakerClause } = buildDisplacedBundleParts(displaced);
+          parts.push(pickPhrase(PING_PHRASES.displacedBundle)(scopeText, overtakerClause));
+        } else {
+          parts.push(line.headline);
+        }
+      }
+    } else {
+      parts.push(line.headline);
+    }
+  }
+  return neutralizeOptedOutMentions(`<@${userId}> ${parts.join(' ')}`, data, resolveName);
+};
+
+export const resetPingCooldowns = () => pingCooldownMap.clear();
+const pingCooldownMap = new Map(); // key: `${guildId}:${userId}:${scope}` → lastPingAt
+// Lädt persistente Cooldowns aus dem Guild-Store in den In-Memory-Map
+// (einmalig pro Guild beim ersten Zugriff).
+const pingCooldownsLoaded = new Set();
+const ensurePingCooldownsLoaded = async (guildId) => {
+  if (pingCooldownsLoaded.has(guildId)) return;
+  try {
+    const data = await guildData(guildId);
+    for (const [key, ts] of Object.entries(data.pingCooldowns || {})) {
+      if (typeof ts === 'number' && ts > 0 && (Date.now() - ts) < PING_COOLDOWN_MS) {
+        pingCooldownMap.set(key, ts);
+      }
+    }
+  } catch { /* leer */ }
+  pingCooldownsLoaded.add(guildId);
+};
+const isPingCooledDown = (guildId, userId, scope) => {
+  const key = `${guildId}:${userId}:${scope}`;
+  const lastAt = pingCooldownMap.get(key);
+  return lastAt && (Date.now() - lastAt) < PING_COOLDOWN_MS;
+};
+const markPingSent = (guildId, userId, scope) => {
+  const key = `${guildId}:${userId}:${scope}`;
+  const now = Date.now();
+  pingCooldownMap.set(key, now);
+  // Persistent speichern (fire-and-forget)
+  void guildData(guildId).then((data) => {
+    data.pingCooldowns[key] = now;
+    scheduleSave();
+  }).catch(() => {});
+  // Alte Einträge aufräumen (max. 10k)
+  if (pingCooldownMap.size > 10_000) {
+    const cutoff = now - PING_COOLDOWN_MS * 2;
+    for (const [k, v] of pingCooldownMap) { if (v < cutoff) pingCooldownMap.delete(k); }
+  }
+};
+const isPlacementPingEnabled = (data, userId) => !Object.hasOwn(data?.pingOptOuts || {}, String(userId || ''));
+const setPlacementPingPreference = (data, userId, enabled) => {
+  const id = String(userId || '').trim();
+  if (!id) return true;
+  data.pingOptOuts ||= {};
+  if (enabled) delete data.pingOptOuts[id];
+  else data.pingOptOuts[id] = new Date().toISOString();
+  data.updatedAt = new Date().toISOString();
+  return isPlacementPingEnabled(data, id);
+};
+const filterPlacementPingLinesByPreference = (lines, data) => (Array.isArray(lines) ? lines : [])
+  .filter((line) => isPlacementPingEnabled(data, line?.userId));
+const isCurrentPingInfoMessage = (data, messageId) => Boolean(messageId)
+  && String(data?.panel?.pingInfo?.messageId || '') === String(messageId);
 const sendPlacementPings = async (runtime, changes, conf, options = {}) => {
   const lines = placementPingLines(runtime, changes, conf);
   if (!lines.length) return 0;
@@ -1046,98 +1946,417 @@ const sendPlacementPings = async (runtime, changes, conf, options = {}) => {
   // in einem Lauf werden zu einer Nachricht gebündelt, damit der Kanal lesbar bleibt.
   const channel = placementPingChannel(runtime.guild, conf);
   if (!channel) return 0;
+  const guildId = runtime.guild.id;
+  const preferences = await guildData(guildId);
+  // Cooldown: Pro User + Scope max. 1 Ping pro 60 Minuten.
+  const cooledLines = filterPlacementPingLinesByPreference(lines, preferences).filter((line) => {
+    if (!line.scope) return true;
+    return !isPingCooledDown(guildId, line.userId, line.scope);
+  });
+  if (!cooledLines.length) return 0;
   const byUser = new Map();
-  for (const line of lines) {
+  for (const line of cooledLines) {
     if (!byUser.has(line.userId)) byUser.set(line.userId, []);
-    byUser.get(line.userId).push(line.headline);
+    byUser.get(line.userId).push(line);
   }
   let sent = 0;
-  for (const [userId, headlines] of byUser.entries()) {
+  for (const [userId, userLines] of byUser.entries()) {
+    // Direkter zweiter Check direkt vor dem Versand: Ein Opt-out, der während
+    // eines größeren Ping-Laufs geklickt wurde, wirkt ohne Verzögerung.
+    if (!isPlacementPingEnabled(preferences, userId)) continue;
     const member = runtime.guild.members.cache.get(userId);
     if (!member || member.user?.bot) continue;
     try {
       const message = await channel.send({
-        content: `<@${userId}> ${headlines.join(' ')}`
+        content: composePingContent(userId, userLines, preferences, (id) => {
+          const mentioned = runtime.guild.members.cache.get(id);
+          return mentioned?.displayName || mentioned?.user?.username || '';
+        })
       });
       // Nachrichten löschen sich selbst, damit der Kanal nicht mit Pings vollläuft.
-      const deleteTimer = setTimeout(() => {
-        message.delete().catch(() => null);
-      }, autoDeleteMs);
-      deleteTimer.unref?.();
+      // Der Lösch-Termin wird zusätzlich persistiert, damit Pings auch nach einem
+      // Bot-Ausfall entfernt werden (Catch-up beim nächsten Start bzw. Tick).
+      const deleteAt = Date.now() + autoDeleteMs;
+      armPendingPingDelete(runtime, channel, message, null, deleteAt);
+      try {
+        await registerPendingPingDelete(runtime.guild.id, channel.id, message.id, deleteAt);
+      } catch {
+        // Ledger nicht verfügbar – der In-Memory-Timer löscht die Nachricht trotzdem.
+      }
       sent += 1;
+      // Cooldown für alle Scopes dieses Users in dieser Nachricht setzen.
+      for (const ul of userLines) {
+        if (ul.scope) markPingSent(guildId, userId, ul.scope);
+      }
     } catch {
       // Kanal nicht erreichbar – still ignorieren.
+    }
+    // Ping-Burst entzerren: Discord erlaubt nur 5 Nachrichten pro 5 s pro Kanal.
+    // Nach einem Bot-Neustart mit Tages-Catch-up ändern sich oft mehrere
+    // Platzierungen gleichzeitig – ohne Abstand warten alle aufs Rate-Limit.
+    if (sent < byUser.size) {
+      await new Promise((resolve) => setTimeout(resolve, 1150));
     }
   }
   return sent;
 };
-const rankingLines = (guild, rows, metric, emptyText = 'Noch keine Aktivität erfasst.') => {
-  if (!rows?.length) return `*${emptyText}*`;
-  return rows.slice(0, 3).map((entry, index) => {
-    const value = metric === 'messages' ? `${entry.value.toLocaleString('de-DE')} Nachrichten` : formatVoice(entry.value);
-    return `${trophyEmoji(guild, index + 1)} <@${entry.userId}>\n> **${value}**`;
+// Rang-Berechnung mit Gleichständen (gleicher Wert = gleiche Platzierung) und
+// Sichtbarkeits-Grenze inklusive aller Gleichstände am Rand.
+const computeRankings = (rows, limit = 3) => {
+  if (!rows?.length) return { ranked: [], visible: [] };
+  const boundedLimit = finiteInteger(limit, 3, 3, 20);
+  const ranked = [];
+  let lastValue = null;
+  for (const entry of rows) {
+    const value = Number(entry?.value || 0);
+    const rank = lastValue === null || value !== lastValue ? ranked.length + 1 : ranked[ranked.length - 1].rank;
+    ranked.push({ ...entry, rank });
+    lastValue = value;
+  }
+  // Zähle DISTINCT RANG-GRUPPEN (nicht Einträge) für das Limit.
+  // Bei Gleichstand (z.B. 2 Leute Rang 1 + 2 Leute Rang3) sollen 3 Display-
+  // Plätze = 3 Rang-Gruppen sein, nicht 3 Einträge (= nur 2 Gruppen).
+  const visible = [];
+  let distinctRanks = 0;
+  let lastVisibleRank = null;
+  for (const entry of ranked) {
+    if (entry.rank !== lastVisibleRank) {
+      if (distinctRanks >= boundedLimit) break;
+      distinctRanks += 1;
+      lastVisibleRank = entry.rank;
+    }
+    visible.push(entry);
+  }
+  return { ranked, visible };
+};
+// Gruppiert sichtbare Einträge nach Rang – EIN Rank = EIN Platz im Embed.
+// Bei Gleichstand (z.B. 2 Leute mit 5 Std. 38 Min.) teilen sich ALLE den
+// selben Platz, anstatt als separate Zeilen angezeigt zu werden.
+const computeRankGroups = (visible) => {
+  const groups = [];
+  let currentRank = null;
+  for (const entry of visible) {
+    if (entry.rank !== currentRank) {
+      groups.push({ rank: entry.rank, members: [], value: entry.value });
+      currentRank = entry.rank;
+    }
+    groups[groups.length - 1].members.push(entry);
+  }
+  return groups;
+};
+// Baut ein StringSelectMenu das die "weiteren" Mitglieder bei Gleichstand anzeigt.
+// Nur hinzugefügt wenn es tatsächlich Ties gibt (sonst null).
+const TIE_DROPDOWN_PREFIX = 'fh-activity-race:tie:';
+const buildTieDropdown = (guild, snapshot, onlyPeriod = '') => {
+  const options = [];
+  const periods = onlyPeriod && PERIODS[onlyPeriod] ? [onlyPeriod] : ['daily', 'weekly', 'monthly'];
+  for (const period of periods) {
+    const rank = snapshot.periods?.[period];
+    if (!rank?.chat && !rank?.voice) continue;
+    const periodLabel = PERIODS[period]?.title || period;
+    for (const [metric, label] of [['chat', 'Chat'], ['voice', 'Sprachchat']]) {
+      const rows = rank[metric];
+      if (!rows?.length) continue;
+      const rankedRows = metric === 'voice'
+        ? rows.map((r) => ({ ...r, value: Math.round(Number(r?.value || 0) / 60000) * 60000 }))
+        : rows;
+      const { visible } = computeRankings(rankedRows, snapshot.rankingDisplayCount);
+      const groups = computeRankGroups(visible);
+      for (const group of groups) {
+        if (group.members.length <= 1) continue;
+        const names = group.members.map((m) => {
+          const member = guild?.members?.cache?.get?.(String(m.userId));
+          return member?.displayName || member?.user?.username || `User ${m.userId}`;
+        });
+        const value = formatPositionValue(group.value, metric === 'voice' ? 'voiceMilliseconds' : 'messages');
+        const optionLabel = `${periodLabel} ${label} – Platz ${group.rank} (${names.length} geteilt)`;
+        options.push({
+          label: String(optionLabel).slice(0, 100),
+          value: `${TIE_DROPDOWN_PREFIX}${period}:${metric}:${group.rank}`,
+          description: String(`${names.join(', ')} – ${value}`).slice(0, 100)
+        });
+      }
+    }
+  }
+  if (!options.length) return null;
+  // Discord erlaubt max25 Optionen pro Select Menu
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`${PANEL_PREFIX}tie-details`)
+      .setPlaceholder('Gleichstand-Details anzeigen…')
+      .addOptions(options.slice(0, 25))
+  );
+};
+const formatPositionValue = (value, metric) => metric === 'messages'
+  ? `${Number(value || 0).toLocaleString('de-DE')} ${Number(value || 0) === 1 ? 'Nachricht' : 'Nachrichten'}`
+  : formatVoice(value);
+const rankingLines = (guild, rows, metric, emptyText = 'Noch keine Aktivität erfasst.', limit = 3, lineTemplate = '{marker} {mention}\n> **{value}**') => {
+  // Voice-Werte auf Minuten runden für konsistente Rangvergabe
+  const rankedRows = metric === 'voiceMilliseconds'
+    ? (rows || []).map((r) => ({ ...r, value: Math.round(Number(r?.value || 0) / 60000) * 60000 }))
+    : rows;
+  const { visible } = computeRankings(rankedRows, limit);
+  if (!visible.length) return `*${emptyText}*`;
+  // Gruppiere nach Rang: EIN Rang = EINE Zeile im Embed.
+  const groups = computeRankGroups(visible);
+  return groups.map((group, displayIndex) => {
+    const displayPosition = displayIndex + 1;
+    const marker = displayPosition <= 3 ? trophyEmoji(guild, displayPosition) : `**Platz ${displayPosition}**`;
+    const value = formatPositionValue(group.value, metric);
+    if (group.members.length === 1) {
+      // Kein Tie – eine Person
+      return String(lineTemplate || '{marker} {mention}\n> **{value}**')
+        .replaceAll('{marker}', marker)
+        .replaceAll('{mention}', `<@${group.members[0].userId}>`)
+        .replaceAll('{value}', value)
+        .replaceAll('{rank}', String(group.rank));
+    }
+    // Tie – mehrere Personen auf demselben Platz: nur ERSTER Name + "(+X weitere)"
+    const tieHint = ` *(+${group.members.length - 1} weitere)*`;
+    return String(lineTemplate || '{marker} {mention}\n> **{value}**')
+      .replaceAll('{marker}', marker)
+      .replaceAll('{mention}', `<@${group.members[0].userId}>${tieHint}`)
+      .replaceAll('{value}', value)
+      .replaceAll('{rank}', String(group.rank));
   }).join('\n\n');
+};
+// Einzelne Platzhalter pro Platz (3.9.232): {chat1}…{chat3}, {chatValue1}…,
+// {chatMarker1}… und {chatBlock1}… (komplette Zeile gemäß rankingLineTemplate) –
+// für Sprachchat entsprechend mit {voice…}. Der Bot füllt nur die Werte; der
+// Text um die Platzhalter herum ist im Embed Studio frei editierbar. Leere
+// Plätze (z. B. nur 2 Wertungen oder Gleichstand) ergeben leere Platzhalter,
+// damit die Zeile sauber zusammenfällt.
+const buildPositionContext = (guild, rows, metric, options = {}) => {
+  const prefix = metric === 'messages' ? 'chat' : 'voice';
+  const lineTemplate = String(options.rankingLineTemplate || '{marker} {mention}\n> **{value}**');
+  const displayCount = Math.min(3, finiteInteger(options.rankingDisplayCount, 3, 3, 20));
+  // Voice-Werte auf Minuten runden, damit Users mit gleicher angezeigter Zeit
+  // (z.B. beide 18 Std. 46 Min.) auch denselben Rang und dieselbe Trophäe bekommen.
+  const rankedRows = metric === 'voiceMilliseconds'
+    ? (rows || []).map((r) => ({ ...r, value: Math.round(Number(r?.value || 0) / 60000) * 60000 }))
+    : rows;
+  const { visible } = computeRankings(rankedRows, options.rankingDisplayCount);
+  // Gruppiere nach Rang: EIN Rank = EINE Position im Embed.
+  // Bei Gleichstand (z.B. 2 Leute mit 5 Std. 38 Min.) teilen sich ALLE
+  // den selben Platz, anstatt als separate Platz 1/Platz 2 angezeigt zu werden.
+  const groups = computeRankGroups(visible);
+  const context = {};
+  for (let position = 1; position <= 3; position += 1) {
+    const group = groups[position - 1] || null;
+    const entry = group ? group.members[0] : null;
+    const marker = entry ? trophyEmoji(guild, position) : '';
+    if (group && group.members.length === 1) {
+      // Kein Tie – eine Person auf diesem Platz
+      context[`${prefix}${position}`] = `<@${entry.userId}>`;
+      context[`${prefix}Value${position}`] = formatPositionValue(entry.value, metric);
+      context[`${prefix}Marker${position}`] = marker;
+      context[`${prefix}Block${position}`] = lineTemplate
+        .replaceAll('{marker}', marker)
+        .replaceAll('{mention}', `<@${entry.userId}>`)
+        .replaceAll('{value}', formatPositionValue(entry.value, metric))
+        .replaceAll('{rank}', String(position));
+      context[`${prefix}Tie${position}`] = '';
+    } else if (group && group.members.length > 1) {
+      // Tie – nur ERSTER Name + "(+X weitere)". Die restlichen Namen
+      // stecken in {voiceTieN}/{chatTieN} für optionale Details.
+      const tieHint = ` *(+${group.members.length - 1} weitere)*`;
+      context[`${prefix}${position}`] = `<@${group.members[0].userId}>${tieHint}`;
+      context[`${prefix}Value${position}`] = formatPositionValue(group.value, metric);
+      context[`${prefix}Marker${position}`] = marker;
+      context[`${prefix}Block${position}`] = lineTemplate
+        .replaceAll('{marker}', marker)
+        .replaceAll('{mention}', `<@${group.members[0].userId}>${tieHint}`)
+        .replaceAll('{value}', formatPositionValue(group.value, metric))
+        .replaceAll('{rank}', String(position));
+      context[`${prefix}Tie${position}`] = group.members.map((e) => `<@${e.userId}>`).join(', ');
+    } else {
+      // Kein Eintrag auf diesem Platz
+      context[`${prefix}${position}`] = '';
+      context[`${prefix}Value${position}`] = '';
+      context[`${prefix}Marker${position}`] = '';
+      context[`${prefix}Block${position}`] = '';
+      context[`${prefix}Tie${position}`] = '';
+    }
+  }
+  return context;
+};
+// Migration 3.9.232/237: Das Platzhalter-Paket {chatRanking}/{voiceRanking}
+// → einzelne Platz-Blöcke; 3.9.237: Alte {chatBlock}-Defaults → individuelle
+// Platzhalter (Marker, Mention, Value) mit editierbarem Rahmen-Text.
+const migratePanelFieldValue = (value) => {
+  let v = String(value ?? '')
+    .replaceAll('{chatRanking}', '{chatBlock1}\n\n{chatBlock2}\n\n{chatBlock3}')
+    .replaceAll('{voiceRanking}', '{voiceBlock1}\n\n{voiceBlock2}\n\n{voiceBlock3}');
+  if (v === '{chatBlock1}\n\n{chatBlock2}\n\n{chatBlock3}' || v === '{chatBlock1}\n{chatBlock2}\n{chatBlock3}') {
+    v = '{chatMarker1} {chat1} > **{chatValue1}**\n{chatMarker2} {chat2} > **{chatValue2}**\n{chatMarker3} {chat3} > **{chatValue3}**';
+  }
+  if (v === '{voiceBlock1}\n\n{voiceBlock2}\n\n{voiceBlock3}' || v === '{voiceBlock1}\n{voiceBlock2}\n{voiceBlock3}') {
+    v = '{voiceMarker1} {voice1} > **{voiceValue1}**\n{voiceMarker2} {voice2} > **{voiceValue2}**\n{voiceMarker3} {voice3} > **{voiceValue3}**';
+  }
+  return v;
 };
 const panelColorNumber = (value, fallback) => {
   const normalized = safeColor(value, '').replace('#', '');
   const parsed = Number.parseInt(normalized, 16);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
-const formatPanelText = (value, context, maximum) => String(value || '')
-  .replaceAll('{server}', context.server)
-  .replaceAll('{period}', context.period)
-  .replaceAll('{status}', context.status)
-  .replaceAll('{completion}', context.completion)
-  .replaceAll('{range}', context.range)
-  .replaceAll('{nextEvaluation}', context.nextEvaluation)
-  .slice(0, maximum);
-const buildPanelNavigation = (selected) => new ActionRowBuilder().addComponents(
-  new ButtonBuilder()
-    .setCustomId(`${PANEL_PREFIX}rules`)
-    .setLabel('REGELN')
-    .setStyle(selected === 'rules' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-  new ButtonBuilder()
-    .setCustomId(`${PANEL_PREFIX}personal`)
-    .setLabel('MEIN RANG')
-    .setStyle(selected === 'personal' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-);
+// Generische Platzhalter-Auflösung: Jeder String-Wert im Kontext ersetzt sein
+// {key}-Gegenstück. So funktionieren neben den Basis-Platzhaltern ({server},
+// {period}, …) auch die Einzel-Platzhalter pro Platz ({chat1}, {chatValue1},
+// {chatBlock1}, {voice…}) automatisch, ohne jede Erweiterung hartzucodieren.
+const formatPanelText = (value, context, maximum) => {
+  let result = String(value || '');
+  for (const [key, replacement] of Object.entries(context || {})) {
+    const token = `{${key}}`;
+    if (typeof replacement === 'string' && result.includes(token)) {
+      // Leere Plätze müssen den Token ebenfalls entfernen. Sonst erscheinen
+      // bei weniger als drei aktiven Mitgliedern rohe `{chatBlock3}`/
+      // `{voiceBlock3}`-Tokens im Discord-Embed.
+      result = result.split(token).join(replacement);
+    }
+  }
+  // Nach dem Ersetzen: Zeilen die NUR aus orphaned Formatierung bestehen
+  // (z.B. ‚╰ **‘ oder ‚> **‘ ohne Inhalt) entfernen.
+  result = result.split('\n').filter((line) => {
+    const trimmed = line.trim();
+    // Leere Zeilen oder Zeilen mit nur Sperr-Connector/Blockquote + leerem Bold
+    if (!trimmed) return true; // Leerzeilen beibehalten (Layout-Trennung)
+    if (/^[╰╰]\s*\*+\s*$/.test(trimmed)) return false; // ‚╰ **‘ / ‚╰ ****‘ Artefakte
+    if (/^>\s*\*+\s*$/.test(trimmed)) return false; // ‚> **‘ / ‚> ****‘ Artefakte
+    return true;
+  }).join('\n');
+  return result.slice(0, maximum);
+};
+// Legt die Beschreibung des Liga-Embeds fest (3.9.228): Standardmäßig wird der
+// AUSGESCHRIEBENE Vollständigkeits-Text der Periode angezeigt ({completion} →
+// completionDaily/Weekly/Monthly) – KEINE feste Zeile wie „Die aktivsten
+// Mitglieder …“ und kein Platzhalter-Paket. Das Modul-Feld panelDescription
+// dient als optionaler eigener Text mit einzelnen Platzhaltern.
+// Backfill: Alte Designs, die noch den festen Standardtext („Die aktivsten
+// Mitglieder …“) oder {panelDescription} tragen, werden automatisch auf den
+// ausgeschriebenen Completion-Text umgestellt – auch wenn der alte Text bereits
+// als panelDescription in der Config gespeichert wurde.
+const LEGACY_PANEL_DESCRIPTION_MARKER = 'Die aktivsten Mitglieder im Chat und Sprachchat';
+const resolvePanelDescription = (designDescription, texts, context) => {
+  const raw = String(designDescription || '');
+  const savedDescription = String(texts.panelDescription || '').trim();
+  const legacySaved = savedDescription.includes(LEGACY_PANEL_DESCRIPTION_MARKER);
+  const template = legacySaved || raw.includes(LEGACY_PANEL_DESCRIPTION_MARKER) || raw.includes('{panelDescription}')
+    ? (legacySaved ? '{completion}' : savedDescription || '{completion}')
+    : raw;
+  return formatPanelText(template, context, 4_096);
+};
+const buildPanelNavigation = (selected, conf = {}, period = 'daily') => {
+  const texts = panelTexts(conf);
+  const safePeriod = PERIODS[period] ? period : 'daily';
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${PANEL_PREFIX}rules`)
+      .setLabel(String(texts.rulesButtonLabel).slice(0, 80))
+      .setStyle(selected === 'rules' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`${PANEL_PREFIX}personal:${safePeriod}`)
+      .setLabel(String(texts.personalButtonLabel).slice(0, 80))
+      .setStyle(selected === 'personal' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+  );
+};
 
-/* Einzelnes Perioden-Embed für das neue 3-Embeds-Layout.
-   Heute wird immer gerendert; Woche und Monat nur, wenn ein vollständig
-   abgeschlossener Kalenderzeitraum vorliegt (fullyTracked). */
+const pingInfoFingerprint = (conf = {}) => crypto.createHash('sha256')
+  .update(JSON.stringify({ design: conf.pingInfoDesign || {}, label: conf.pingToggleButtonLabel || '' }))
+  .digest('hex');
+const buildPingInfoPanelPayload = async (guild, conf = {}) => {
+  const label = String(conf.pingToggleButtonLabel || 'LIGA-PINGS EIN/AUS').slice(0, 80);
+  const template = await materializeOutsideImageTemplate(conf.pingInfoDesign || {});
+  const payload = await buildStudioEmbedPayload(template, guild, {
+    formatValue: (value) => String(value || '')
+      .replaceAll('{server}', guild?.name || 'FALLEN HEAVEN')
+      .replaceAll('{buttonLabel}', label)
+  });
+  return {
+    ...payload,
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${PANEL_PREFIX}ping-toggle`)
+        .setLabel(label)
+        .setStyle(ButtonStyle.Secondary)
+    )],
+    allowedMentions: { parse: [] }
+  };
+};
+
+const panelPeriodStatus = (period, rank) => {
+  if (period === 'daily') return 'Live-Zwischenstand';
+  return rank?.fullyTracked === true ? 'Abgeschlossen' : 'Teilweise erfasst';
+};
+
+/* Einzelnes Perioden-Embed für das 3-Embeds-Layout.
+   Heute wird live gerendert. Woche und Monat stammen aus dem vorherigen
+   abgeschlossenen Kalenderzeitraum und erscheinen nur mit vorhandenen Daten. */
 const buildPeriodEmbed = (guild, snapshot, period) => {
   const meta = PERIODS[period];
   const rank = snapshot.periods[period];
-  const unavailable = period !== 'daily' && rank?.fullyTracked !== true;
-  if (unavailable) return null;
-  const completion = period === 'daily'
-    ? PERIOD_COMPLETION_COPY.daily
+  const visible = period === 'daily' ? true : rank?.visible !== false && Boolean(rank?.start && rank?.end);
+  if (!visible) return null;
+  const texts = snapshotTexts(snapshot);
+  const completionRaw = period === 'daily'
+    ? texts.completionDaily
     : period === 'weekly'
-      ? 'Diese Kalenderwoche ist abgeschlossen – die Rollen für Platz 1–3 wurden vergeben.'
-      : 'Dieser Kalendermonat ist abgeschlossen – die Rollen für Platz 1–3 wurden vergeben.';
-  const context = {
+      ? texts.completionWeekly
+      : texts.completionMonthly;
+  const chatRanking = rankingLines(guild, rank.chat, 'messages', texts.rankingEmptyText, snapshot.rankingDisplayCount, texts.rankingLineTemplate);
+  const voiceRanking = rankingLines(guild, rank.voice, 'voiceMilliseconds', texts.rankingEmptyText, snapshot.rankingDisplayCount, texts.rankingLineTemplate);
+  // Einzel-Platzhalter pro Platz (3.9.232): Der Bot füllt {chat1}…{chat3},
+  // {chatValue1}…, {chatMarker1}… und {chatBlock1}… – Text um die Platzhalter
+  // herum ist im Embed Studio frei bearbeitbar.
+  const chatPositions = buildPositionContext(guild, rank.chat, 'messages', {
+    rankingLineTemplate: texts.rankingLineTemplate,
+    rankingDisplayCount: snapshot.rankingDisplayCount
+  });
+  const voicePositions = buildPositionContext(guild, rank.voice, 'voiceMilliseconds', {
+    rankingLineTemplate: texts.rankingLineTemplate,
+    rankingDisplayCount: snapshot.rankingDisplayCount
+  });
+  const periodLabel = meta.title;
+  const baseContext = {
     server: guild?.name || 'FALLEN HEAVEN',
-    period: meta.title,
-    status: period === 'daily' ? 'Live-Zwischenstand' : 'Abgeschlossen',
-    completion,
+    period: periodLabel,
+    status: panelPeriodStatus(period, rank),
+    completion: '',
     range: `${rank.start} – ${rank.end}`,
-    nextEvaluation: nextPeriodLabel(period, snapshot.timezone)
+    nextEvaluation: nextPeriodLabel(period, snapshot.timezone),
+    chatRanking,
+    voiceRanking,
+    ...chatPositions,
+    ...voicePositions
   };
-  const design = normalizePanelDesign(snapshot.panelDesign);
-  const emptyRankingText = 'Noch keine Aktivität erfasst.';
+  // Die Completion selbst ist ein editierbarer Text mit inneren Platzhaltern
+  // ({period}, {server}, {range}, {chatRanking} …) – erst auflösen, dann als
+  // {completion} im Embed einsetzen.
+  const completion = formatPanelText(completionRaw, baseContext, 4_096);
+  // Die Status-Feld-Überschriften können über die Modul-Felder gesteuert werden
+  // ({chatFieldName} usw. als Platzhalter in der Studio-Vorlage).
+  const context = {
+    ...baseContext,
+    completion,
+    chatFieldName: texts.chatFieldName,
+    voiceFieldName: texts.voiceFieldName,
+    nextEvaluationFieldName: texts.nextEvaluationFieldName,
+    rangeFieldName: texts.rangeFieldName
+  };
+  // Status-Feld-Namen: Solange das Design exakt die Standard-Felder trägt, gelten
+  // die Modul-Felder (chatFieldName usw.). Eigene Studio-Anpassungen gewinnen.
+  const design = applyStatusFieldNames(normalizePanelDesign(snapshot.panelDesigns?.[period] || snapshot.panelDesign), texts);
   const embed = new EmbedBuilder()
-    .setColor(panelColorNumber(design.embed.color, meta.color))
-    .addFields(
-      { name: 'CHAT', value: rankingLines(guild, rank.chat, 'messages', emptyRankingText), inline: true },
-      { name: 'SPRACHCHAT', value: rankingLines(guild, rank.voice, 'voiceMilliseconds', emptyRankingText), inline: true },
-      { name: 'NÄCHSTE AUSWERTUNG', value: context.nextEvaluation, inline: true },
-      { name: 'ZEITRAUM', value: context.range, inline: true }
-    );
+    .setColor(panelColorNumber(design.embed.color, meta.color));
   // Die Embed-Studio-Vorlage gilt für jedes Perioden-Embed; {period}, {status},
   // {range} usw. werden pro Zeitraum ersetzt. Abgeschlossene Woche/Monat erhalten
   // zusätzlich einen klaren Hinweis auf die Rollenvergabe.
   const title = formatPanelText(design.embed.title, context, 256);
-  const description = formatPanelText(design.embed.description, context, 4_096);
+  // Panel-Beschreibung als editierbare Vorlage (3.9.222-Prinzip): Das Standard-
+  // Design trägt {panelDescription}; bestehende Configs mit dem alten festen
+  // Standardtext („Die aktivsten Mitglieder …“) werden beim Rendern automatisch
+  // auf die Vorlage umgestellt (Backfill), damit die Zeile überall editierbar ist.
+  const description = resolvePanelDescription(design.embed.description, texts, context);
   const authorName = formatPanelText(design.embed.authorName, context, 256);
   const footerText = formatPanelText(design.embed.footerText, context, 2_048);
   if (title) embed.setTitle(title);
@@ -1151,50 +2370,50 @@ const buildPeriodEmbed = (guild, snapshot, period) => {
   if (design.embed.imageUrl) embed.setImage(design.embed.imageUrl);
   if (footerText) embed.setFooter({ text: footerText, iconURL: design.embed.footerIconUrl || undefined });
   if (design.embed.timestamp) embed.setTimestamp(new Date(snapshot.measuredAt));
-  if (design.embed.fields.length) {
-    embed.addFields(design.embed.fields.map((field) => ({
-      name: formatPanelText(field.name, context, 256) || '\u200b',
-      value: formatPanelText(field.value, context, 1_024) || '\u200b',
-      inline: field.inline === true
-    })));
-  }
-  if (period !== 'daily') {
-    const note = period === 'weekly'
-      ? 'Abgeschlossene Kalenderwoche · Rollen wurden vergeben'
-      : 'Abgeschlossener Kalendermonat · Rollen wurden vergeben';
-    // Die Vorlage kann {completion} bereits enthalten – dann nicht doppelt anhängen.
-    const completionNote = `\n\n**${completion}**`;
-    embed.setDescription(description.includes(completion) ? description : `${description}${completionNote}`);
-    embed.setFooter({ text: note, iconURL: design.embed.footerIconUrl || undefined });
-  }
+  // Seit 3.9.231 sind die Status-Felder (CHAT, SPRACHCHAT, NÄCHSTE AUSWERTUNG,
+  // ZEITRAUM) Teil der editierbaren Studio-Vorlage – der Bot ersetzt nur die
+  // Platzhalter ({chatRanking}, {voiceRanking}, {nextEvaluation}, {range}).
+  embed.addFields(design.embed.fields.map((field) => ({
+    name: formatPanelText(field.name, context, 256) || '\u200b',
+    value: formatPanelText(field.value, context, 1_024) || '\u200b',
+    inline: field.inline === true
+  })));
+  // 3.9.229: KEINE hartkodierten Overrides mehr für Woche/Monat. Die
+  // Rollenvergabe-Info ist Teil des editierbaren panelDescription-Texts
+  // (Vollständigkeits-Text der Periode) und der Footer kommt aus dem Studio.
   return embed;
 };
 const buildPanelPayload = (guild, snapshot, options = {}) => {
-  // Neues Layout: Heute wird immer angezeigt, Woche und Monat nur dann, wenn
-  // ein vollständig abgeschlossener Kalenderzeitraum vorliegt. Leere Zeiträume
-  // werden nicht mehr als Platzhalter befüllt.
+  // Heute wird immer angezeigt. Vergangene Woche und vergangener Monat werden
+  // nur gerendert, wenn der jeweilige historische Zeitraum Daten enthält.
   const embeds = ['daily', 'weekly', 'monthly']
     .map((key) => buildPeriodEmbed(guild, snapshot, key))
     .filter(Boolean);
   const design = normalizePanelDesign(snapshot.panelDesign);
-  const context = {
+  const texts = snapshotTexts(snapshot);
+  const baseContext = {
     server: guild?.name || 'FALLEN HEAVEN',
     period: PERIODS.daily.title,
     status: 'Live-Zwischenstand',
-    completion: PERIOD_COMPLETION_COPY.daily,
+    completion: '',
     range: `${snapshot.periods.daily?.start || '?'} – ${snapshot.periods.daily?.end || '?'}`,
     nextEvaluation: nextPeriodLabel('daily', snapshot.timezone)
   };
+  const context = { ...baseContext, completion: formatPanelText(texts.completionDaily, baseContext, 4_096) };
   const savedAttachment = normalizePanelAttachment(design.outsideImageAttachment);
   const preserveAttachment = options.preserveAttachment === true && savedAttachment;
   const content = [
     formatPanelText(design.content, context, 2_000),
     options.outsideFile || preserveAttachment ? '' : design.outsideImageUrl
   ].filter(Boolean).join('\n').slice(0, 2_000);
+  // Bei Gleichstand ein Dropdown hinzufügen das die "weiteren" Mitglieder anzeigt.
+  const tieDropdown = buildTieDropdown(guild, snapshot);
+  const components = [buildPanelNavigation('daily', snapshot.panelTexts || {})];
+  if (tieDropdown) components.push(tieDropdown);
   const payload = {
     content: content || undefined,
     embeds,
-    components: [buildPanelNavigation('daily')],
+    components,
     allowedMentions: { parse: [] }
   };
   if (options.outsideFile) {
@@ -1208,7 +2427,54 @@ const buildPanelPayload = (guild, snapshot, options = {}) => {
   return payload;
 };
 
-const personalRankingField = (rows, userId, metric) => {
+const buildPeriodPanelPayload = (guild, snapshot, period, options = {}) => {
+  if (!PERIODS[period]) return null;
+  const embed = buildPeriodEmbed(guild, snapshot, period);
+  if (!embed) return null;
+  const design = normalizePanelDesign(snapshot.panelDesigns?.[period] || snapshot.panelDesign);
+  const texts = snapshotTexts(snapshot);
+  const rank = snapshot.periods?.[period] || {};
+  const completionRaw = period === 'daily'
+    ? texts.completionDaily
+    : period === 'weekly'
+      ? texts.completionWeekly
+      : texts.completionMonthly;
+  const baseContext = {
+    server: guild?.name || 'FALLEN HEAVEN',
+    period: PERIODS[period]?.title || period,
+    status: panelPeriodStatus(period, rank),
+    completion: '',
+    range: `${rank.start || '?'} – ${rank.end || '?'}`,
+    nextEvaluation: nextPeriodLabel(period, snapshot.timezone)
+  };
+  const context = { ...baseContext, completion: formatPanelText(completionRaw, baseContext, 4_096) };
+  const savedAttachment = normalizePanelAttachment(design.outsideImageAttachment);
+  const preserveAttachment = options.preserveAttachment === true && savedAttachment;
+  const content = [
+    formatPanelText(design.content, context, 2_000),
+    options.outsideFile || preserveAttachment ? '' : design.outsideImageUrl
+  ].filter(Boolean).join('\n').slice(0, 2_000);
+  const components = [buildPanelNavigation(period, snapshot.panelTexts || {}, period)];
+  const tieDropdown = buildTieDropdown(guild, snapshot, period);
+  if (tieDropdown) components.push(tieDropdown);
+  const payload = {
+    content: content || undefined,
+    embeds: [embed],
+    components,
+    allowedMentions: { parse: [] }
+  };
+  if (options.outsideFile) {
+    payload.files = [{ attachment: options.outsideFile, name: options.outsideFileName || 'fallen-heaven-activity.png' }];
+    payload.attachments = [];
+  } else if (preserveAttachment) {
+    payload.attachments = [{ id: savedAttachment.id }];
+  } else if (options.removeOutsideImage === true) {
+    payload.attachments = [];
+  }
+  return payload;
+};
+
+const personalRankingField = (rows, userId, metric, period = 'daily') => {
   const entry = rows?.find?.((row) => String(row.userId) === String(userId));
   if (!entry) return 'Noch keine belastbare Platzierung verfügbar.';
   const value = metric === 'messages'
@@ -1216,29 +2482,33 @@ const personalRankingField = (rows, userId, metric) => {
     : formatVoice(entry.value);
   const tied = rows.filter((row) => Number(row.value || 0) === Number(entry.value || 0)).length;
   const tie = tied > 1 ? `\nGleichstand mit ${tied - 1} ${tied === 2 ? 'weiteren Person' : 'weiteren Personen'}.` : '';
-  const inactive = Number(entry.value || 0) > 0 ? '' : '\nHeute wurde in dieser Kategorie noch keine Aktivität gewertet.';
+  const inactive = Number(entry.value || 0) > 0 ? '' : '\nIn diesem Zeitraum wurde in dieser Kategorie noch keine Aktivität gewertet.';
   return `Platz **${Number(entry.rank || 0)} von ${rows.length}**\n> **${value}**${tie}${inactive}`;
 };
 
-const buildPersonalRankPayload = (guild, snapshot, userId) => {
-  const daily = snapshot?.periods?.daily || {};
+const buildPersonalRankPayload = (guild, snapshot, userId, period = 'daily') => {
+  const selectedPeriod = PERIODS[period] ? period : 'daily';
+  const rank = snapshot?.periods?.[selectedPeriod] || {};
   const member = guild?.members?.cache?.get?.(String(userId));
+  const titlePrefix = selectedPeriod === 'daily' ? 'heutiger'
+    : selectedPeriod === 'weekly' ? 'wöchentlicher'
+      : 'monatlicher';
   const embed = new EmbedBuilder()
-    .setColor(PERIODS.daily.color)
-    .setTitle('Dein heutiger Liga-Stand')
-    .setDescription('Deine persönliche Platzierung unter allen aktuellen Mitgliedern. Der Tagesstand reagiert live auf neue gewertete Aktivität.')
+    .setColor(PERIODS[selectedPeriod].color)
+    .setTitle(`Dein ${titlePrefix} Liga-Stand`)
+    .setDescription('Deine persönliche Platzierung unter allen aktuellen Mitgliedern für genau diesen Zeitraum. Gleichstände erhalten denselben Rang.')
     .addFields(
-      { name: 'CHAT-RANG', value: personalRankingField(daily.fullChat || [], userId, 'messages'), inline: true },
-      { name: 'SPRACHCHAT-RANG', value: personalRankingField(daily.fullVoice || [], userId, 'voiceMilliseconds'), inline: true },
-      { name: 'ZEITRAUM', value: `${daily.start || '?'} – ${daily.end || '?'}`, inline: false }
+      { name: 'CHAT-RANG', value: personalRankingField(rank.fullChat || [], userId, 'messages', selectedPeriod), inline: true },
+      { name: 'SPRACHCHAT-RANG', value: personalRankingField(rank.fullVoice || [], userId, 'voiceMilliseconds', selectedPeriod), inline: true },
+      { name: 'ZEITRAUM', value: `${rank.start || '?'} – ${rank.end || '?'}`, inline: false }
     )
     .setFooter({ text: 'Nur du siehst diese Ansicht · Gleichstände erhalten denselben Rang' })
     .setTimestamp(new Date(snapshot.measuredAt || Date.now()));
-  const avatarUrl = resolveActivityRaceAvatar(member, { size: 128, extension: 'png' });
+  const avatarUrl = resolveAvatarUrl(member, { size: 128, extension: 'png' });
   if (avatarUrl) embed.setThumbnail(avatarUrl);
   return {
     embeds: [embed],
-    components: [buildPanelNavigation('personal')],
+    components: [buildPanelNavigation('personal', snapshot.panelTexts || {}, selectedPeriod)],
     allowedMentions: { parse: [] }
   };
 };
@@ -1263,11 +2533,11 @@ const buildRulesPayload = (guild, conf, timezone) => {
       },
       {
         name: 'ROLLENVERGABE',
-        value: '• **Tageswertung:** Platz 1, 2 und 3 erhalten ihre Rollen live; beim Überholen wechseln die Rollen automatisch\n• **Wochenwertung:** Rollen erst nach einer vollständig erfassten Kalenderwoche\n• **Monatswertung:** Rollen erst nach einem vollständig erfassten Kalendermonat\n• Die **Trennerrolle** wird mit jeder Liga-Auszeichnung automatisch vergeben und nach der letzten Auszeichnung wieder entzogen\n• Unvollständig erfasste Wochen oder Monate werden sicher übersprungen\n• Abgeschlossene Wochen- und Monatssieger behalten ihre Rolle bis zur nächsten gültigen Endwertung'
+        value: '• **Tageswertung:** Platz 1, 2 und 3 erhalten ihre Rollen live; beim Überholen wechseln die Rollen automatisch\n• **Wochenwertung:** Chat und Sprachchat werden nach einer vollständig erfassten Kalenderwoche getrennt vergeben\n• **Monatswertung:** Chat und Sprachchat werden nach einem vollständig erfassten Kalendermonat getrennt vergeben\n• Die **Trennerrolle** wird mit jeder Liga-Auszeichnung automatisch vergeben und nach der letzten Auszeichnung wieder entzogen\n• Nur die unvollständig erfasste Messart wird sicher übersprungen; vollständige Daten bleiben auszeichnungsfähig\n• Abgeschlossene Wochen- und Monatssieger behalten ihre Rolle bis zur nächsten gültigen Endwertung'
       }
     )
     .setFooter({ text: 'Diese Ansicht ist nur für dich sichtbar.' });
-  return { embeds: [embed], components: [buildPanelNavigation('rules')], allowedMentions: { parse: [] } };
+  return { embeds: [embed], components: [buildPanelNavigation('rules', conf)], allowedMentions: { parse: [] } };
 };
 
 const normalizedChannelName = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('de-DE').replace(/[^a-z0-9]/g, '');
@@ -1290,7 +2560,8 @@ const ensurePanel = async (runtime, {
   force = false,
   outsideFile = null,
   outsideFileName = '',
-  removeOutsideImage = false
+  removeOutsideImage = false,
+  outsideImagePeriod = 'daily'
 } = {}) => {
   if (!runtime.conf.enabled || !hasCompleteRoleSet(runtime.conf) || runtime.panelRunning) return null;
   if (!force && Date.now() - runtime.lastPanelAt < 55_000) return null;
@@ -1298,35 +2569,105 @@ const ensurePanel = async (runtime, {
   try {
     await reconcileActivityFromServerIndex(runtime);
     await settleVoice(runtime);
+    await reconcileVoiceFromLogs(runtime);
     const data = await guildData(runtime.guild.id);
-    if (!runtime.conf.panelChannelId) await runtime.guild.channels.fetch().catch(() => null);
-    const channel = panelChannel(runtime.guild, runtime.conf);
+    // Cache zuerst: Der Gateway-Cache kennt normalerweise alle Kanäle. Nur
+    // wenn der Auto-Detect im Cache nichts findet, wird einmal komplett von
+    // Discord geladen – nicht bei jedem Panel-Refresh ein Vollabruf.
+    let channel = panelChannel(runtime.guild, runtime.conf);
+    if (!channel && !runtime.conf.panelChannelId) {
+      await runtime.guild.channels.fetch().catch(() => null);
+      channel = panelChannel(runtime.guild, runtime.conf);
+    }
     if (!channel) throw new Error('Der Textkanal „aktivität-liga“ wurde nicht gefunden. Du kannst alternativ einen Kanal auswählen.');
     validatePanelPermissions(channel);
     const snapshot = buildPanelSnapshot(runtime.guild, data, runtime.conf, runtime.timezone);
-    let message = null;
-    if (data.panel.messageId && data.panel.channelId === channel.id) message = await channel.messages.fetch(data.panel.messageId).catch(() => null);
-    const payload = buildPanelPayload(runtime.guild, snapshot, {
-      outsideFile,
-      outsideFileName,
-      removeOutsideImage: removeOutsideImage || Boolean(message && !runtime.conf.panelDesign?.outsideImageAttachment),
-      preserveAttachment: Boolean(message && !outsideFile && !removeOutsideImage)
-    });
-    if (!message) {
-      if (data.panel.messageId && data.panel.channelId && data.panel.channelId !== channel.id) {
-        const oldChannel = runtime.guild.channels.cache.get(data.panel.channelId);
-        await oldChannel?.messages?.fetch?.(data.panel.messageId).then((oldMessage) => oldMessage.delete()).catch(() => null);
+    data.panel.messages ||= {};
+    const legacyMessageId = String(data.panel.messageId || '');
+    const results = {};
+    let firstMessage = null;
+    let outsideImageMessage = null;
+    let periodMessageCreated = false;
+    const targetOutsidePeriod = ['weekly', 'monthly'].includes(outsideImagePeriod) ? outsideImagePeriod : 'daily';
+    for (const period of ['daily', 'weekly', 'monthly']) {
+      const entry = data.panel.messages[period] || {};
+      let message = null;
+      if (entry.messageId && entry.channelId === channel.id) message = await channel.messages.fetch(entry.messageId).catch(() => null);
+      if (!message && period === 'daily' && legacyMessageId && data.panel.channelId === channel.id) {
+        message = await channel.messages.fetch(legacyMessageId).catch(() => null);
       }
-      message = await channel.send(payload);
-      data.panel = { channelId: channel.id, messageId: message.id };
-      scheduleSave();
-    } else await message.edit(payload);
+      const designKey = panelDesignKeyForPeriod(period);
+      const periodDesign = runtime.conf[designKey] || runtime.conf.panelDesign;
+      const periodHasAttachment = Boolean(normalizePanelDesign(periodDesign).outsideImageAttachment);
+      const isOutsideTarget = period === targetOutsidePeriod;
+      const payload = buildPeriodPanelPayload(runtime.guild, snapshot, period, {
+        outsideFile: isOutsideTarget ? outsideFile : null,
+        outsideFileName,
+        removeOutsideImage: isOutsideTarget && (removeOutsideImage || Boolean(message && !periodHasAttachment)),
+        preserveAttachment: isOutsideTarget && Boolean(message && !outsideFile && !removeOutsideImage)
+      });
+      if (!payload) {
+        if (message?.author?.id === runtime.guild.members.me?.id) await message.delete().catch(() => null);
+        data.panel.messages[period] = { channelId: '', messageId: '' };
+        continue;
+      }
+      if (!message) {
+        message = await channel.send(payload);
+        periodMessageCreated = true;
+      } else await message.edit(payload);
+      data.panel.messages[period] = { channelId: channel.id, messageId: message.id };
+      results[period] = { channelId: channel.id, messageId: message.id };
+      if (!firstMessage) firstMessage = message;
+      if (isOutsideTarget) outsideImageMessage = message;
+    }
+    const previousPingInfo = data.panel.pingInfo || {};
+    let pingInfoMessage = null;
+    if (previousPingInfo.messageId && previousPingInfo.channelId === channel.id) {
+      pingInfoMessage = await channel.messages.fetch(previousPingInfo.messageId).catch(() => null);
+    }
+    // Sobald ein Perioden-Embed neu unterhalb des Info-Panels entstanden ist,
+    // wird nur das Info-Panel neu gesendet. So bleibt es garantiert die letzte
+    // Liga-Nachricht, ohne die drei Ranking-Nachrichten anzufassen.
+    if (pingInfoMessage && periodMessageCreated) {
+      if (pingInfoMessage.author?.id === runtime.guild.members.me?.id) await pingInfoMessage.delete().catch(() => null);
+      pingInfoMessage = null;
+    }
+    if (!pingInfoMessage && previousPingInfo.messageId && previousPingInfo.channelId && previousPingInfo.channelId !== channel.id) {
+      const oldChannel = runtime.guild.channels.cache.get(previousPingInfo.channelId);
+      await oldChannel?.messages?.fetch?.(previousPingInfo.messageId)
+        .then((oldMessage) => oldMessage.author?.id === runtime.guild.members.me?.id ? oldMessage.delete() : null)
+        .catch(() => null);
+    }
+    const infoFingerprint = pingInfoFingerprint(runtime.conf);
+    if (!pingInfoMessage || previousPingInfo.fingerprint !== infoFingerprint) {
+      const pingInfoPayload = await buildPingInfoPanelPayload(runtime.guild, runtime.conf);
+      if (!pingInfoMessage) pingInfoMessage = await channel.send(pingInfoPayload);
+      else await pingInfoMessage.edit(pingInfoPayload);
+    }
+    data.panel.pingInfo = {
+      channelId: channel.id,
+      messageId: String(pingInfoMessage?.id || ''),
+      fingerprint: infoFingerprint
+    };
+    if (legacyMessageId && data.panel.channelId && data.panel.channelId !== channel.id) {
+      const oldChannel = runtime.guild.channels.cache.get(data.panel.channelId);
+      await oldChannel?.messages?.fetch?.(legacyMessageId).then((oldMessage) => oldMessage.delete()).catch(() => null);
+    }
+    data.panel = {
+      channelId: channel.id,
+      messageId: data.panel.messages.daily?.messageId || firstMessage?.id || '',
+      messages: data.panel.messages,
+      pingInfo: data.panel.pingInfo
+    };
+    scheduleSave();
     runtime.lastPanelAt = Date.now();
     runtime.lastPanelError = '';
-    const attachment = message.attachments?.first?.();
+    const attachment = outsideImageMessage?.attachments?.first?.();
     return {
       channelId: channel.id,
-      messageId: message.id,
+      messageId: data.panel.messageId,
+      messages: results,
+      pingInfo: { channelId: channel.id, messageId: data.panel.pingInfo.messageId },
       snapshot,
       outsideImageAttachment: attachment ? {
         id: String(attachment.id || ''),
@@ -1350,20 +2691,25 @@ const configuredAwardRoles = (conf) => Object.fromEntries(Object.keys(PERIODS).m
 const buildRoleAssignmentPlan = (conf, awards) => {
   const roles = configuredAwardRoles(conf);
   const separatorRoleId = String(conf?.separatorRoleId || '').trim();
+  // Rolle → gewünschte Mitglieder (Array: bei Gleichstand mehrere User pro Platz).
   const desiredByRole = new Map();
   for (const period of Object.keys(PERIODS)) {
     for (const metric of ['chat', 'voice']) {
-      const winners = awards?.periods?.[period]?.[`${metric}WinnerIds`] || [];
+      // Tie-bewusst: exakt gleiche Werte erhalten denselben Platz – alle teilen
+      // sich dann die Platz-Rolle, statt künstlich 1/2/3 verteilt zu werden.
+      const groups = placementGroups(awards?.periods?.[period]?.[metric] || [], 3);
       roles[period][metric].forEach((roleId, index) => {
-        if (roleId) desiredByRole.set(String(roleId), String(winners[index] || ''));
+        if (roleId) desiredByRole.set(String(roleId), groups[index] || []);
       });
     }
   }
   const desiredRolesByUser = new Map();
-  for (const [roleId, userId] of desiredByRole.entries()) {
-    if (!userId) continue;
-    if (!desiredRolesByUser.has(userId)) desiredRolesByUser.set(userId, []);
-    desiredRolesByUser.get(userId).push(roleId);
+  for (const [roleId, userIds] of desiredByRole.entries()) {
+    for (const userId of userIds) {
+      if (!userId) continue;
+      if (!desiredRolesByUser.has(userId)) desiredRolesByUser.set(userId, []);
+      desiredRolesByUser.get(userId).push(roleId);
+    }
   }
   if (separatorRoleId) {
     for (const wanted of desiredRolesByUser.values()) {
@@ -1430,13 +2776,31 @@ const clearAwardRoles = async (runtime, sourceConf = runtime.conf) => {
 };
 const removePanel = async (runtime) => {
   const data = await guildData(runtime.guild.id);
-  if (!data.panel.messageId) return false;
-  const channel = runtime.guild.channels.cache.get(data.panel.channelId);
-  const message = await channel?.messages?.fetch?.(data.panel.messageId).catch(() => null);
-  if (message?.author?.id === runtime.guild.members.me?.id) await message.delete().catch(() => null);
-  data.panel = { channelId: '', messageId: '' };
+  const entries = Object.values(data.panel.messages || {});
+  if (data.panel.pingInfo?.messageId) entries.push(data.panel.pingInfo);
+  if (data.panel.messageId) entries.push({ channelId: data.panel.channelId, messageId: data.panel.messageId });
+  let removed = false;
+  const seen = new Set();
+  for (const entry of entries) {
+    const key = `${entry.channelId}:${entry.messageId}`;
+    if (!entry.channelId || !entry.messageId || seen.has(key)) continue;
+    seen.add(key);
+    const channel = runtime.guild.channels.cache.get(entry.channelId);
+    const message = await channel?.messages?.fetch?.(entry.messageId).catch(() => null);
+    if (message?.author?.id === runtime.guild.members.me?.id) {
+      removed = true;
+      await message.delete()
+        .catch((error) => quietLog(QUIET_LOG_SCOPE.activityRace, error, `Ranglisten-Panel löschen fehlgeschlagen: Kanal ${entry.channelId}`));
+    }
+  }
+  data.panel = {
+    channelId: '',
+    messageId: '',
+    messages: Object.fromEntries(Object.keys(PERIODS).map((period) => [period, { channelId: '', messageId: '' }])),
+    pingInfo: { channelId: '', messageId: '', fingerprint: '' }
+  };
   scheduleSave();
-  return true;
+  return removed;
 };
 const reconcileRoles = async (runtime, { force = false } = {}) => {
   if (!runtime.conf.enabled || !hasCompleteRoleSet(runtime.conf) || runtime.rolesRunning) return null;
@@ -1445,8 +2809,22 @@ const reconcileRoles = async (runtime, { force = false } = {}) => {
   try {
     await reconcileActivityFromServerIndex(runtime);
     await settleVoice(runtime);
+    await reconcileVoiceFromLogs(runtime);
     const data = await guildData(runtime.guild.id);
     ensureTrackingWindow(data, runtime.timezone);
+    // Nach Updates/Offline-Starts wurde zunächst nur das enge jüngste Fenster
+    // nachgezogen. Für Langzeitrollen einmalig den vollständigen relevanten
+    // Bereich bestätigen; der persistierte Chat-Coverage-Marker verhindert
+    // weitere Vollscans bei späteren 30-Sekunden-Abgleichen.
+    const today = localDateKey(Date.now(), runtime.timezone);
+    const requiredChatStart = completedPeriodRange('monthly', today).start;
+    const chatCompleteFrom = String(data.trackingCompleteFromByMetric?.chat || data.trackingCompleteFrom || '');
+    if (!chatCompleteFrom || chatCompleteFrom > requiredChatStart) {
+      await reconcileActivityFromServerIndex(runtime, {
+        force: true,
+        rangeOverride: indexedBackfillRange(runtime.timezone)
+      });
+    }
     const snapshot = buildSnapshot(runtime.guild, data, runtime.conf, runtime.timezone);
     const awards = buildAwardSnapshot(runtime.guild, data, runtime.conf, runtime.timezone);
     await validateConfiguredRoleSet(runtime);
@@ -1454,6 +2832,47 @@ const reconcileRoles = async (runtime, { force = false } = {}) => {
     const affected = new Set([...desiredRolesByUser.keys()]);
     for (const member of runtime.guild.members.cache.values()) {
       if (managedRoleIds.some((roleId) => member.roles.cache.has(roleId))) affected.add(member.id);
+    }
+    // Platzierungs-Pings VOR den Rollen-API-Calls senden: Die Ping-Nachricht
+    // soll genauso schnell erscheinen wie das Embed-Update und nicht erst,
+    // nachdem alle Rollen-Änderungen über die Discord-API durch sind.
+    // Nur wenn sich die REIHENFOLGE der Top-3 geändert hat, wird gepingt.
+    // => Kein Spam mehr bei jedem Tick weil Voice-Time um 1 Sek. steigt.
+    // Persistenter Fingerprint überlebt Neustarts – beim ersten Durchlauf
+    // wird der gespeicherte Stand geladen, damit nach einem Neustart nicht
+    // sofort alle Pings feuern.
+    await ensurePingCooldownsLoaded(runtime.guild.id);
+    const currentFingerprint = {};
+    for (const period of Object.keys(PERIODS)) {
+      for (const metric of ['chat', 'voice']) {
+        const scopeKey = `${period}.${metric}`;
+        const groups = placementGroups(awards?.periods?.[period]?.[metric] || [], 3);
+        currentFingerprint[scopeKey] = groups.flat().slice(0, 3).join(',');
+      }
+    }
+    const prevFingerprint = runtime.previousRankingFingerprint || data.rankingFingerprint || {};
+    const rankingChanged = Object.keys(currentFingerprint).some(
+      (key) => currentFingerprint[key] !== prevFingerprint[key]
+    );
+    runtime.previousRankingFingerprint = currentFingerprint;
+    // Persistent speichern (fire-and-forget)
+    data.rankingFingerprint = { ...currentFingerprint };
+    scheduleSave();
+    const plannedChanges = [];
+    for (const userId of affected) {
+      const member = runtime.guild.members.cache.get(userId);
+      if (!member || member.user?.bot) continue;
+      const wanted = desiredRolesByUser.get(userId) || [];
+      const remove = managedRoleIds.filter((roleId) => member.roles.cache.has(roleId) && !wanted.includes(roleId));
+      const add = wanted.filter((roleId) => !member.roles.cache.has(roleId));
+      if (add.length || remove.length) plannedChanges.push({ userId, addedRoleIds: add, removedRoleIds: remove });
+    }
+    // Ping NUR wenn sich die Rangfolge geändert hat (jemand hat überholt/abgestiegen)
+    // UND der Bot mindestens einmal die Rollen synchronisiert hat (Baseline).
+    // Erst nach dem ersten成功的 Rollen-Sync wird ge pingt, damit
+    // nach einem Neustart erstmal die Basislinie steht.
+    if (plannedChanges.length && runtime.placementPingReady && rankingChanged) {
+      await sendPlacementPings(runtime, plannedChanges, runtime.conf);
     }
     const changes = [];
     const errors = [];
@@ -1481,9 +2900,8 @@ const reconcileRoles = async (runtime, { force = false } = {}) => {
     }
     // Der erste Lauf nach Start/Aktivierung ist die Baseline: Die Rollen werden
     // erstmals synchronisiert und lösen bewusst keine Platzierungs-Pings aus.
-    if (changes.length && runtime.placementPingReady) {
-      await sendPlacementPings(runtime, changes, runtime.conf);
-    }
+    // (Die Pings wurden oben bereits vor den Rollen-API-Calls gesendet –
+    // dieser Block bleibt für die Baseline-Flag und Fehler-Härtung erhalten.)
     runtime.placementPingReady = true;
     // Soeben abgeschlossene Woche/Monat einmalig ankündigen (Sieger + Trophys).
     // Erst nach dem Rollen-Abgleich, damit ein Fehler oben nicht den Zeitraum
@@ -1535,11 +2953,23 @@ const schedulePanelRefresh = (runtime) => {
 const startRuntime = (runtime) => {
   clearInterval(runtime.tickTimer);
   runtime.tickTimer = setInterval(() => {
-    void reconcileActivityFromServerIndex(runtime).then(() => settleVoice(runtime)).then(() => {
-      scheduleRoleReconcile(runtime);
-      schedulePanelRefresh(runtime);
-      void guildData(runtime.guild.id).then((data) => { if (pruneOldDays(data, runtime.timezone)) scheduleSave(); });
-    }).catch((error) => { runtime.lastError = String(error?.message || error).slice(0, 500); });
+    // Index-Nachzug nur über das enge Fenster (letzte 3 Tage) statt der
+    // 400-Tage-Retention – die Live-Zählung deckt alles laufend ab.
+    void reconcileActivityFromServerIndex(runtime, { rangeOverride: recentBackfillRange(runtime.timezone) })
+      .then(() => settleVoice(runtime))
+      .then(() => reconcileVoiceFromLogs(runtime))
+      .then(() => {
+        scheduleRoleReconcile(runtime);
+        schedulePanelRefresh(runtime);
+        void guildData(runtime.guild.id).then((data) => { if (pruneOldDays(data, runtime.timezone)) scheduleSave(); });
+        // Heartbeat: minütlich in die winzige separate Datei persistieren.
+        void touchHeartbeat(runtime.guild.id).then(() => { if (heartbeatPersistDue(runtime)) scheduleHeartbeatSave(); });
+        // Sicherheitsnetz: überfällige Ping-Löschungen auch zwischendurch nachholen.
+        void catchUpPendingPingDeletes(runtime).catch(() => null);
+        // Drosselter Discord-Nachzug (max. alle 10 Minuten) als Sicherheitsnetz.
+        void recoverDailyMessagesFromDiscord(runtime).catch(() => null);
+      })
+      .catch((error) => { runtime.lastError = String(error?.message || error).slice(0, 500); });
   }, TICK_MS);
   runtime.tickTimer.unref?.();
 };
@@ -1624,12 +3054,15 @@ export const createActivityRaceRoleSet = async ({ guild, token, actorId = '' } =
 
 export const getActivityRaceSnapshot = async (guild) => {
   if (!guild) throw new Error('Server wurde nicht gefunden.');
-  await ensureCompleteMemberCache(guild);
+  // Manuelle Snapshot-Abfrage (Nutzer öffnet die Seite): Cooldown umgehen,
+  // damit die Mitgliederliste nach einem Neustart sofort vollständig ist.
+  await ensureCompleteMemberCache(guild, { force: true });
   const runtime = runtimes.get(String(guild.id));
   const conf = runtime?.conf || normalizeConfig();
   if (runtime) {
-    await reconcileActivityFromServerIndex(runtime);
+    await reconcileActivityFromServerIndex(runtime, { rangeOverride: recentBackfillRange(runtime.timezone) });
     await settleVoice(runtime);
+    await reconcileVoiceFromLogs(runtime);
   }
   const data = await guildData(guild.id);
   const timezone = runtime?.timezone || 'Europe/Berlin';
@@ -1641,6 +3074,7 @@ export const getActivityRaceSnapshot = async (guild) => {
     enabled: conf.enabled,
     panel: { ...data.panel, selectedPeriod: 'daily', lastError: runtime?.lastPanelError || '' },
     indexBackfill: { ...data.indexBackfill },
+    voiceIndexBackfill: { ...data.voiceIndexBackfill },
     roles: ACTIVITY_RACE_ROLE_DEFINITIONS.map((definition) => ({
       key: definition.key,
       label: definition.label,
@@ -1652,19 +3086,30 @@ export const getActivityRaceSnapshot = async (guild) => {
     storedDays: Object.keys(data.days || {}).length
   };
 };
+// Liefert die aktuellen Top-3-User-IDs der Tageswertung (Chat + Sprachchat) –
+// genutzt vom Leveling für den täglichen Aktivitäts-Bonus.
+export const getDailyTopMemberIds = async (guild, timezone = 'Europe/Berlin') => {
+  if (!guild?.id) return { chat: [], voice: [] };
+  const data = await guildData(guild.id);
+  const snapshot = periodSnapshot(guild, data, {}, 'daily', timezone);
+  return { chat: snapshot.chatWinnerIds, voice: snapshot.voiceWinnerIds };
+};
+
 export const refreshActivityRace = async ({ guild, conf } = {}) => {
   const runtime = ensureRuntime(guild, conf);
   runtime.timezone = String(conf?.generalTimezone || runtime.timezone || 'Europe/Berlin');
   const backfill = await reconcileActivityFromServerIndex(runtime, { force: true });
+  const recovered = await recoverDailyMessagesFromDiscord(runtime, { force: true }).catch(() => null);
   const roles = await reconcileRoles(runtime, { force: true });
   const panel = await ensurePanel(runtime, { force: true });
-  return { backfill, roles, panel };
+  return { backfill, recovered, roles, panel };
 };
 
 export const applyActivityRacePanelDesign = async ({
   guild,
   conf = {},
   panelDesign = {},
+  section = 'daily',
   panelChannelId = '',
   outsideFile = null,
   outsideFileName = '',
@@ -1672,7 +3117,8 @@ export const applyActivityRacePanelDesign = async ({
 } = {}) => {
   if (!guild) throw new Error('Server wurde nicht gefunden.');
   if (outsideFile && outsideFile.length > 25 * 1024 * 1024) throw new Error('Das Außenbild darf maximal 25 MB groß sein.');
-  const nextDesign = normalizePanelDesign(panelDesign);
+  const designKey = panelDesignKeyForPeriod(section);
+  let nextDesign = normalizePanelDesign(panelDesign);
   if (outsideFile) {
     nextDesign.outsideImageUrl = '';
     nextDesign.outsideImageAttachment = null;
@@ -1684,7 +3130,7 @@ export const applyActivityRacePanelDesign = async ({
   const runtime = ensureRuntime(guild, {
     ...conf,
     panelChannelId: String(panelChannelId || conf?.panelChannelId || '').trim(),
-    panelDesign: nextDesign
+    [designKey]: nextDesign
   });
   runtime.timezone = String(conf?.generalTimezone || runtime.timezone || 'Europe/Berlin');
 
@@ -1697,36 +3143,117 @@ export const applyActivityRacePanelDesign = async ({
       force: true,
       outsideFile,
       outsideFileName: String(outsideFileName || 'fallen-heaven-activity.png').replace(/[^a-z0-9._-]/gi, '_').slice(-120),
-      removeOutsideImage
+      removeOutsideImage,
+      outsideImagePeriod: section
     });
     if (outsideFile && panel?.outsideImageAttachment) {
       nextDesign.outsideImageUrl = panel.outsideImageAttachment.url;
       nextDesign.outsideImageAttachment = normalizePanelAttachment(panel.outsideImageAttachment);
-      runtime.conf.panelDesign = normalizePanelDesign(nextDesign);
+      runtime.conf[designKey] = normalizePanelDesign(nextDesign);
     }
   }
   return {
     panelDesign: normalizePanelDesign(nextDesign),
+    panelDesignKey: designKey,
     panelChannelId: runtime.conf.panelChannelId,
     panel
   };
+};
+
+// Beim Entfernen eines Servers alle Ressourcen freigeben: Timer stoppen,
+// Voice-States und Maps der Guild löschen – sonst bleibt der Runtime-Eintrag
+// samt Intervallen für immer im Speicher (Leak bei vielen Serverwechseln).
+const releaseRuntime = (guildId) => {
+  const id = String(guildId || '');
+  const runtime = runtimes.get(id);
+  if (runtime) {
+    clearInterval(runtime.tickTimer);
+    clearTimeout(runtime.roleTimer);
+    clearTimeout(runtime.panelTimer);
+    runtime.voiceStates.clear();
+    runtimes.delete(id);
+  }
+  const prefix = `${id}:`;
+  for (const key of messageGuards.keys()) if (String(key).startsWith(prefix)) messageGuards.delete(key);
+  for (const [key, entry] of pendingPingDeleteTimers) {
+    if (String(entry?.guildId || '') === id) {
+      const timer = entry?.timer;
+      if (timer) clearTimeout(timer);
+      pendingPingDeleteTimers.delete(key);
+    }
+  }
+  return Boolean(runtime);
+};
+
+// Sauberes Herunterfahren: Heartbeat für alle bekannten Server sofort
+// persistieren, damit das Offline-Fenster beim nächsten Start exakt ist
+// (statt erst beim nächsten minütlichen Heartbeat). Wird von index.js bei
+// SIGINT/SIGTERM aufgerufen – ein Absturz/Power-Loss deckt der minütliche
+// Heartbeat ab (Fenster startet dann max. ~90 s vor dem echten Ausfall).
+export const recordActivityRaceShutdown = async () => {
+  try {
+    const store = await ensureHeartbeatLoaded();
+    const now = new Date().toISOString();
+    const guildIds = Object.keys(store?.guilds || {});
+    if (!guildIds.length) return;
+    for (const guildId of guildIds) store.guilds[guildId] = now;
+    await flushHeartbeat();
+  } catch (error) {
+    console.warn(`[activityRace] Shutdown-Marker fehlgeschlagen: ${error?.message || error}`);
+  }
 };
 
 export const feature = {
   id: 'activityRace',
   name: 'Aktivitäts-Liga',
   commands: [],
+  async onGuildDelete({ guild }) {
+    await ensureLoaded();
+    releaseRuntime(guild?.id);
+  },
   async onClientReady({ guild, cfg }) {
     await ensureLoaded();
     await guild.members.fetch().catch(() => null);
     const runtime = ensureRuntime(guild, cfg?.activityRace);
     runtime.timezone = String(cfg?.general?.timezone || 'Europe/Berlin');
+    runtime.voiceLogConfig = { ...(cfg?.voiceLogImport || {}) };
     hydrateVoiceStates(runtime);
-    startRuntime(runtime);
+    if (runtime.conf.enabled) startRuntime(runtime);
+    // Pings nachholen, deren Lösch-Zeitpunkt während eines Bot-Ausfalls ablief.
+    await catchUpPendingPingDeletes(runtime).catch(() => null);
     const data = await guildData(guild.id);
     if (pruneOldDays(data, runtime.timezone)) scheduleSave();
     if (runtime.conf.enabled) {
-      await reconcileActivityFromServerIndex(runtime, { force: true });
+      const offline = await computeOfflineWindow(guild.id);
+      if (offline?.kind === 'offline') {
+        // Chat lässt sich aus Nachrichten und Index exakt nachziehen. Voice
+        // bleibt unangetastet, weil Discord keine historische Call-Belegung
+        // liefert und die aktuelle Besetzung keinen Rückschluss erlaubt.
+        const today = localDateKey(offline.untilMs, runtime.timezone);
+        const startDay = localDateKey(offline.sinceMs, runtime.timezone);
+        await reconcileActivityFromServerIndex(runtime, {
+          force: true,
+          rangeOverride: { start: startDay, end: today, endExclusive: shiftDateKey(today, 1) }
+        }).catch(() => null);
+        await recoverDailyMessagesFromDiscord(runtime, { force: true, sinceMs: offline.sinceMs }).catch(() => null);
+        await recordOfflineWindow(guild.id, offline);
+      } else if (offline?.kind === 'first-boot') {
+        // Erststart (nie ein Heartbeat): einmaliger Voll-Nachzug der Historie.
+        await reconcileActivityFromServerIndex(runtime, { force: true }).catch(() => null);
+        await recoverDailyMessagesFromDiscord(runtime, { force: true }).catch(() => null);
+      }
+      await runVoiceLogBackfill({
+        guild,
+        cfg: { voiceLogImport: runtime.voiceLogConfig || {} },
+        source: 'activity-race'
+      }).catch((error) => {
+        runtime.lastError = `Voice-Backfill: ${String(error?.message || error).slice(0, 450)}`;
+      });
+      await reconcileVoiceFromLogs(runtime).catch((error) => {
+        runtime.lastError = `Voice-Index: ${String(error?.message || error).slice(0, 450)}`;
+      });
+      // Sauberer Lauf (kein Ausfall, kein Erststart): keine Voll-Scans nötig –
+      // die Live-Zählung und der enge Tick-Nachzug decken alles ab.
       await reconcileRoles(runtime, { force: true }).catch((error) => { runtime.lastRoleError = String(error?.message || error); });
       await ensurePanel(runtime, { force: true }).catch((error) => { runtime.lastPanelError = String(error?.message || error); });
     }
@@ -1737,11 +3264,14 @@ export const feature = {
     if (existing) await settleVoice(existing);
     const runtime = ensureRuntime(guild, cfg?.activityRace);
     runtime.timezone = String(cfg?.general?.timezone || 'Europe/Berlin');
-    if (!runtime.tickTimer) { hydrateVoiceStates(runtime); startRuntime(runtime); }
+    runtime.voiceLogConfig = { ...(cfg?.voiceLogImport || {}) };
+    if (!runtime.tickTimer && runtime.conf.enabled) { hydrateVoiceStates(runtime); startRuntime(runtime); }
     if (runtime.conf.enabled) {
       scheduleRoleReconcile(runtime);
       schedulePanelRefresh(runtime);
     } else if (previousConf.enabled) {
+      clearInterval(runtime.tickTimer);
+      runtime.tickTimer = null;
       clearTimeout(runtime.roleTimer);
       clearTimeout(runtime.panelTimer);
       runtime.roleTimer = null;
@@ -1764,7 +3294,7 @@ export const feature = {
   async onVoiceStateUpdate({ oldState, newState, cfg, guild }) {
     const runtime = ensureRuntime(guild, cfg?.activityRace);
     runtime.timezone = String(cfg?.general?.timezone || 'Europe/Berlin');
-    await settleVoice(runtime);
+    await settleVoice(runtime, Date.now(), { reconcile: false });
     const userId = String(newState?.id || oldState?.id || '');
     if (!userId || newState?.member?.user?.bot || oldState?.member?.user?.bot) runtime.voiceStates.delete(userId);
     else if (newState?.channelId) runtime.voiceStates.set(userId, voiceStateRow(newState));
@@ -1787,35 +3317,124 @@ export const feature = {
     schedulePanelRefresh(runtime);
   },
   async onAnyInteraction({ interaction, cfg, guild }) {
-    if (!interaction.isButton?.() || !String(interaction.customId || '').startsWith(PANEL_PREFIX)) return;
-    const view = String(interaction.customId).slice(PANEL_PREFIX.length);
-    if (!['rules', 'personal'].includes(view)) return;
-    const runtime = ensureRuntime(guild, cfg?.activityRace);
-    const data = await guildData(guild.id);
-    const privateView = interaction.message?.flags?.has?.(MessageFlags.Ephemeral) === true;
-    const publicPanel = String(interaction.message?.id || '') === String(data.panel.messageId || '');
-    if (!privateView && !publicPanel) {
-      await interaction.reply({ content: 'Dieses Ranglisten-Panel ist nicht mehr aktuell.', flags: MessageFlags.Ephemeral }).catch(() => null);
-      return;
+    // Button-Interaktionen: Rules, Personal, etc.
+    if (interaction.isButton?.() && String(interaction.customId || '').startsWith(PANEL_PREFIX)) {
+      const view = String(interaction.customId).slice(PANEL_PREFIX.length);
+      const [kind, period] = view.split(':');
+      if (kind === 'ping-toggle') return await handlePingToggleButton(interaction, guild);
+      if (!['rules', 'personal'].includes(kind)) return;
+      return await handlePanelButton(interaction, cfg, guild, kind, period);
     }
-    const acknowledged = privateView
-      ? await interaction.deferUpdate().then(() => true).catch(() => false)
-      : await interaction.deferReply({ flags: MessageFlags.Ephemeral }).then(() => true).catch(() => false);
-    if (!acknowledged) return;
-    await reconcileActivityFromServerIndex(runtime);
-    await settleVoice(runtime);
-    ensureTrackingWindow(data, runtime.timezone);
-    const snapshot = attachFullRankings(
-      guild,
-      data,
-      buildPanelSnapshot(guild, data, runtime.conf, runtime.timezone),
-      runtime.timezone
-    );
-    const payload = view === 'rules'
-      ? buildRulesPayload(guild, runtime.conf, runtime.timezone)
-      : buildPersonalRankPayload(guild, snapshot, interaction.user.id);
-    await interaction.editReply(payload);
+    // Select Menu: Gleichstand-Details
+    if (interaction.isStringSelectMenu?.() && String(interaction.customId || '').startsWith(PANEL_PREFIX)) {
+      const view = String(interaction.customId).slice(PANEL_PREFIX.length);
+      if (view !== 'tie-details') return;
+      return await handleTieDetails(interaction, cfg, guild);
+    }
   }
+};
+
+const handlePingToggleButton = async (interaction, guild) => {
+  if (interaction.user?.bot) return;
+  const acknowledged = await interaction.deferReply({ flags: MessageFlags.Ephemeral }).then(() => true).catch(() => false);
+  if (!acknowledged) return;
+  const data = await guildData(guild.id);
+  if (!isCurrentPingInfoMessage(data, interaction.message?.id)) {
+    await interaction.editReply('Dieses Liga-Ping-Panel ist nicht mehr aktuell. Nutze bitte den neuesten Button im Liga-Kanal.').catch(() => null);
+    return;
+  }
+  const enabled = setPlacementPingPreference(data, interaction.user.id, !isPlacementPingEnabled(data, interaction.user.id));
+  await flush();
+  const embed = new EmbedBuilder()
+    .setColor(enabled ? 0x57d9a3 : 0x747f8d)
+    .setTitle(enabled ? 'Liga-Pings aktiviert' : 'Liga-Pings deaktiviert')
+    .setDescription(enabled
+      ? 'Du wirst wieder erwähnt, wenn sich deine Platzierung in der Aktivitäts-Liga relevant verändert.'
+      : 'Du erhältst keine persönlichen Platzierungs-Pings mehr. Deine Aktivität und Platzierung werden weiterhin normal gewertet.')
+    .setFooter({ text: 'Diese Einstellung gilt nur für dich und kann jederzeit geändert werden.' });
+  await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => null);
+};
+
+// Handler für Button-Klicks (Rules, Personal)
+const handlePanelButton = async (interaction, cfg, guild, view, period = 'daily') => {
+  const runtime = ensureRuntime(guild, cfg?.activityRace);
+  const data = await guildData(guild.id);
+  const privateView = interaction.message?.flags?.has?.(MessageFlags.Ephemeral) === true;
+  const panelMessageIds = new Set([
+    String(data.panel.messageId || ''),
+    ...Object.values(data.panel.messages || {}).map((entry) => String(entry?.messageId || ''))
+  ].filter(Boolean));
+  const publicPanel = panelMessageIds.has(String(interaction.message?.id || ''));
+  if (!privateView && !publicPanel) {
+    await interaction.reply({ content: 'Dieses Ranglisten-Panel ist nicht mehr aktuell.', flags: MessageFlags.Ephemeral }).catch(() => null);
+    return;
+  }
+  const acknowledged = await interaction.deferReply({ flags: MessageFlags.Ephemeral }).then(() => true).catch(() => false);
+  if (!acknowledged) return;
+  await reconcileActivityFromServerIndex(runtime);
+  await settleVoice(runtime);
+  await reconcileVoiceFromLogs(runtime);
+  ensureTrackingWindow(data, runtime.timezone);
+  const snapshot = attachFullRankings(
+    guild,
+    data,
+    buildPanelSnapshot(guild, data, runtime.conf, runtime.timezone),
+    runtime.timezone
+  );
+  const payload = view === 'rules'
+    ? buildRulesPayload(guild, runtime.conf, runtime.timezone)
+    : buildPersonalRankPayload(guild, snapshot, interaction.user.id, period);
+  await interaction.editReply(payload);
+};
+
+// Handler für Gleichstand-Dropdown: Zeigt die geteilten Mitglieder als ephemeral Reply.
+const handleTieDetails = async (interaction, cfg, guild) => {
+  const acknowledged = await interaction.deferReply({ flags: MessageFlags.Ephemeral }).then(() => true).catch(() => false);
+  if (!acknowledged) return;
+  const runtime = ensureRuntime(guild, cfg?.activityRace);
+  const data = await guildData(guild.id);
+  await reconcileActivityFromServerIndex(runtime);
+  await settleVoice(runtime);
+  await reconcileVoiceFromLogs(runtime);
+  ensureTrackingWindow(data, runtime.timezone);
+  const snapshot = attachFullRankings(
+    guild,
+    data,
+    buildPanelSnapshot(guild, data, runtime.conf, runtime.timezone),
+    runtime.timezone
+  );
+  // Parse die Selection: fh-activity-race:tie:daily:chat:1
+  const selected = interaction.values?.[0] || '';
+  const parts = selected.replace(TIE_DROPDOWN_PREFIX, '').split(':');
+  const [period, metric, rankStr] = parts;
+  const rank = Number(rankStr);
+  const rankData = snapshot.periods?.[period];
+  if (!rankData) return interaction.editReply('Keine Daten für diesen Zeitraum vorhanden.').catch(() => null);
+  const rows = rankData[metric];
+  if (!rows?.length) return interaction.editReply('Keine Rankings vorhanden.').catch(() => null);
+  const rankedRows = metric === 'voice'
+    ? rows.map((r) => ({ ...r, value: Math.round(Number(r?.value || 0) / 60000) * 60000 }))
+    : rows;
+  const { visible } = computeRankings(rankedRows, snapshot.rankingDisplayCount);
+  const groups = computeRankGroups(visible);
+  const group = groups.find((g) => g.rank === rank);
+  if (!group || group.members.length <= 1) return interaction.editReply('Kein Gleichstand auf diesem Platz.').catch(() => null);
+  const periodTitle = PERIODS[period]?.title || period;
+  const metricLabel = metric === 'voice' ? 'Sprachchat' : 'Chat';
+  // Auch Gleichstands-Angaben duerfen keine stillgelegten Mitglieder anpingen.
+  const lines = group.members.map((m) => {
+    const member = guild?.members?.cache?.get?.(String(m.userId));
+    const name = member?.displayName || member?.user?.username || `User ${m.userId}`;
+    const value = formatPositionValue(m.value, metric === 'voice' ? 'voiceMilliseconds' : 'messages');
+    const mention = isPlacementPingEnabled(data, m.userId) ? `<@${m.userId}>` : name;
+    return `• ${mention} — **${value}**`;
+  });
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle(`Gleichstand: ${periodTitle} ${metricLabel} – Platz ${rank}`)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: `${group.members.length} Mitglieder teilen sich diesen Platz` });
+  await interaction.editReply({ embeds: [embed] }).catch(() => null);
 };
 
 export const _activityRaceInternals = {
@@ -1831,13 +3450,33 @@ export const _activityRaceInternals = {
   buildPanelSnapshot,
   buildAwardSnapshot,
   buildRoleAssignmentPlan,
+  placementGroups,
   rankMetric,
   meaningfulMessage,
   buildPanelPayload,
+  buildPeriodPanelPayload,
   buildRulesPayload,
   PING_PHRASES,
   pickPhrase,
   sendPlacementPings,
+  isPlacementPingEnabled,
+  setPlacementPingPreference,
+  filterPlacementPingLinesByPreference,
+  placementPingLines,
+  composePingContent,
+  neutralizeOptedOutMentions,
+  isCurrentPingInfoMessage,
+  buildPingInfoPanelPayload,
+  resetPingCooldowns,
+  normalizePendingPingDeletes,
+  registerPendingPingDelete,
+  catchUpPendingPingDeletes,
+  computeOfflineWindow,
+  reconcileVoiceStates,
+  recentBackfillRange,
+  touchHeartbeat,
+  flushHeartbeat,
+  flush,
   buildCompletionAnnouncement,
   announceCompletedPeriods,
   normalizePanelDesign,
@@ -1849,5 +3488,15 @@ export const _activityRaceInternals = {
   buildPersonalRankPayload,
   indexedBackfillRange,
   reconstructIndexedChatDays,
-  mergeIndexedChatDays
+  mergeIndexedChatDays,
+  buildVoiceLogDailyTotals,
+  replaceVoiceDaysFromLogs,
+  reliableVoiceLogStartDay,
+  reconcileVoiceFromLogs,
+  recoverDailyMessagesFromDiscord,
+  messageToIndexedRecord,
+  rankingLines,
+  getDailyTopMemberIds,
+  releaseRuntime,
+  recordActivityRaceShutdown
 };

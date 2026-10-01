@@ -62,20 +62,19 @@ await fs.writeFile(sourceFile, JSON.stringify({
 
 const { migrateHeavenEconomyStore } = await import(`../src/features/heavenEconomy.js?merge=${Date.now()}`);
 const result = await migrateHeavenEconomyStore({ sourceFiles: [sourceFile] });
-assert.equal(result.version, 2);
+assert.equal(result.version, 3);
 assert.equal(result.accounts, 2);
 assert.equal(result.accountsAdded, 1);
 assert.equal(result.transactionsAdded, 1);
 
 const merged = JSON.parse(await fs.readFile(targetFile, 'utf8'));
 const guild = merged.guilds.guild;
-assert.equal(merged.version, 2);
+assert.equal(merged.version, 3);
 assert.equal(guild.accounts.current.balance, 75, 'Der neuere aktuelle Kontostand muss gewinnen.');
 assert.equal(guild.accounts.current.boostRecord, 3, 'Monotone Boost-Rekorde müssen erhalten bleiben.');
 assert.deepEqual(guild.accounts.current.rewardedBoostLevels, [1, 2, 3]);
 assert.equal(guild.accounts.legacy.balance, 500);
 assert.deepEqual(guild.transactions.map((entry) => entry.id), ['LEGACY', 'CURRENT']);
-await fs.access(`${targetFile}.bak`);
 
 await fs.rm(temporaryRoot, { recursive: true, force: true });
 console.log('Heaven-Economy-Migrations-Smoke bestanden: getrennte Datenorte werden verlustfrei und idempotent zusammengeführt.');

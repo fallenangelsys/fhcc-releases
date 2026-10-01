@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 
 const skinEditor = readFileSync('desktop/renderer/skin-editor.js', 'utf8');
 const html = readFileSync('desktop/renderer/index.html', 'utf8');
-const server = readFileSync('src/index.js', 'utf8');
 
 const checks = [
   {
@@ -15,29 +14,37 @@ const checks = [
       && skinEditor.includes("Import · Overlay / 2. Ebene")
   },
   {
-    label: 'AI generator creates separate base/detail/overlay layers',
-    ok: skinEditor.includes('drawAiSkinBaseLayer')
-      && skinEditor.includes('drawAiSkinDetailLayer')
-      && skinEditor.includes('drawAiSkinOverlayLayer')
-      && skinEditor.includes('AI · Overlay / 2. Ebene')
+    label: 'Starter skin fallback draws separate base/detail/overlay layers',
+    ok: skinEditor.includes('drawStarterBaseLayer')
+      && skinEditor.includes('drawStarterDetailLayer')
+      && skinEditor.includes('drawStarterOverlayLayer')
+      && skinEditor.includes('FH · Hood & Outer-Layer')
   },
   {
-    label: 'AI assistant prompt requests UV and outer-layer design',
-    ok: server.includes('64x64-UV-Layout')
-      && server.includes('Base-Layer plus echte Outer-Layer-Details')
-      && server.includes('keine flachen Rechteckflächen')
+    label: 'No AI Skin Creator UI remains in the HTML',
+    ok: !html.includes('skin-ai-creator')
+      && !html.includes('skin-ai-open')
+      && !html.includes('skin-ai-prompt')
+      && !html.includes('AI SKIN CREATOR')
   },
   {
-    label: 'Skin Studio UI explains layered local generation',
-    ok: html.includes('UV-Flächen und Overlay') && html.includes('lokale Layer-Generator')
+    label: 'No AI generator code remains in the skin editor',
+    ok: !skinEditor.includes('createAiSkinLayers')
+      && !skinEditor.includes('generateAiSkin')
+      && !skinEditor.includes('normalizedSkinRecipe')
+      && !skinEditor.includes('skin-ai-')
+  },
+  {
+    label: 'No Ollama dependency remains in the skin generator',
+    ok: !skinEditor.includes('ollama') && !skinEditor.includes('Ollama') && !skinEditor.includes('/api/chat')
   }
 ];
 
 const failed = checks.filter((check) => !check.ok);
 if (failed.length) {
-  console.error('Skin editor layered AI smoke failed:');
+  console.error('Skin editor smoke failed:');
   for (const check of failed) console.error(`- ${check.label}`);
   process.exit(1);
 }
 
-console.log(`Skin editor layered AI smoke passed (${checks.length} checks).`);
+console.log(`Skin editor smoke passed (${checks.length} checks).`);

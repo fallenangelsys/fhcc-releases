@@ -1,9 +1,16 @@
 (() => {
   const storageKey = 'fh-app-theme';
+  const cycleOrder = ['dark', 'light', 'system'];
 
   function normalize(theme) {
     if (theme === 'system') return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     return theme === 'light' ? 'light' : 'dark';
+  }
+
+  function cycleLabel(stored) {
+    if (stored === 'system') return 'Dunkelmodus aktivieren';
+    if (stored === 'dark') return 'Hellmodus aktivieren';
+    return 'System-Theme aktivieren';
   }
 
   function controls() {
@@ -21,19 +28,22 @@
       localStorage.setItem(storageKey, requestedTheme === 'system' ? 'system' : theme);
       localStorage.setItem('fh-native-theme', theme);
     }
+    const stored = persist ? requestedTheme : (localStorage.getItem(storageKey) || 'dark');
     controls().forEach((toggle) => {
       toggle.setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
-      toggle.setAttribute('aria-label', theme === 'light' ? 'Dunkelmodus aktivieren' : 'Hellmodus aktivieren');
-      toggle.setAttribute('title', theme === 'light' ? 'Dunkelmodus aktivieren' : 'Hellmodus aktivieren');
+      toggle.setAttribute('aria-label', cycleLabel(stored));
+      toggle.setAttribute('title', cycleLabel(stored));
       toggle.dataset.theme = theme;
+      toggle.dataset.themeStored = stored;
     });
     document.querySelectorAll('[data-theme-select],#theme-select').forEach((select) => {
-      if (select.value !== requestedTheme && select.value !== theme) select.value = theme;
+      const mapped = stored === 'system' ? 'system' : theme;
+      if (select.value !== mapped) select.value = mapped;
     });
     document.querySelectorAll('iframe').forEach((frame) => {
       if (frame.contentWindow) frame.contentWindow.postMessage({ type: 'fallen-heaven-theme', theme }, '*');
     });
-    window.dispatchEvent(new CustomEvent('fallen-heaven:theme-changed', { detail: { theme } }));
+    window.dispatchEvent(new CustomEvent('fallen-heaven:theme-changed', { detail: { theme, stored } }));
   }
 
   const stored = localStorage.getItem(storageKey) || localStorage.getItem('fh-native-theme') || 'dark';
@@ -43,7 +53,9 @@
     if (!toggle) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    apply(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    const current = toggle.dataset.themeStored || localStorage.getItem(storageKey) || 'dark';
+    const nextIndex = (cycleOrder.indexOf(current) + 1) % cycleOrder.length;
+    apply(cycleOrder[nextIndex]);
   }, true);
   window.addEventListener('change', (event) => {
     if (event.target.matches('[data-theme-select],#theme-select')) apply(event.target.value);
@@ -52,6 +64,14 @@
     if (event.key === storageKey && event.newValue) apply(event.newValue, false);
   });
   window.addEventListener('fallen-heaven:set-theme', (event) => apply(event.detail?.theme || 'dark'));
+  window.addEventListener('os:theme-changed', (event) => {
+    if (localStorage.getItem(storageKey) === 'system') apply('system', false);
+  });
+  if (window.fallenHeaven?.onThemeChanged) {
+    window.fallenHeaven.onThemeChanged((theme) => {
+      if (localStorage.getItem(storageKey) === 'system') apply('system', false);
+    });
+  }
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (localStorage.getItem(storageKey) === 'system') apply('system', false);
   });

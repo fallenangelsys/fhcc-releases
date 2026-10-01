@@ -38,7 +38,10 @@ const publicDashboard = exists('public/aaa-dashboard.js') ? read('public/aaa-das
 const buildFiles = Array.isArray(packageJson.build?.files) ? packageJson.build.files : [];
 const unpack = Array.isArray(packageJson.build?.asarUnpack) ? packageJson.build.asarUnpack : [];
 
-check(/^3\.9\.\d+$/.test(String(packageJson.version || '')), 'App-Version muss auf einer gültigen FHCC-3.9-Releaseversion liegen.');
+// Erlaubt sind die 3.9-Nachfolge und ab 4.0.0 die neue Hauptlinie.
+// Fest verdrahtet war hier vorher nur /^3\.9\.\d+$/, wodurch jede
+// Hauptversion (z. B. 4.0.0) den Release blockiert haette.
+check(/^(3\.9\.\d+|4\.\d+\.\d+)$/.test(String(packageJson.version || '')), 'App-Version muss auf einer gueltigen FHCC-Releaseversion liegen (3.9.x oder 4.x).');
 check(packageJson.main === 'desktop/main.cjs', 'Electron-Haupteinstiegspunkt fehlt.');
 check(packageJson.build?.asar === true, 'Produktionspaket muss ASAR verwenden.');
 check(packageJson.build?.npmRebuild === false, 'Node-API-Prebuilds dürfen nicht durch einen ABI-gebundenen Electron-Rebuild ersetzt werden.');

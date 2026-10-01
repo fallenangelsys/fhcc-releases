@@ -5,7 +5,7 @@ const root = process.cwd();
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const pkg = JSON.parse(read('package.json'));
 const html = read('desktop/renderer/index.html');
-const css = read('desktop/renderer/server-management-v2.css');
+const css = read('desktop/renderer/ui-base.css');
 const renderer = read('desktop/renderer/server-management.js');
 const backend = read('src/index.js');
 
@@ -13,7 +13,7 @@ const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
 
-assert(html.includes(`server-management-v2.css?v=${pkg.version}`), 'Serververwaltung-CSS fehlt oder hat einen veralteten Cache-Buster.');
+assert(html.includes(`ui-base.css?v=${pkg.version}`), 'Serververwaltung-CSS fehlt oder hat einen veralteten Cache-Buster.');
 [
   '.member-toolbar',
   '.member-summary',

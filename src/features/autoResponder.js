@@ -1,5 +1,6 @@
 const cooldownMap = new Map();
 const claimedMessages = new Map();
+const regexCache = new Map();
 
 const normalize = (value, caseInsensitive = true) => {
   const text = String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -17,12 +18,21 @@ const parseRules = (rules) => (Array.isArray(rules) ? rules : [])
   })
   .filter(Boolean);
 
+const getWordRegex = (trigger) => {
+  const cached = regexCache.get(trigger);
+  if (cached) return cached;
+  const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(^|[^\\p{L}\\p{N}_])${escaped}($|[^\\p{L}\\p{N}_])`, 'u');
+  if (regexCache.size > 500) regexCache.clear();
+  regexCache.set(trigger, regex);
+  return regex;
+};
+
 const matchesRule = (content, trigger, mode) => {
   if (mode === 'exact') return content === trigger;
   if (mode === 'startsWith') return content === trigger || content.startsWith(`${trigger} `);
   if (mode === 'contains') return content.includes(trigger);
-  const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^\\p{L}\\p{N}_])${escaped}($|[^\\p{L}\\p{N}_])`, 'u').test(content);
+  return getWordRegex(trigger).test(content);
 };
 
 const formatResponse = (value, message) => String(value || '')
@@ -56,6 +66,11 @@ export const feature = {
     if (conf.mentionOnly && !message.mentions?.has?.(message.client.user)) return;
 
     const now = Date.now();
+    // Veraltete Cooldown-Einträge entfernen – sonst wächst die Map im
+    // Dauerbetrieb unbegrenzt (RAM-Leck). Nur die letzten 30 min sind relevant.
+    for (const [staleKey, staleAt] of cooldownMap) {
+      if (now - staleAt > 30 * 60_000) cooldownMap.delete(staleKey);
+    }
     const key = `${message.guildId}:${message.author.id}`;
     const cooldownMs = Math.max(5, Number(conf.cooldownSeconds || 120)) * 1000;
     if (now - (cooldownMap.get(key) || 0) < cooldownMs) return;

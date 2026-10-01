@@ -1,14 +1,14 @@
 ﻿import fs from 'node:fs/promises';
 import path from 'node:path';
+import { atomicWriteJson, readJsonWithRecovery } from '../runtime/atomicJsonStore.js';
+import { quietLog, QUIET_LOG_SCOPE } from '../runtime/quietLog.js';
 import {
   deleteServerIndexMessages,
   getServerEmbedKnowledgeResult,
   getServerIndexChannelScopes,
   getServerKnowledgeResult,
-  getServerIndexMessageContext,
   migrateLegacyServerIndex,
-  persistServerIndexMessages,
-  searchServerIndex
+  persistServerIndexMessages
 } from '../serverIndexStore.js';
 import { getPersistentMemberIntelligence, getPersistentMemberIntelligenceStatus } from './memberIntelligenceEngine.js';
 import {
@@ -238,309 +238,6 @@ export const getIndexedServerKnowledge = async (options = {}) => {
   return value;
 };
 
-const cleanIntelligenceText = (value = '') => String(value || '')
-  .replace(/<a?:([^:>]+):\d+>/g, ':$1:')
-  .replace(/<@!?\d+>/g, '@Mitglied')
-  .replace(/<@&\d+>/g, '@Rolle')
-  .replace(/<#\d+>/g, '#Kanal')
-  .replace(/\s+/g, ' ')
-  .trim();
-
-const cleanIntelligenceBlock = (value = '') => String(value || '')
-  .replace(/<a?:([^:>]+):\d+>/g, ':$1:')
-  .replace(/<@!?\d+>/g, '@Mitglied')
-  .replace(/<@&\d+>/g, '@Rolle')
-  .replace(/<#\d+>/g, '#Kanal')
-  .replace(/\r/g, '')
-  .replace(/[ \t]+/g, ' ')
-  .trim();
-
-const PROFILE_CLAIM_PATTERNS = [
-  { category: 'Vorliebe', expression: /\bich\s+(?:mag|liebe|feiere|bevorzuge)\s+([^.!?\n]{2,120})/gi },
-  { category: 'Favorit', expression: /\bmein(?:e|er|en|em)?\s+lieblings[\p{L}-]*\s+(?:ist|sind)\s+([^.!?\n]{2,120})/giu },
-  { category: 'Hobby', expression: /\bmein(?:e)?\s+hobb(?:y|ys)\s+(?:ist|sind)\s+([^.!?\n]{2,120})/giu },
-  { category: 'Aktivität', expression: /\bich\s+(?:spiele|höre|hoere|schaue|fahre|lese)\s+(?:sehr\s+)?gerne?\s+([^.!?\n]{2,120})/gi },
-  { category: 'Interesse', expression: /\bich\s+interessiere\s+mich\s+für\s+([^.!?\n]{2,120})/gi },
-  { category: 'Preference', expression: /\bi\s+(?:like|love|prefer)\s+([^.!?\n]{2,120})/gi }
-];
-
-const LOW_INFORMATION_CLAIM = /^(?:zu|so|das|es|sie|ihn|ihm|mich|dich|hier|dort|seit|fast|nur|etwas|alles|nichts|nicht|kein|keine|keinen|nie)$/i;
-const NON_INTEREST_TARGET = /^(?:(?:auch|eigentlich|halt|irgendwie|nur|sehr|voll|wirklich|trotzdem)\s+)*(?:das|dies|diese|diesen|die|der|den|es|sie|ihn|ihm|euch|dich|mich|it|this|that|them|meine?\s+(?:mama|mutter|papa|vater|eltern|familie|freund(?:in)?))\b/i;
-const UNCERTAIN_LANGUAGE = /\b(?:vielleicht|eventuell|glaube|glaub ich|weiß nicht|weiss nicht|keine ahnung|vermutlich|wahrscheinlich)\b/i;
-const NEGATED_CLAIM = /\b(?:nicht|kein|keine|keinen|nie|gar nicht)\b/i;
-
-const semanticIntelligenceText = (value = '') => cleanIntelligenceText(value)
-  .replace(/:[a-z0-9_~]{2,}:/gi, ' ')
-  .replace(/https?:\/\/\S+/gi, ' ')
-  .replace(/[\uFFFD]+/g, ' ')
-  .replace(/\s+/g, ' ')
-  .trim();
-
-const assessClaimContext = ({ claim, row, context }) => {
-  const after = Array.isArray(context?.after) ? context.after : [];
-  const before = Array.isArray(context?.before) ? context.before : [];
-  const corrected = after.some((message) => String(message.authorId) === String(row.authorId)
-    && Math.abs(Date.parse(message.createdAt || '') - Number(row.timestamp || 0)) <= 5 * 60_000
-    && /\b(?:war\s+(?:nur\s+)?spaß|nicht\s+ernst|doch\s+nicht|stimmt\s+nicht|anders\s+gemeint|ich\s+meinte)\b/i.test(semanticIntelligenceText(message.content)));
-  if (corrected) return { accepted: false, reason: 'Die Aussage wurde kurz danach korrigiert oder zurückgenommen.' };
-  const promptedRepeat = before.slice(-2).some((message) => /\b(?:sag|sage|schreib|schreibe|wiederhol|wiederhole|kopier|kopiere)\b/i.test(semanticIntelligenceText(message.content)));
-  if (promptedRepeat) return { accepted: false, reason: 'Die Aussage könnte eine verlangte Wiederholung statt einer eigenen Angabe sein.' };
-  if (NON_INTEREST_TARGET.test(claim.value)) return { accepted: false, reason: 'Das Satzobjekt bezeichnet keine belastbare persönliche Vorliebe.' };
-  if (/[^\p{L}\p{N}\s&+/#().,'’\-]/u.test(claim.value)) return { accepted: false, reason: 'Die Aussage enthält nicht zuverlässig interpretierbare Symbol- oder Emoji-Fragmente.' };
-  return { accepted: true, reason: '', contextBefore: before, contextAfter: after };
-};
-
-const extractProfileClaims = (text = '') => {
-  const source = cleanIntelligenceText(text);
-  const claims = [];
-  const unclear = [];
-  for (const pattern of PROFILE_CLAIM_PATTERNS) {
-    pattern.expression.lastIndex = 0;
-    let match;
-    while ((match = pattern.expression.exec(source)) !== null) {
-      const value = semanticIntelligenceText(match[1])
-        .split(/\b(?:aber|weil|und ich|oder ich|obwohl|während|wenn|dass)\b/i)[0]
-        .replace(/^(?:(?:auch|eigentlich|halt|irgendwie|nur|sehr|voll|wirklich)\s+)+/i, '')
-        .replace(/^[,;:\s]+|[,;:\s]+$/g, '')
-        .slice(0, 120);
-      const statement = cleanIntelligenceText(match[0]).slice(0, 220);
-      const terminator = source.charAt(match.index + match[0].length);
-      const invalid = value.length < 2
-        || value.length > 100
-        || LOW_INFORMATION_CLAIM.test(value)
-        || NON_INTEREST_TARGET.test(value)
-        || UNCERTAIN_LANGUAGE.test(statement)
-        || NEGATED_CLAIM.test(value)
-        || /(?:\bseit\b.*\bjahr|\bmonat|\btag\b)|(?:\bkein(?:e|en)?\b)/i.test(statement)
-        || /\b(?:wenn|falls|sofern|würde|wuerde|wär|waer)\b/i.test(statement)
-        || terminator === '?';
-      if (invalid) unclear.push({ statement, reason: 'Aussage ist negiert, zeitbezogen oder sprachlich nicht eindeutig.' });
-      else claims.push({ category: pattern.category, value, statement });
-      if (match.index === pattern.expression.lastIndex) pattern.expression.lastIndex += 1;
-    }
-  }
-  return { claims, unclear };
-};
-
-const INTRODUCTION_FIELDS = new Map([
-  ['name', 'Name'], ['alter', 'Alter'], ['geburtstag', 'Geburtstag'], ['nationalität', 'Nationalität'], ['nationalitaet', 'Nationalität'],
-  ['geschlecht', 'Geschlecht'], ['pronomen', 'Pronomen'], ['hobbys', 'Hobbys'], ['hobby', 'Hobbys'], ['interessen', 'Interessen'],
-  ['lieblingsspiel', 'Lieblingsspiel'], ['lieblingsspiele', 'Lieblingsspiele'], ['lieblingsmusik', 'Lieblingsmusik'], ['musik', 'Musik'],
-  ['essen', 'Essen'], ['haustier', 'Haustier'], ['haustiere', 'Haustiere'], ['über mich', 'Über mich'], ['ueber mich', 'Über mich'],
-  ['sonstiges', 'Sonstiges'], ['mag nicht', 'Mag nicht'], ['nicht', 'Mag nicht']
-]);
-const INTRODUCTION_LABEL_SOURCE = [...INTRODUCTION_FIELDS.keys()]
-  .sort((left, right) => right.length - left.length)
-  .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  .join('|');
-const INTRODUCTION_LABEL_PATTERN = new RegExp(`(?:^|\\s)(${INTRODUCTION_LABEL_SOURCE})\\s*:`, 'giu');
-
-const extractIntroduction = (text = '', channelName = '') => {
-  const source = cleanIntelligenceBlock(text);
-  if (!source) return null;
-  const segmented = source
-    .replace(/[|•·]+/g, '\n')
-    .replace(INTRODUCTION_LABEL_PATTERN, '\n$1:');
-  const fields = [];
-  const seen = new Set();
-  for (const rawLine of segmented.split(/\n+/)) {
-    const line = rawLine.replace(/^[^\p{L}\p{N}]+/gu, '').trim();
-    const separator = line.indexOf(':');
-    if (separator < 1) continue;
-    const rawLabel = line.slice(0, separator).trim().toLocaleLowerCase('de-DE');
-    const label = INTRODUCTION_FIELDS.get(rawLabel);
-    const value = cleanIntelligenceText(line.slice(separator + 1))
-      .replace(/^[^\p{L}\p{N}@#]+|[^\p{L}\p{N}!?)@#]+$/gu, '')
-      .slice(0, 180);
-    if (!label || !value || value.length < 2 || seen.has(label)) continue;
-    seen.add(label);
-    fields.push({ label, value });
-  }
-  const introductionChannel = /(?:vorstellung|stell.?dich.?vor|introduc|about.?me|wer.?bin.?ich)/i.test(String(channelName || ''));
-  if (!introductionChannel && fields.length < 3) return null;
-  return { fields, introductionChannel };
-};
-
-const getIndexedMemberIntelligenceLegacy = async ({ guild, requester, userId, retentionDays = 0, refresh = false } = {}) => {
-  const guildId = String(guild?.id || '');
-  const targetUserId = String(userId || '');
-  if (!/^\d{15,25}$/.test(guildId) || !/^\d{15,25}$/.test(targetUserId)) return null;
-  const cacheKey = `${guildId}:${requester?.id || ''}:${targetUserId}:${retentionDays}`;
-  if (refresh) memberIntelligenceCache.delete(cacheKey);
-  const cached = memberIntelligenceCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < 60_000) return cached.value;
-
-  const allowedChannels = new Set(guild.channels.cache
-    .filter((channel) => {
-      if (!channel?.isTextBased?.()) return false;
-      const permissions = requester ? channel.permissionsFor?.(requester) : null;
-      return !permissions || permissions.has(PermissionFlagsBits.ViewChannel);
-    })
-    .map((channel) => channel.id));
-  const normalizedRetentionDays = Number(retentionDays) === 0 ? 0 : Math.min(3650, Math.max(1, Number(retentionDays) || 3650));
-  const cutoff = normalizedRetentionDays ? Date.now() - normalizedRetentionDays * 86_400_000 : 0;
-  const root = path.join(SERVER_INDEX_DIR, guildId);
-  const months = new Set();
-  for (let month = 0; normalizedRetentionDays && month <= Math.ceil(normalizedRetentionDays / 28); month += 1) {
-    const date = new Date();
-    date.setUTCMonth(date.getUTCMonth() - month);
-    months.add(date.toISOString().slice(0, 7));
-  }
-  const files = [];
-  const channelFolders = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
-  for (const folder of channelFolders) {
-    if (!folder.isDirectory() || !allowedChannels.has(folder.name)) continue;
-    const folderPath = path.join(root, folder.name);
-    const entries = await fs.readdir(folderPath, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.jsonl') || (months.size && ![...months].some((month) => entry.name.startsWith(month)))) continue;
-      const filePath = path.join(folderPath, entry.name);
-      const stat = await fs.stat(filePath).catch(() => null);
-      if (stat) files.push({ filePath, size: stat.size, mtimeMs: stat.mtimeMs });
-    }
-  }
-  files.sort((left, right) => left.filePath.localeCompare(right.filePath));
-
-  const accelerated = await searchServerIndex({
-    guildId,
-    authorId: targetUserId,
-    allowedChannelIds: [...allowedChannels],
-    maxEntries: 0,
-    retentionDays: normalizedRetentionDays,
-    fullAuthorHistory: true
-  });
-  const rows = accelerated.complete ? accelerated.rows.map((row) => ({ ...row, timestamp: Number(row.timestamp || Date.parse(row.createdAt || '')) })) : [];
-  const seen = new Set(rows.map((row) => row.id));
-  let unreadableFiles = 0;
-  let partial = Boolean(accelerated.truncated);
-  if (!accelerated.complete) for (const file of files) {
-    const raw = await fs.readFile(file.filePath, 'utf8').catch(() => null);
-    if (raw === null) { unreadableFiles += 1; partial = true; continue; }
-    for (const line of raw.split(/\r?\n/)) {
-      if (!line) continue;
-      let row;
-      try { row = JSON.parse(line); } catch { continue; }
-      if (!row?.id || seen.has(row.id) || String(row.authorId || '') !== targetUserId) continue;
-      const timestamp = Date.parse(row.createdAt || '');
-      if (!Number.isFinite(timestamp) || (cutoff && timestamp < cutoff)) continue;
-      seen.add(row.id);
-      rows.push({ ...row, timestamp });
-    }
-  }
-  rows.sort((left, right) => right.timestamp - left.timestamp);
-
-  const channelCounts = new Map();
-  const links = new Map();
-  const media = [];
-  const insightMap = new Map();
-  const directEvidenceIds = new Set();
-  const unclearSignals = [];
-  const introductionFields = new Map();
-  let introductionEvidence = null;
-  let contextualizedStatements = 0;
-  for (const row of rows) {
-    const channelKey = String(row.channelId || '');
-    const currentChannel = channelCounts.get(channelKey) || { channelId: channelKey, channelName: row.channelName || channelKey, count: 0 };
-    currentChannel.count += 1;
-    channelCounts.set(channelKey, currentChannel);
-    const combinedText = [row.content, ...(row.embeds || []).flatMap((embed) => [embed.title, embed.description])].filter(Boolean).join(' | ');
-    const semanticText = semanticIntelligenceText(combinedText);
-    for (const match of combinedText.matchAll(/https?:\/\/[^\s<>()]+/gi)) {
-      const url = match[0].replace(/[.,;!?]+$/, '');
-      if (!links.has(url)) links.set(url, { url, messageId: row.id, channelId: row.channelId, createdAt: row.createdAt });
-    }
-    for (const attachment of row.attachments || []) {
-      if (media.length >= 18) break;
-      if (/^(?:image|video)\//i.test(attachment.contentType || '') || /\.(?:png|jpe?g|gif|webp|mp4|mov|webm)$/i.test(attachment.name || '')) {
-        media.push({ type: 'attachment', name: attachment.name || 'Medium', url: attachment.url, contentType: attachment.contentType || '', messageId: row.id, channelId: row.channelId, createdAt: row.createdAt });
-      }
-    }
-    for (const embed of row.embeds || []) {
-      for (const url of [embed.image, embed.thumbnail].filter(Boolean)) {
-        if (media.length < 18) media.push({ type: 'embed', name: embed.title || 'Embed-Medium', url, contentType: 'image', messageId: row.id, channelId: row.channelId, createdAt: row.createdAt });
-      }
-    }
-    const introduction = extractIntroduction(combinedText, row.channelName || '');
-    if (introduction) {
-      for (const field of introduction.fields) if (!introductionFields.has(field.label)) introductionFields.set(field.label, field);
-      if (!introductionEvidence || introduction.fields.length > introductionEvidence.fieldCount) {
-        introductionEvidence = { messageId: row.id, channelId: row.channelId, channelName: row.channelName || row.channelId, createdAt: row.createdAt, fieldCount: introduction.fields.length, jumpUrl: `https://discord.com/channels/${guildId}/${row.channelId}/${row.id}` };
-      }
-      directEvidenceIds.add(row.id);
-    }
-    const extracted = extractProfileClaims(semanticText);
-    const needsContext = Boolean(introduction || extracted.claims.length || extracted.unclear.length);
-    const context = needsContext ? await getServerIndexMessageContext({ guildId, channelId: row.channelId, messageId: row.id, before: 3, after: 3 }).catch(() => ({ before: [], after: [] })) : { before: [], after: [] };
-    if (needsContext && (context.before.length || context.after.length)) contextualizedStatements += 1;
-    for (const unclear of extracted.unclear) {
-      if (unclearSignals.length >= 20) break;
-      unclearSignals.push({ ...unclear, messageId: row.id, channelId: row.channelId, channelName: row.channelName || row.channelId, createdAt: row.createdAt, jumpUrl: `https://discord.com/channels/${guildId}/${row.channelId}/${row.id}` });
-    }
-    for (const claim of extracted.claims) {
-      const assessment = assessClaimContext({ claim, row, context });
-      if (!assessment.accepted) {
-        if (unclearSignals.length < 20) unclearSignals.push({ statement: claim.statement, reason: assessment.reason, messageId: row.id, channelId: row.channelId, channelName: row.channelName || row.channelId, createdAt: row.createdAt, jumpUrl: `https://discord.com/channels/${guildId}/${row.channelId}/${row.id}` });
-        continue;
-      }
-      const key = `${claim.category}:${claim.value.toLocaleLowerCase('de-DE')}`;
-      const existing = insightMap.get(key) || { category: claim.category, value: claim.value, count: 0, evidence: [] };
-      existing.count += 1;
-      if (existing.evidence.length < 3) existing.evidence.push({ messageId: row.id, channelId: row.channelId, channelName: row.channelName || row.channelId, createdAt: row.createdAt, content: cleanIntelligenceText(combinedText).slice(0, 360), contextBefore: assessment.contextBefore, contextAfter: assessment.contextAfter, jumpUrl: `https://discord.com/channels/${guildId}/${row.channelId}/${row.id}` });
-      insightMap.set(key, existing);
-      directEvidenceIds.add(row.id);
-    }
-  }
-
-  const insights = [...insightMap.values()]
-    .map((item) => ({ ...item, confidence: item.count > 1 ? 0.99 : 0.96, confidenceLabel: item.count > 1 ? 'Mehrfach direkt belegt' : 'Direkt belegt' }))
-    .sort((left, right) => right.confidence - left.confidence || right.count - left.count)
-    .slice(0, 16);
-  const evidenceRows = [...rows.filter((row) => directEvidenceIds.has(row.id)), ...rows.filter((row) => !directEvidenceIds.has(row.id))].slice(0, 16);
-  const evidence = evidenceRows.map((row) => {
-    const content = cleanIntelligenceText([row.content, ...(row.embeds || []).flatMap((embed) => [embed.title, embed.description])].filter(Boolean).join(' | '));
-    return { messageId: row.id, channelId: row.channelId, channelName: row.channelName || row.channelId, createdAt: row.createdAt, content: content || '(Nachricht ohne Text)', directClaim: directEvidenceIds.has(row.id), jumpUrl: `https://discord.com/channels/${guildId}/${row.channelId}/${row.id}` };
-  });
-  const channels = [...channelCounts.values()].sort((left, right) => right.count - left.count).slice(0, 8);
-  const overallConfidence = insights.length
-    ? Math.round((insights.reduce((sum, item) => sum + item.confidence, 0) / insights.length) * 100)
-    : introductionFields.size ? 98 : 0;
-  const value = {
-    generatedAt: nowIso(),
-    retentionDays: normalizedRetentionDays,
-    source: 'public-server-index',
-    partial,
-    analyzedMessages: rows.length,
-    activeChannels: channelCounts.size,
-    lastMessageAt: rows[0]?.createdAt || null,
-    overallConfidence,
-    analysis: {
-      status: partial ? 'partial' : 'complete',
-      label: partial ? 'Index wird ergänzt' : 'Analyse abgeschlossen',
-      progress: partial ? 85 : 100,
-      processedMessages: rows.length,
-      verifiedStatements: insights.length,
-      unclearSignals: unclearSignals.length,
-      introductionFields: introductionFields.size,
-      contextualizedStatements,
-      unreadableFiles,
-      sourceCoverage: accelerated.complete ? 'persistent-index' : 'fallback-index'
-    },
-    introduction: introductionFields.size ? {
-      fields: [...introductionFields.values()],
-      evidence: introductionEvidence
-    } : null,
-    unclear: unclearSignals.slice(0, 12),
-    insights,
-    channels,
-    links: [...links.values()].slice(0, 12),
-    media: media.slice(0, 18),
-    evidence
-  };
-  memberIntelligenceCache.set(cacheKey, { at: Date.now(), value });
-  if (memberIntelligenceCache.size > 300) memberIntelligenceCache.delete(memberIntelligenceCache.keys().next().value);
-  return value;
-};
-
 export const getIndexedMemberIntelligence = async (options = {}) => getPersistentMemberIntelligence(options);
 export const getIndexedMemberIntelligenceStatus = async (options = {}) => getPersistentMemberIntelligenceStatus(options);
 
@@ -549,21 +246,19 @@ const loadDb = async () => {
     return;
   }
 
-  try {
-    const raw = await fs.readFile(DB_FILE, 'utf8');
-    db = { ...db, ...(JSON.parse(raw.replace(/^\uFEFF/, '')) || {}) };
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.error('[memberManagement] Datenbank konnte nicht gelesen werden', error);
-    }
-  }
-
+  // Recovery-Pfad: liest bei einer beschädigten Hauptdatei automatisch die
+  // neueste Backup-Kopie – zusammen mit dem atomaren Schreiben ist die DB
+  // damit gegen Abstürze während des Speicherns abgesichert.
+  const loaded = await readJsonWithRecovery(DB_FILE, { fallback: {}, backupLimit: 2 });
+  db = { ...db, ...(loaded.value || {}) };
   dbLoaded = true;
 };
 
 const saveNow = async () => {
-  await fs.mkdir(path.dirname(DB_FILE), { recursive: true });
-  await fs.writeFile(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
+  // Atomar + gedrosselte Backup-Rotation über den gemeinsamen JSON-Store:
+  // kein Risiko halbgeschriebener Dateien bei Absturz, und die teuren
+  // Backup-Kopien laufen nur noch einmal pro Minute statt bei jedem Save.
+  await atomicWriteJson(DB_FILE, db, { backupLimit: 2, spacing: 2 });
 };
 
 const scheduleSave = () => {
@@ -766,7 +461,10 @@ const markLeft = async (member) => {
 };
 
 const refreshMember = async (guild, userId) => {
-  const member = await guild.members.fetch(userId).catch(() => null);
+  const member = await guild.members.fetch(userId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `members.fetch fehlgeschlagen: ${userId}`);
+    return null;
+  });
   if (!member) {
     return null;
   }
@@ -915,7 +613,10 @@ const ensureCommandAllowed = async (interaction, cfg, mode = 'view') => {
 
 const canModerateTarget = async (interaction, targetMember, action) => {
   const actor = interaction.member;
-  const botMember = interaction.guild.members.me || (await interaction.guild.members.fetchMe().catch(() => null));
+  const botMember = interaction.guild.members.me || (await interaction.guild.members.fetchMe().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `fetchMe fehlgeschlagen`);
+    return null;
+  }));
 
   const permissionMap = {
     kick: PermissionFlagsBits.KickMembers,
@@ -973,7 +674,10 @@ const addLog = async (guild, cfg, entry) => {
     return;
   }
 
-  const channel = guild.channels.cache.get(logChannelId) || (await guild.channels.fetch(logChannelId).catch(() => null));
+  const channel = guild.channels.cache.get(logChannelId) || (await guild.channels.fetch(logChannelId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `channels.fetch (Log) fehlgeschlagen: ${logChannelId}`);
+    return null;
+  }));
   if (!channel?.isTextBased?.()) {
     return;
   }
@@ -1167,7 +871,9 @@ const showMembers = async (interaction, cfg, initial = {}) => {
 
 const showMemberDetail = async (interaction, cfg, userId) => {
   await loadDb();
-  await refreshMember(interaction.guild, userId).catch(() => null);
+  await refreshMember(interaction.guild, userId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `refreshMember fehlgeschlagen: ${userId}`);
+  });
   const token = createSession(interaction, { selectedUserId: userId });
   const payload = buildDetailPanel(interaction, cfg, token, userId);
   await interaction.reply({ ...payload, allowedMentions: { users: [userId] } });
@@ -1269,7 +975,9 @@ const handleChatCommand = async (interaction, cfg) => {
   if (command === 'member-stats') {
     const user = interaction.options.getUser('user', true);
     await loadDb();
-    await refreshMember(interaction.guild, user.id).catch(() => null);
+    await refreshMember(interaction.guild, user.id).catch((error) => {
+      quietLog(QUIET_LOG_SCOPE.memberManagement, error, `refreshMember (Join) fehlgeschlagen: ${user.id}`);
+    });
     const token = createSession(interaction, { selectedUserId: user.id });
     const payload = buildDetailPanel(interaction, cfg, token, user.id);
     await interaction.reply({ ...payload, allowedMentions: { users: [user.id] } });
@@ -1299,7 +1007,10 @@ const handleChatCommand = async (interaction, cfg) => {
 };
 
 const refreshAllMembers = async (guild, cfg, moderatorId) => {
-  const members = await guild.members.fetch().catch(() => null);
+  const members = await guild.members.fetch().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `members.fetch (Full) fehlgeschlagen`);
+    return null;
+  });
   if (!members) {
     await addLog(guild, cfg, { actionType: 'Error', moderatorId, reason: 'Full member fetch failed' });
     return;
@@ -1354,7 +1065,9 @@ const handleButton = async (interaction, cfg) => {
   }
 
   if (action === 'memberRefresh') {
-    await refreshMember(interaction.guild, userId).catch(() => null);
+    await refreshMember(interaction.guild, userId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `refreshMember fehlgeschlagen: ${userId}`);
+  });
     await addLog(interaction.guild, cfg, {
       actionType: 'Member refreshed',
       targetUserId: userId,
@@ -1390,7 +1103,10 @@ const handleButton = async (interaction, cfg) => {
 };
 
 const showConfirmation = async (interaction, cfg, action, token, userId) => {
-  const target = await interaction.guild.members.fetch(userId).catch(() => null);
+  const target = await interaction.guild.members.fetch(userId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `members.fetch (Target) fehlgeschlagen: ${userId}`);
+    return null;
+  });
   if (!target) {
     await interaction.reply({ content: 'Member wurde nicht gefunden.', ephemeral: true });
     return;
@@ -1427,7 +1143,10 @@ const showConfirmation = async (interaction, cfg, action, token, userId) => {
 };
 
 const executeModeration = async (interaction, cfg, action, userId) => {
-  const target = await interaction.guild.members.fetch(userId).catch(() => null);
+  const target = await interaction.guild.members.fetch(userId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `members.fetch (Target) fehlgeschlagen: ${userId}`);
+    return null;
+  });
   if (!target) {
     await interaction.update({ content: 'Member wurde nicht gefunden.', embeds: [], components: [] });
     return;
@@ -1468,7 +1187,9 @@ const handleSelect = async (interaction, cfg) => {
 
   const userId = interaction.values?.[0];
   session.selectedUserId = userId;
-  await refreshMember(interaction.guild, userId).catch(() => null);
+  await refreshMember(interaction.guild, userId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `refreshMember fehlgeschlagen: ${userId}`);
+  });
   await interaction.update({ ...buildDetailPanel(interaction, cfg, token, userId), allowedMentions: { users: [userId] } });
   return true;
 };
@@ -1535,14 +1256,18 @@ const handleModalSubmit = async (interaction, cfg) => {
   return true;
 };
 
-const closeVoiceSession = async (guildId, userId, reason) => {
+const closeVoiceSession = async (guildId, userId, reason, endedAtInput = null) => {
+  await loadDb();
   const openVoice = guildStore('openVoice', guildId);
   const session = openVoice[userId];
   if (!session) {
     return;
   }
 
-  const endedAt = new Date();
+  // endedAtInput erlaubt Backfill aus Logs (Carl-bot): Die Session-Dauer wird
+  // dann exakt aus den Log-Zeitstempeln berechnet, nicht aus „jetzt“. Das ist
+  // wichtig, damit nachgeholte Voice-Daten aus Offline-Zeiten korrekt sind.
+  const endedAt = endedAtInput && !Number.isNaN(new Date(endedAtInput).getTime()) ? new Date(endedAtInput) : new Date();
   const startedAt = new Date(session.startedAt);
   const durationSeconds = Math.max(0, Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000));
   const voiceSessions = guildStore('voiceSessions', guildId);
@@ -1572,14 +1297,32 @@ const closeVoiceSession = async (guildId, userId, reason) => {
   scheduleSave();
 };
 
-const openVoiceSession = async (guildId, userId, channelId) => {
+const openVoiceSession = async (guildId, userId, channelId, startedAtInput = null) => {
+  await loadDb();
   const openVoice = guildStore('openVoice', guildId);
+  // Alte offene Session (falls vorhanden) sauber schließen, bevor neu geöffnet
+  // wird – z. B. beim Backfill, wenn ein Join-Log ohne Leave-Log davor liegt.
+  if (openVoice[userId]) {
+    await closeVoiceSession(guildId, userId, 'replaced', startedAtInput ? new Date(new Date(startedAtInput).getTime() - 1) : new Date());
+  }
   openVoice[userId] = {
     guildId,
     userId,
     channelId,
-    startedAt: nowIso()
+    startedAt: startedAtInput && !Number.isNaN(new Date(startedAtInput).getTime()) ? new Date(startedAtInput).toISOString() : nowIso()
   };
+  // Auch mitten im Call gilt der Voice-Einstieg als Aktivität: lastVoiceAt wird
+  // direkt beim Betreten gesetzt (nicht erst beim Verlassen). Sonst würden
+  // Nutzer, die NUR im Call sitzen und nie schreiben, in Aktivitäts-Listen und
+  // bei der Inaktivitäts-Erinnerung fälschlich als inaktiv gelten, solange
+  // ihre Session offen ist.
+  const activity = getActivity(guildId, userId);
+  const startedAtMs = new Date(openVoice[userId].startedAt).getTime();
+  const currentVoiceMs = activity.lastVoiceAt ? new Date(activity.lastVoiceAt).getTime() : 0;
+  if (Number.isFinite(startedAtMs) && startedAtMs >= currentVoiceMs) {
+    activity.lastVoiceAt = new Date(startedAtMs).toISOString();
+    activity.updatedAt = nowIso();
+  }
   scheduleSave();
 };
 
@@ -1588,7 +1331,9 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 const updateMessageActivity = async (message, cfg, countMessage) => {
   if (!message?.guild || !message.author?.id) return;
   await loadDb();
-  if (countMessage && message.member) await upsertMember(message.member).catch(() => null);
+  if (countMessage && message.member) await upsertMember(message.member).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `upsertMember fehlgeschlagen: ${message.member?.id}`);
+  });
   const activity = getActivity(message.guildId, message.author.id);
   const messageAt = new Date(Number(message.createdTimestamp || Date.now())).toISOString();
   const currentAt = activity.lastMessageAt ? new Date(activity.lastMessageAt).getTime() : 0;
@@ -1672,14 +1417,28 @@ const compareSnowflakes = (left, right) => {
   }
 };
 
-const discoverIndexChannels = async (guild) => {
+const FULL_DISCOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+// Kanäle entdecken. Mit `cacheOnly: true` (Standard bei periodischen Nachzügen)
+// wird NUR der Gateway-Cache benutzt – keine REST-Calls für alle Kanäle, aktive
+// Threads oder archivierte Threads. Das Gateway hält den Cache laufend aktuell
+// (neue Kanäle/Threads kommen per Event rein), daher reicht das für den
+// inkrementellen Nachzug vollkommen. Die teure Voll-Discovery (inkl. archivierter
+// Threads pro Parent) läuft nur beim Bot-Start, bei Config-Änderung, manuell
+// und als 6-Stunden-Sicherheitsnetz.
+const discoverIndexChannels = async (guild, { cacheOnly = false } = {}) => {
   const channels = new Map();
   const discoveryErrors = [];
-  const me = guild.members.me || await guild.members.fetchMe().catch(() => null);
-  const fetched = await withIndexRetry(() => guild.channels.fetch()).catch((error) => {
-    discoveryErrors.push({ scope: 'guild_channels', code: errorCode(error), message: String(error?.message || error).slice(0, 240) });
-    return guild.channels.cache;
+  const me = guild.members.me || await guild.members.fetchMe().catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.memberManagement, error, `fetchMe fehlgeschlagen (ActivityHistory)`);
+    return null;
   });
+  const fetched = cacheOnly
+    ? guild.channels.cache
+    : await withIndexRetry(() => guild.channels.fetch()).catch((error) => {
+      discoveryErrors.push({ scope: 'guild_channels', code: errorCode(error), message: String(error?.message || error).slice(0, 240) });
+      return guild.channels.cache;
+    });
   const canRead = (channel) => {
     if (!channel?.isTextBased?.() || !channel.messages?.fetch) return false;
     const permissions = me ? channel.permissionsFor(me) : null;
@@ -1691,6 +1450,8 @@ const discoverIndexChannels = async (guild) => {
   };
 
   for (const channel of fetched.values()) add(channel, channel.isThread?.() ? 'cached_thread' : 'channel');
+  if (cacheOnly) return { channels: [...channels.values()], discoveryErrors };
+
   const active = await withIndexRetry(() => guild.channels.fetchActiveThreads()).catch((error) => {
     discoveryErrors.push({ scope: 'active_threads', code: errorCode(error), message: String(error?.message || error).slice(0, 240) });
     return null;
@@ -1742,7 +1503,7 @@ const updateIndexMeta = (guildId, states, extra = {}) => {
   scheduleSave();
 };
 
-const startActivityHistoryScan = (guild, cfg) => {
+const startActivityHistoryScan = (guild, cfg, options = {}) => {
   const conf = getCfg(cfg);
   if (!conf.activityBackfillEnabled || !guild?.id || historyScanRunners.has(guild.id)) return;
   const retryTimer = historyScanRetryTimers.get(guild.id);
@@ -1753,7 +1514,19 @@ const startActivityHistoryScan = (guild, cfg) => {
   let shouldRetry = false;
   const runner = (async () => {
     await loadDb();
-    const discovery = await discoverIndexChannels(guild);
+    // Volle Discovery (alle Kanäle + alle archivierten Threads per REST) nur,
+    // wenn ausdrücklich gewünscht (Start/Config/manuell) oder das 6-Stunden-
+    // Sicherheitsnetz fällig ist. Periodische Nachzüge laufen über den Cache.
+    const lastFullDiscoveryAt = Number(db.indexMeta?.[guild.id]?.lastFullDiscoveryAt || 0);
+    const cacheOnly = options.cacheOnly !== false
+      && Date.now() - lastFullDiscoveryAt < FULL_DISCOVERY_INTERVAL_MS;
+    const discovery = await discoverIndexChannels(guild, { cacheOnly });
+    if (!cacheOnly) {
+      db.indexMeta ||= {};
+      db.indexMeta[guild.id] ||= {};
+      db.indexMeta[guild.id].lastFullDiscoveryAt = Date.now();
+      scheduleSave();
+    }
     const channels = discovery.channels;
     const states = guildStore('historyScan', guild.id);
     const queue = [];
@@ -1792,7 +1565,6 @@ const startActivityHistoryScan = (guild, cfg) => {
       discoveredThreads: channels.filter((item) => item.source !== 'channel').length
     });
     await saveNow().catch(() => {});
-    console.log(`[memberManagement] Serverindex gestartet: ${guild.name} (${channels.length} Kanäle/Threads, ${queue.length} offen)`);
 
     let processedSinceSave = 0;
     while (queue.length) {
@@ -1880,7 +1652,6 @@ const startActivityHistoryScan = (guild, cfg) => {
       nextRetryAt: remaining ? new Date(Date.now() + INDEX_RETRY_DELAY).toISOString() : null
     });
     await saveNow().catch(() => {});
-    console.log(`[memberManagement] Serverindex ${remaining ? 'pausiert' : 'abgeschlossen'}: ${guild.name}`);
   })().catch((error) => {
     shouldRetry = true;
     console.error(`[memberManagement] Aktivitäts-Historie für ${guild.name} fehlgeschlagen`, error);
@@ -1896,7 +1667,7 @@ const startActivityHistoryScan = (guild, cfg) => {
     if (shouldRetry && !historyScanRetryTimers.has(guild.id)) {
       const timer = setTimeout(() => {
         historyScanRetryTimers.delete(guild.id);
-        startActivityHistoryScan(guild, cfg);
+        startActivityHistoryScan(guild, cfg, { cacheOnly: true });
       }, INDEX_RETRY_DELAY);
       timer.unref?.();
       historyScanRetryTimers.set(guild.id, timer);
@@ -1911,7 +1682,7 @@ const scheduleActivityHistoryRefresh = (guild, cfg) => {
   if (existing) clearInterval(existing);
   const configuredMinutes = Number(getCfg(cfg).indexRefreshMinutes || 10);
   const interval = Math.min(60, Math.max(1, configuredMinutes)) * 60 * 1000 || INDEX_REFRESH_INTERVAL;
-  const timer = setInterval(() => startActivityHistoryScan(guild, cfg), interval);
+  const timer = setInterval(() => startActivityHistoryScan(guild, cfg, { cacheOnly: true }), interval);
   timer.unref?.();
   historyScanRefreshTimers.set(guild.id, timer);
 };
@@ -2012,7 +1783,7 @@ export const feature = {
   },
 
   async onConfigUpdate({ guild, cfg }) {
-    startActivityHistoryScan(guild, cfg);
+    startActivityHistoryScan(guild, cfg, { cacheOnly: false });
     scheduleActivityHistoryRefresh(guild, cfg);
   },
 
@@ -2097,14 +1868,82 @@ export const feature = {
   },
 
   async onGuildMemberAdd({ member }) {
-    await upsertMember(member).catch(() => null);
+    await upsertMember(member).catch((error) => {
+      quietLog(QUIET_LOG_SCOPE.memberManagement, error, `upsertMember (Add) fehlgeschlagen: ${member?.id}`);
+    });
   },
 
   async onGuildMemberRemove({ member }) {
-    await markLeft(member).catch(() => null);
+    await markLeft(member).catch((error) => {
+      quietLog(QUIET_LOG_SCOPE.memberManagement, error, `markLeft fehlgeschlagen: ${member?.id}`);
+    });
   },
 
   async onGuildMemberUpdate({ newMember }) {
-    await upsertMember(newMember).catch(() => null);
+    await upsertMember(newMember).catch((error) => {
+      quietLog(QUIET_LOG_SCOPE.memberManagement, error, `upsertMember (Update) fehlgeschlagen: ${newMember?.id}`);
+    });
   }
+};
+
+// Liefert die zuletzt bekannte Aktivität (max(Nachricht, Voice)) je Mitglied –
+// dieselbe Quelle wie „Serververwaltung → Mitglieder → Letzte Aktivität“.
+// Rückgabe: { [userId]: lastActiveMs }. Basis für die Inaktivitäts-Erinnerung.
+export const getMemberActivitySnapshot = (guildId, { includeOpenVoice = true } = {}) => {
+  const activity = guildStore('activity', String(guildId || ''));
+  const snapshot = {};
+  for (const [userId, entry] of Object.entries(activity || {})) {
+    const lastMessageAt = entry?.lastMessageAt ? Date.parse(entry.lastMessageAt) : 0;
+    const lastVoiceAt = entry?.lastVoiceAt ? Date.parse(entry.lastVoiceAt) : 0;
+    const lastActiveMs = Math.max(
+      Number.isFinite(lastMessageAt) ? lastMessageAt : 0,
+      Number.isFinite(lastVoiceAt) ? lastVoiceAt : 0
+    );
+    if (lastActiveMs > 0) snapshot[String(userId)] = lastActiveMs;
+  }
+  // Wer aktuell in einem Sprachkanal sitzt (offene Voice-Session), ist in
+  // DIESEM Moment aktiv – egal ob er schreibt oder nicht. Damit werden reine
+  // Call-Nutzer („nur im Call, schreibt nie“) nie fälschlich als inaktiv
+  // markiert, selbst wenn ihre Session schon sehr lange läuft. Quelle sind die
+  // Carl-bot-Logs (voiceLogImport) – dieselbe Voice-Datenbasis wie die Profile.
+  if (includeOpenVoice) {
+    const openVoice = guildStore('openVoice', String(guildId || ''));
+    for (const userId of Object.keys(openVoice || {})) {
+      const current = Number(snapshot[String(userId)] || 0);
+      snapshot[String(userId)] = Math.max(current, Date.now());
+    }
+  }
+  return snapshot;
+};
+
+// Detaillierte Aktivität je Mitglied: letzte Nachricht UND letzter Voice separat
+// (für die Inaktivitäts-Erinnerung – Beweis im DM: „letzter Chat / letzte
+// Voice“). Rückgabe: { [userId]: { lastMessageAt, lastVoiceAt } } – ISO-Strings
+// oder null. Quelle ist dieselbe wie getMemberActivitySnapshot.
+export const getMemberActivityDetail = (guildId) => {
+  const activity = guildStore('activity', String(guildId || ''));
+  const detail = {};
+  for (const [userId, entry] of Object.entries(activity || {})) {
+    detail[String(userId)] = {
+      lastMessageAt: entry?.lastMessageAt || null,
+      lastVoiceAt: entry?.lastVoiceAt || null
+    };
+  }
+  return detail;
+};
+
+export const _memberManagementInternals = {
+  discoverIndexChannels,
+  FULL_DISCOVERY_INTERVAL_MS,
+  compareSnowflakes
+};
+
+// Voice-Session-Schnittstelle für externe Quellen (z. B. Carl-bot-Voice-Logger):
+// Das Voice-Log-Import-Modul speist damit Mitglieder-Profile („Voice gesamt /
+// 7d / 30d“) aus den Log-Nachrichten. Beide Funktionen akzeptieren Zeitpunkte,
+// damit nachgeholte Logs (Offline-Zeiten) exakt verbucht werden.
+export const importVoiceSession = {
+  open: (guildId, userId, channelId, startedAt = null) => openVoiceSession(guildId, userId, channelId, startedAt),
+  close: (guildId, userId, reason = 'left', endedAt = null) => closeVoiceSession(guildId, userId, reason, endedAt),
+  openSessions: (guildId) => ({ ...(guildStore('openVoice', String(guildId || '')) || {}) })
 };

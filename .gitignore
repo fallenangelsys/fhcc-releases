@@ -10,6 +10,8 @@ node_modules/
 /data/server-backups/
 /data/ai-memory/
 /data/studio-images/
+# Snapshot echter Guild-Konfiguration (Serverdaten, regenerierbar)
+seed-guild-configs.json
 /dist/
 /runtime/
 /.worktrees/
@@ -17,9 +19,22 @@ node_modules/
 /FHCC-Setup-*-x64.exe
 /FHCC-Setup-*-x64.exe.blockmap
 /latest.yml
-/bot-changelog.json
+# bot-changelog.json wird hier NICHT ignoriert: botUpdates.js liest sie zur Laufzeit
+# und sie wird mit ausgeliefert. Eine alte, obsolete Kopie liegt unter src/features/.
 tmp-*
 .freebuff/
 npm-debug.log*
 .DS_Store
 *.log
+
+# Lokale Agent-/Tool-Sessions (enthalten Session-Tokens, z. B. .superpowers/**/.last-token)
+.superpowers/
+.harness-state/
+
+# Audit-Artefakte und Wegwerf-Repros (regenerierbar, mehrere MB PNG)
+reports/
+harness/
+
+# Python-Bytecode-Cache
+__pycache__/
+*.pyc

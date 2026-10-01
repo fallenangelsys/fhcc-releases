@@ -21,7 +21,7 @@ function redactLogValue(value) {
   return String(value || '')
     .replace(/\b(?:mfa\.)?[A-Za-z0-9_-]{15,30}\.[A-Za-z0-9_-]{5,8}\.[A-Za-z0-9_-]{20,50}\b/g, '[DISCORD-TOKEN GESCHÜTZT]')
     .replace(/\b(?:sk|key|token|secret)[-_]?[A-Za-z0-9_-]{20,}\b/gi, '[SECRET GESCHÜTZT]')
-    .replace(/\b(?:DISCORD_TOKEN|DISCORD_CLIENT_SECRET|OLLAMA_API_KEY|GOOGLE_API_KEY)\s*[=:]\s*[^\s]+/gi, '$1=[GESCHÜTZT]');
+    .replace(/\b(?:DISCORD_TOKEN|DISCORD_CLIENT_SECRET|GOOGLE_API_KEY)\s*[=:]\s*[^\s]+/gi, '$1=[GESCHÜTZT]');
 }
 
 function parseEnv(source) {
@@ -176,6 +176,12 @@ class BotProcessSupervisor {
         return this.ensureManagedSecrets(JSON.parse(this.safeStorage.decryptString(readFileSync(this.paths.secrets))));
       } catch (error) {
         this.log(`Verschlüsselte Konfiguration konnte nicht gelesen werden: ${error.message}`);
+        // Backup der defekten Datei, damit der Benutzer sie wiederherstellen kann
+        try {
+          const backupPath = this.paths.secrets + '.broken.' + Date.now();
+          cpSync(this.paths.secrets, backupPath);
+          this.log(`Backup der defekten Konfiguration: ${backupPath}`);
+        } catch {}
       }
     }
     for (const candidate of newerSource ? [newerSource] : this.secretCandidates()) {
@@ -246,9 +252,7 @@ class BotProcessSupervisor {
       discordClientId: clientIdValid,
       discordClientSecret: clientSecretValid,
       oauthConfigured: clientIdValid && clientSecretValid,
-      redirectUri: String(values.DASHBOARD_DISCORD_REDIRECT_URI || ''),
-      ollamaKey: Boolean(values.OLLAMA_API_KEY),
-      googleSearch: Boolean(values.GOOGLE_API_KEY && (values.GOOGLE_SEARCH_ENGINE_ID || values.GOOGLE_CX))
+      redirectUri: String(values.DASHBOARD_DISCORD_REDIRECT_URI || '')
     };
   }
 

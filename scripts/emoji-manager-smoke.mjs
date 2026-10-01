@@ -56,7 +56,7 @@ assert(card.fields.some((field) => field.key === 'emojiManager.oldPrefix'), 'Pr�
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const renderer = fs.readFileSync(path.join(root, 'desktop', 'renderer', 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'desktop', 'renderer', 'index.html'), 'utf8');
-const styles = fs.readFileSync(path.join(root, 'desktop', 'renderer', 'styles.css'), 'utf8');
+const styles = fs.readFileSync(path.join(root, 'desktop', 'renderer', 'ui-base.css'), 'utf8');
 const dashboard = fs.readFileSync(path.join(root, 'src', 'dashboard.js'), 'utf8');
 assert(renderer.includes('previewEmojiRenameFromPanel') && renderer.includes('applyEmojiRenameFromPanel'), 'Professioneller Vorschau-/Bestätigungsablauf fehlt in der App.');
 assert(renderer.includes('await showEmojiRenameConfirmation(preview)'), 'Emoji-Umbenennung verwendet nicht das app-interne Bestätigungsfenster.');

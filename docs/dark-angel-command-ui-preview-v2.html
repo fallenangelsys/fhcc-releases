@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FALLEN HEAVEN · Dark Angel Command V2</title>
+  <style>
+    :root {
+      --void: #010205;
+      --ink: #07090f;
+      --glass: rgba(11, 14, 22, .76);
+      --glass-2: rgba(17, 21, 32, .66);
+      --line: rgba(222, 236, 255, .14);
+      --line-strong: rgba(222, 236, 255, .34);
+      --text: #f5f8ff;
+      --muted: #8d98aa;
+      --dim: #586170;
+      --ice: #e5f1ff;
+      --blue: #9fc8ff;
+      --violet: #b8a4ff;
+      --green: #9bffd6;
+      --red: #ff496d;
+      --gold: #f7cf91;
+      --shadow: 0 30px 120px rgba(0,0,0,.76);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      color: var(--text);
+      background: #000;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(0,0,0,.28), rgba(0,0,0,.72) 36%, rgba(0,0,0,.96) 74%),
+        linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,.92) 88%),
+        url("file:///E:/SSD%20NEW/Bilder/file_0000000050c871f4ae43434149bbd119.png") center / cover no-repeat;
+      filter: saturate(.7) contrast(1.13);
+      transform: scale(1.025);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent 0 49.85%, rgba(226,238,255,.08) 50%, transparent 50.15%),
+        linear-gradient(rgba(226,238,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(226,238,255,.014) 1px, transparent 1px);
+      background-size: 100% 100%, 52px 52px, 52px 52px;
+      opacity: .44;
+      mask-image: radial-gradient(circle at 60% 45%, #000, transparent 76%);
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 92px minmax(220px, 284px) minmax(0, 1fr) minmax(320px, 390px);
+      height: 100vh;
+      padding: 16px;
+      gap: 14px;
+    }
+
+    .rail, .section-nav, .stage, .inspector {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(12,15,23,.78), rgba(4,6,11,.78));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(24px);
+    }
+
+    .rail {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 14px 10px;
+      border-radius: 24px;
+    }
+    .crest {
+      display: grid;
+      place-items: center;
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 18px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      color: #071018;
+      background: linear-gradient(180deg, #f5f8ff, #9ebfe7);
+      box-shadow: 0 0 36px rgba(213,232,255,.25);
+      font-size: 18px;
+      font-weight: 950;
+      letter-spacing: -.08em;
+    }
+    .rail nav { display: grid; gap: 9px; align-content: start; }
+    .rail button {
+      width: 60px;
+      height: 58px;
+      border: 1px solid transparent;
+      border-radius: 17px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-size: 17px;
+      font-weight: 950;
+    }
+    .rail button.active {
+      color: var(--ice);
+      border-color: rgba(226,238,255,.3);
+      background: rgba(226,238,255,.09);
+      box-shadow: inset 0 1px rgba(255,255,255,.12), 0 0 28px rgba(180,213,255,.14);
+    }
+    .version {
+      display: grid;
+      place-items: center;
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      color: var(--dim);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .section-nav {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      padding: 18px;
+      border-radius: 26px;
+      min-width: 0;
+    }
+    .brand small, .overline, .node small, .status small, .quick small, label, .embed-preview small {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .brand h1 {
+      margin: 5px 0 0;
+      font-size: 22px;
+      line-height: .94;
+      letter-spacing: -.06em;
+    }
+    .server-pill {
+      display: grid;
+      gap: 4px;
+      margin: 20px 0 16px;
+      padding: 13px;
+      border: 1px solid rgba(226,238,255,.12);
+      border-radius: 18px;
+      background: rgba(0,0,0,.26);
+    }
+    .server-pill b { font-size: 13px; }
+    .server-pill span { color: var(--green); font-size: 12px; font-weight: 850; }
+    .groups {
+      display: grid;
+      align-content: start;
+      gap: 12px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .group h3 {
+      margin: 0 0 7px;
+      color: var(--dim);
+      font-size: 10px;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .node {
+      display: grid;
+      grid-template-columns: 34px minmax(0,1fr) auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 58px;
+      padding: 10px;
+      border: 1px solid transparent;
+      border-radius: 15px;
+      background: rgba(255,255,255,.025);
+    }
+    .node.active {
+      border-color: rgba(226,238,255,.28);
+      background: linear-gradient(90deg, rgba(226,238,255,.12), rgba(226,238,255,.025));
+      box-shadow: inset 2px 0 0 var(--ice);
+    }
+    .node i {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 11px;
+      background: rgba(226,238,255,.08);
+      color: var(--ice);
+      font-style: normal;
+      font-size: 10px;
+      font-weight: 950;
+    }
+    .node b {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 14px rgba(155,255,214,.75);
+    }
+    .dot.warn { background: var(--gold); box-shadow: 0 0 14px rgba(247,207,145,.7); }
+
+    .stage {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border-radius: 30px;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .command-header {
+      position: relative;
+      min-height: 250px;
+      padding: 28px;
+      display: grid;
+      align-content: end;
+      overflow: hidden;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(0,0,0,.2), rgba(0,0,0,.86)),
+        url("file:///E:/SSD%20NEW/Bilder/file_0000000050c871f4ae43434149bbd119.png") center 40% / cover no-repeat;
+    }
+    .command-header::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent, rgba(5,7,12,.86));
+    }
+    .command-header > * { position: relative; z-index: 1; }
+    .command-header h2 {
+      margin: 6px 0 10px;
+      max-width: 720px;
+      font-size: clamp(38px, 5vw, 72px);
+      line-height: .84;
+      letter-spacing: -.075em;
+    }
+    .command-header p {
+      margin: 0;
+      max-width: 650px;
+      color: #b5becd;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    .header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .btn {
+      height: 42px;
+      padding: 0 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--text);
+      background: rgba(255,255,255,.055);
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .btn.primary {
+      color: #061018;
+      border-color: rgba(255,255,255,.65);
+      background: linear-gradient(180deg, #f8fbff, #a8c6ee);
+      box-shadow: 0 14px 38px rgba(170,202,244,.22);
+    }
+
+    .workgrid {
+      min-height: 0;
+      overflow: auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-content: start;
+      gap: 14px;
+      padding: 18px;
+    }
+    .card {
+      border: 1px solid rgba(226,238,255,.1);
+      border-radius: 20px;
+      background: rgba(0,0,0,.24);
+      overflow: hidden;
+    }
+    .card.wide { grid-column: 1 / -1; }
+    .card header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 14px;
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid rgba(226,238,255,.08);
+    }
+    .card h3 {
+      margin: 3px 0 0;
+      font-size: 18px;
+      letter-spacing: -.04em;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 14px;
+    }
+    .status {
+      min-height: 92px;
+      padding: 13px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.035);
+      border: 1px solid rgba(226,238,255,.08);
+    }
+    .status b {
+      display: block;
+      margin-top: 12px;
+      font-size: 30px;
+      letter-spacing: -.07em;
+    }
+    .flow {
+      display: grid;
+      gap: 8px;
+      padding: 14px;
+    }
+    .quick {
+      display: grid;
+      grid-template-columns: 44px minmax(0,1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid rgba(226,238,255,.09);
+      border-radius: 16px;
+      background: rgba(255,255,255,.025);
+    }
+    .quick i {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 13px;
+      color: var(--ice);
+      background: rgba(226,238,255,.08);
+      font-style: normal;
+      font-weight: 950;
+    }
+    .quick b { display: block; margin-bottom: 3px; }
+    .quick em {
+      color: var(--blue);
+      font-style: normal;
+      font-weight: 950;
+    }
+
+    .inspector {
+      display: grid;
+      grid-template-rows: auto auto minmax(0,1fr) auto;
+      gap: 14px;
+      padding: 18px;
+      border-radius: 26px;
+      min-width: 0;
+    }
+    .inspector h2 {
+      margin: 5px 0 0;
+      font-size: 24px;
+      letter-spacing: -.05em;
+    }
+    .embed-preview {
+      border: 1px solid rgba(226,238,255,.12);
+      border-radius: 18px;
+      overflow: hidden;
+      background: rgba(0,0,0,.34);
+    }
+    .embed-preview img {
+      display: block;
+      width: 100%;
+      height: 120px;
+      object-fit: cover;
+      opacity: .78;
+    }
+    .embed-body {
+      border-left: 4px solid var(--ice);
+      padding: 14px;
+      background: #171920;
+    }
+    .embed-body h3 { margin: 0 0 8px; font-size: 15px; }
+    .embed-body p { margin: 0; color: #cbd2dc; font-size: 12px; line-height: 1.45; }
+    .fields {
+      min-height: 0;
+      overflow: auto;
+      display: grid;
+      gap: 11px;
+      padding-right: 4px;
+    }
+    label {
+      display: grid;
+      gap: 7px;
+    }
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      color: var(--text);
+      background: rgba(0,0,0,.36);
+      padding: 12px;
+      font: inherit;
+      outline: none;
+    }
+    textarea { min-height: 112px; resize: vertical; }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 11px;
+      border: 1px solid rgba(226,238,255,.1);
+      border-radius: 16px;
+      background: rgba(0,0,0,.24);
+    }
+    code {
+      padding: 6px 8px;
+      border: 1px solid rgba(226,238,255,.14);
+      border-radius: 8px;
+      color: var(--ice);
+      background: rgba(226,238,255,.07);
+      font-size: 11px;
+    }
+    .savebar {
+      display: grid;
+      grid-template-columns: 1fr 1.25fr;
+      gap: 9px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(226,238,255,.1);
+    }
+
+    @media (max-width: 1280px) {
+      body { overflow: auto; }
+      .shell { height: auto; min-height: 100vh; grid-template-columns: 82px minmax(0,1fr); }
+      .section-nav { display: none; }
+      .inspector { grid-column: 2; }
+      .stage { min-height: 760px; }
+    }
+    @media (max-width: 860px) {
+      .shell { grid-template-columns: 1fr; padding: 12px; }
+      .rail { grid-template-columns: auto 1fr auto; grid-template-rows: auto; }
+      .crest { margin: 0; }
+      .rail nav { display: flex; justify-content: center; }
+      .stage, .inspector { grid-column: 1; }
+      .workgrid, .status-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <aside class="rail">
+      <div class="crest">FH</div>
+      <nav aria-label="Hauptnavigation">
+        <button class="active" title="Command">⌁</button>
+        <button title="Server">#</button>
+        <button title="Module">▦</button>
+        <button title="Studio">✎</button>
+        <button title="System">⚙</button>
+      </nav>
+      <div class="version">3.9.281</div>
+    </aside>
+
+    <aside class="section-nav">
+      <div class="brand">
+        <small>Fallen Heaven</small>
+        <h1>Dark Angel Command</h1>
+      </div>
+      <div class="server-pill">
+        <small>Aktiver Server</small>
+        <b>Fallen Heaven</b>
+        <span>Bot online · Sync aktiv</span>
+      </div>
+      <div class="groups">
+        <section class="group">
+          <h3>Operations</h3>
+          <article class="node active"><i>OV</i><div><b>Übersicht</b><small>Live Zustand</small></div><span class="dot"></span></article>
+          <article class="node"><i>SV</i><div><b>Serververwaltung</b><small>Kanäle, Rollen</small></div><span class="dot"></span></article>
+        </section>
+        <section class="group">
+          <h3>Systeme</h3>
+          <article class="node"><i>LV</i><div><b>Level & Rollen</b><small>XP, Panels</small></div><span class="dot warn"></span></article>
+          <article class="node"><i>MD</i><div><b>Moderation</b><small>Schutz, Logs</small></div><span class="dot"></span></article>
+          <article class="node"><i>CM</i><div><b>Community</b><small>Tickets, Welcome</small></div><span class="dot"></span></article>
+          <article class="node"><i>EC</i><div><b>Economy</b><small>VIP, Coins</small></div><span class="dot"></span></article>
+        </section>
+        <section class="group">
+          <h3>Studios</h3>
+          <article class="node"><i>EM</i><div><b>Embed Studio</b><small>Vorlagen</small></div><span class="dot"></span></article>
+          <article class="node"><i>SK</i><div><b>Skin Studio</b><small>Minecraft</small></div><span class="dot"></span></article>
+        </section>
+      </div>
+    </aside>
+
+    <section class="stage">
+      <header class="command-header">
+        <span class="overline">Command Overview</span>
+        <h2>Alles steuerbar. Nichts vermischt.</h2>
+        <p>Die App startet nicht mehr mit losem Kachel-Chaos, sondern mit einem Einsatzbild: Zustand, Probleme, nächste Aktionen und die wichtigsten Live-Systeme.</p>
+        <div class="header-actions">
+          <button class="btn primary">Kritische Punkte prüfen</button>
+          <button class="btn">Level-Up-Info öffnen</button>
+          <button class="btn">Kanalverlauf ansehen</button>
+        </div>
+      </header>
+
+      <div class="workgrid">
+        <article class="card wide">
+          <header>
+            <div><span class="overline">Serverzustand</span><h3>Live Signale</h3></div>
+            <button class="btn">Aktualisieren</button>
+          </header>
+          <div class="status-grid">
+            <div class="status"><small>Gateway</small><b style="color:var(--green)">Live</b></div>
+            <div class="status"><small>Module aktiv</small><b>28</b></div>
+            <div class="status"><small>Offene Hinweise</small><b style="color:var(--gold)">3</b></div>
+            <div class="status"><small>Letzter Fehler</small><b style="color:var(--green)">0</b></div>
+          </div>
+        </article>
+
+        <article class="card">
+          <header><div><span class="overline">Nächste Aktionen</span><h3>Was gerade zählt</h3></div></header>
+          <div class="flow">
+            <div class="quick"><i>1</i><div><b>Level-Up-Info migrieren</b><small>Alter CHAT-XP Text erkannt</small></div><em>öffnen</em></div>
+            <div class="quick"><i>2</i><div><b>Boost-Farben prüfen</b><small>Buttons bleiben funktional</small></div><em>prüfen</em></div>
+            <div class="quick"><i>3</i><div><b>Call-Moderation</b><small>Panel live aktualisieren</small></div><em>sync</em></div>
+          </div>
+        </article>
+
+        <article class="card">
+          <header><div><span class="overline">Aktivitätsstrom</span><h3>Letzte Events</h3></div></header>
+          <div class="flow">
+            <div class="quick"><i>XP</i><div><b>Leveling-Smoke grün</b><small>vor 2 Minuten</small></div><em>OK</em></div>
+            <div class="quick"><i>EXE</i><div><b>3.9.281 gebaut</b><small>Artifact-Audit bestanden</small></div><em>OK</em></div>
+            <div class="quick"><i>UI</i><div><b>Dark Angel V2</b><small>Layout-Preview aktiv</small></div><em>neu</em></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <aside class="inspector">
+      <div>
+        <span class="overline">Kontext-Inspector</span>
+        <h2>Level-Up-Info</h2>
+      </div>
+      <div class="embed-preview">
+        <img src="file:///E:/SSD%20NEW/Bilder/file_0000000050c871f4ae43434149bbd119.png" alt="">
+        <div class="embed-body">
+          <small>Discord Preview</small>
+          <h3>𑣲 Leveling auf Fallen Heaven 🪽</h3>
+          <p>**{rulesChatFieldName}**<br>{rulesChatFieldText}<br><br>**{rulesVoiceFieldName}**<br>{rulesVoiceFieldText}</p>
+        </div>
+      </div>
+      <div class="fields">
+        <label>Kanal<select><option>#level-up</option></select></label>
+        <label>Titel<input value="𑣲 Leveling auf {guild} 🪽"></label>
+        <label>Beschreibung<textarea>Durch deine Aktivität auf **{guild}** sammelst du XP.
+
+**{rulesChatFieldName}**
+{rulesChatFieldText}
+
+**{rulesVoiceFieldName}**
+{rulesVoiceFieldText}</textarea></label>
+        <div class="chips">
+          <code>{guild}</code><code>{rulesChatFieldName}</code><code>{rulesChatFieldText}</code><code>{rulesVoiceFieldName}</code><code>{rulesVoiceFieldText}</code><code>{rulesBonusFieldText}</code><code>{noXpRoleNames}</code>
+        </div>
+      </div>
+      <footer class="savebar">
+        <button class="btn">Entwurf</button>
+        <button class="btn primary">Speichern & Sync</button>
+      </footer>
+    </aside>
+  </main>
+</body>
+</html>

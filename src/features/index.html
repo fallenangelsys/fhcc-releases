@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>FALLEN HEAVEN Control Center</title>
+  <style>
+    :root { --fh-titlebar: 44px; color-scheme: dark light; }
+    html, body { min-height: 100%; background: #06071c; }
+    body.auth-restoring { overflow: hidden; background:
+      radial-gradient(circle at 22% 20%, rgba(88, 101, 242, .24), transparent 34%),
+      radial-gradient(circle at 76% 74%, rgba(64, 239, 199, .16), transparent 36%),
+      linear-gradient(135deg, #050617 0%, #10104a 48%, #050617 100%);
+    }
+    body.auth-restoring .access-scene,
+    body.auth-restoring .main-stage,
+    body.auth-restoring .toast,
+    body.auth-restoring .command-palette {
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+    .fh-preboot {
+      display: none;
+      position: fixed;
+      inset: var(--fh-titlebar) 0 0;
+      z-index: 2147483000;
+      place-items: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(88, 101, 242, .28), transparent 30%),
+        radial-gradient(circle at 18% 72%, rgba(64, 239, 199, .11), transparent 28%),
+        linear-gradient(135deg, #050617 0%, #0b0b35 46%, #17166a 100%);
+    }
+    body.auth-restoring .fh-preboot { display: grid; }
+    body:not(.auth-restoring) .fh-preboot {
+      display: grid;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity .22s ease, visibility .22s ease;
+    }
+    .fh-preboot::before {
+      content: "";
+      position: absolute;
+      inset: -20%;
+      background-image:
+        linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(circle at 50% 50%, #000, transparent 70%);
+      animation: fh-preboot-drift 18s linear infinite;
+    }
+    .fh-preboot-card {
+      position: relative;
+      width: min(460px, calc(100vw - 48px));
+      padding: 30px;
+      border: 1px solid rgba(153, 144, 255, .32);
+      border-radius: 30px;
+      color: #fff;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.13), rgba(255,255,255,.045)),
+        rgba(12, 12, 45, .82);
+      box-shadow: 0 34px 100px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255,255,255,.16);
+      backdrop-filter: blur(24px);
+      transform: translateZ(0);
+    }
+    .fh-preboot-mark {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 24px;
+      letter-spacing: .16em;
+      font: 800 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: rgba(235, 237, 255, .76);
+      text-transform: uppercase;
+    }
+    .fh-preboot-mark img {
+      width: 46px;
+      height: 46px;
+      border-radius: 16px;
+      box-shadow: 0 0 0 1px rgba(255,255,255,.16), 0 16px 34px rgba(88,101,242,.28);
+    }
+    .fh-preboot-card h1 {
+      margin: 0 0 10px;
+      max-width: 360px;
+      font: 900 clamp(30px, 4vw, 48px)/.94 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: -.05em;
+    }
+    .fh-preboot-card p {
+      margin: 0;
+      max-width: 360px;
+      color: rgba(231, 234, 255, .72);
+      font: 650 14px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .fh-preboot-state {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 24px;
+      color: rgba(255,255,255,.88);
+      font: 800 12px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .fh-preboot-state i {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #40efc7;
+      box-shadow: 0 0 18px rgba(64,239,199,.85);
+      animation: fh-preboot-pulse 1.1s ease-in-out infinite alternate;
+    }
+    .fh-preboot-bar {
+      position: relative;
+      height: 8px;
+      margin-top: 18px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255,255,255,.09);
+    }
+    .fh-preboot-bar i {
+      position: absolute;
+      inset: 0;
+      width: 42%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #40efc7, #8b82ff, #ffffff);
+      animation: fh-preboot-load 1.15s cubic-bezier(.65,0,.35,1) infinite;
+    }
+    @keyframes fh-preboot-load {
+      from { transform: translateX(-115%); }
+      to { transform: translateX(255%); }
+    }
+    @keyframes fh-preboot-pulse {
+      from { transform: scale(.75); opacity: .62; }
+      to { transform: scale(1.12); opacity: 1; }
+    }
+    @keyframes fh-preboot-drift {
+      from { transform: translate3d(0,0,0); }
+      to { transform: translate3d(64px,64px,0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fh-preboot::before,
+      .fh-preboot-state i,
+      .fh-preboot-bar i { animation: none; }
+      .fh-preboot-bar i { width: 100%; transform: none; }
+    }
+  </style>
+<link rel="stylesheet" href="ui-base.css?v=3.9.198" data-live-diagnostics-v2>
+  <link rel="stylesheet" href="ui-aurora.css?v=3.9.198">
+  <link rel="stylesheet" href="ui-system.css?v=3.9.198">
+  </head>
+<body data-theme="dark" class="auth-restoring">
+  <div class="app-shell">
+    <header class="titlebar">
+      <div class="title-drag">
+        <img src="assets/fallen-heaven-app-icon.png" alt="">
+        <strong>FALLEN HEAVEN</strong>
+        <span>CONTROL CENTER</span>
+      </div>
+      <div class="window-actions">
+        <button id="theme-toggle" class="window-button theme-toggle" title="Darstellung wechseln" aria-label="Darstellung wechseln">
+          <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 15.3A8.8 8.8 0 0 1 8.7 3.8a8.8 8.8 0 1 0 11.5 11.5Z"></path></svg>
+        </button>
+        <button id="minimize" class="window-button" aria-label="Minimieren"><span></span></button>
+        <button id="maximize" class="window-button" aria-label="Maximieren"><span class="window-square"></span></button>
+        <button id="close" class="window-button close" aria-label="Schließen"><span></span><span></span></button>
+      </div>
+    </header>
+
+    <section id="preboot-screen" class="fh-preboot" aria-label="FALLEN HEAVEN wird gestartet" aria-live="polite">
+      <div class="fh-preboot-card">
+        <div class="fh-preboot-mark">
+          <img src="assets/fallen-heaven-app-icon.png" alt="">
+          <span>FALLEN HEAVEN · CONTROL CENTER</span>
+        </div>
+        <h1>Control Center wird vorbereitet.</h1>
+        <p>Session, Bot-Service und Serverdaten werden geprüft, bevor die Oberfläche sichtbar wird.</p>
+        <div class="fh-preboot-state"><i></i><span>Sichere Sitzung prüfen</span></div>
+        <div class="fh-preboot-bar" aria-hidden="true"><i></i></div>
+      </div>
+    </section>
+
+    <section id="access-scene" class="access-scene" aria-labelledby="access-title" aria-describedby="access-copy">
+      <div class="access-atmosphere" aria-hidden="true">
+        <span class="access-orb access-orb-one"></span>
+        <span class="access-orb access-orb-two"></span>
+        <span class="access-grid"></span>
+        <div class="access-emoji-field">
+          <span style="--emoji-x:7%;--emoji-y:16%;--emoji-size:30px;--emoji-delay:-2s;--emoji-duration:11s;--emoji-depth:.35">✨</span>
+          <span style="--emoji-x:18%;--emoji-y:76%;--emoji-size:44px;--emoji-delay:-7s;--emoji-duration:15s;--emoji-depth:.55">💜</span>
+          <span style="--emoji-x:39%;--emoji-y:9%;--emoji-size:36px;--emoji-delay:-4s;--emoji-duration:13s;--emoji-depth:.42">🪽</span>
+          <span style="--emoji-x:58%;--emoji-y:82%;--emoji-size:40px;--emoji-delay:-9s;--emoji-duration:16s;--emoji-depth:.6">🌙</span>
+          <span style="--emoji-x:72%;--emoji-y:12%;--emoji-size:48px;--emoji-delay:-5s;--emoji-duration:14s;--emoji-depth:.7">🔮</span>
+          <span style="--emoji-x:89%;--emoji-y:68%;--emoji-size:34px;--emoji-delay:-1s;--emoji-duration:12s;--emoji-depth:.48">⚡</span>
+          <span style="--emoji-x:94%;--emoji-y:28%;--emoji-size:42px;--emoji-delay:-8s;--emoji-duration:17s;--emoji-depth:.65">👑</span>
+          <span style="--emoji-x:30%;--emoji-y:89%;--emoji-size:34px;--emoji-delay:-6s;--emoji-duration:12s;--emoji-depth:.4">🛡️</span>
+        </div>
+      </div>
+
+      <div class="access-brand-stage">
+        <div class="access-brand-lockup">
+          <img src="assets/fallen-heaven-app-icon.png" alt="">
+          <span><b>FALLEN HEAVEN</b><small>NATIVE CONTROL CENTER</small></span>
+        </div>
+        <div class="access-hero-copy">
+          <p class="eyebrow">DEINE ZENTRALE. DEINE REGELN.</p>
+          <h1>CONTROL YOUR<br><span>DISCORD WORLD.</span></h1>
+          <p>Steuere Community, Sicherheit und Content in einer nativen Kommandozentrale – präzise, ruhig und vollständig unter deiner Kontrolle.</p>
+        </div>
+        <div class="access-core" aria-hidden="true">
+          <span class="access-core-ring ring-a"></span>
+          <span class="access-core-ring ring-b"></span>
+          <span class="access-core-ring ring-c"></span>
+          <div class="access-core-logo"><img src="assets/fallen-heaven-app-icon.png" alt=""></div>
+          <div class="access-satellite satellite-one"><i></i><span><small>BOT SERVICE</small><b>LIVE CONTROL</b></span></div>
+          <div class="access-satellite satellite-two"><i></i><span><small>COMMUNITY</small><b>SERVER READY</b></span></div>
+          <div class="access-satellite satellite-three"><i></i><span><small>SECURITY</small><b>ACCESS SHIELDED</b></span></div>
+        </div>
+        <div class="access-footnote"><span><i></i> Lokale Windows-App</span><span>Discord OAuth2</span><span>Geschützte Sitzung</span></div>
+      </div>
+
+      <aside class="access-panel">
+        <div class="access-panel-top">
+          <span class="access-secure-badge"><i></i> SICHERER ZUGANG</span>
+          <span class="access-signal" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <div class="access-panel-copy">
+          <p class="eyebrow">WILLKOMMEN ZURÜCK</p>
+          <h2 id="access-title">Öffne dein<br>Control Center.</h2>
+          <p id="access-copy">Discord bestätigt einmalig deinen Account. Danach siehst du ausschließlich Server, die du wirklich verwalten darfst.</p>
+        </div>
+        <button id="login-portal-action" class="access-login-action" type="button" data-login="true">
+          <span class="discord-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19.5 5.3A17 17 0 0 0 15.6 4l-.5 1.1a14 14 0 0 0-6.2 0L8.4 4a17 17 0 0 0-3.9 1.3C2 9 1.3 12.6 1.6 16.1A16 16 0 0 0 6.4 18l1.2-1.6a11 11 0 0 1-1.9-.9l.5-.4c3.7 1.7 7.9 1.7 11.6 0l.5.4a11 11 0 0 1-1.9.9l1.2 1.6a16 16 0 0 0 4.8-1.9c.4-4.1-.7-7.7-2.9-10.8ZM8.8 14.1c-1.1 0-2-1-2-2.2s.9-2.2 2-2.2 2 1 2 2.2-.9 2.2-2 2.2Zm6.4 0c-1.1 0-2-1-2-2.2s.9-2.2 2-2.2 2 1 2 2.2-.9 2.2-2 2.2Z"></path></svg></span>
+          <span><b>Mit Discord fortfahren</b><small>Sicher über OAuth2 verbinden</small></span>
+          <svg class="login-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"></path></svg>
+        </button>
+        <button id="open-secure-setup" class="access-setup-trigger" type="button"><svg viewBox="0 0 24 24" aria-hidden="true" width="14" height="14"><path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-5"></path></svg>Sichere Einrichtung öffnen</button>
+        <div class="access-session-state">
+          <span><i></i><b id="login-session-status">Gespeicherte Sitzung wird geprüft</b></span>
+          <small>Gespeicherte Sitzungen werden beim Start geprüft und sonst erneuert.</small>
+        </div>
+        <div class="access-assurance">
+          <article><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-5"></path></svg><span><b>Windows-geschützt</b><small>Lokaler Systemschutz</small></span></article>
+          <article><svg viewBox="0 0 24 24"><path d="M4 7h16v11H4zM8 7V5h8v2"></path><circle cx="12" cy="12" r="2"></circle></svg><span><b>Ohne Passwort</b><small>Discord übernimmt die Prüfung</small></span></article>
+        </div>
+        <p class="access-privacy">FALLEN HEAVEN speichert kein Discord-Passwort. Die Anmeldung läuft im offiziellen Discord-Fenster.</p>
+      </aside>
+    </section>
+
+    <main class="main-stage">
+      
+
+      <header class="app-nav" aria-label="Dashboard Navigation">
+        <button class="app-brand" data-view="center">
+          <img src="assets/fallen-heaven-app-icon.png" alt="">
+          <span><b>FALLEN HEAVEN</b><small>Control Center</small></span>
+        </button>
+        <nav class="app-links">
+          <button class="app-link active" data-view="center"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"></path></svg>Übersicht</button>
+          <button class="app-link" data-view="community"><svg viewBox="0 0 24 24"><path d="M4 5h16v4H4zM4 11h7v8H4zM13 11h7v8h-7z"></path></svg>Serververwaltung</button>
+          <button class="app-link" data-view="modules"><svg viewBox="0 0 24 24"><path d="M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z"></path></svg>Module</button>
+          <button class="app-link" data-view="studio"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg>Embed Studio</button>
+          <button class="app-link" data-view="skin"><svg viewBox="0 0 24 24"><path d="M7 3h10l2 4v13H5V7l2-4Zm0 4h10M9 10h2m2 0h2m-6 4h6m-8 6v-5m10 5v-5"></path></svg>Skin Studio</button>
+          <button class="app-link" data-view="system"><svg viewBox="0 0 24 24"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"></path><circle cx="12" cy="12" r="3"></circle></svg>System</button>
+        </nav>
+        <button id="command-palette-open" class="command-palette-trigger" type="button" aria-label="App durchsuchen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg><span>Suchen</span><kbd>Strg K</kbd></button>
+        <div class="app-account">
+          <span class="service-pill"><i></i><span id="mini-status">Bot offline</span></span>
+          <img class="account-avatar" src="assets/fallen-heaven-avatar.png" alt="Discord Avatar">
+          <span class="account-copy"><b id="account-name">Nicht verbunden</b><small id="app-version">Version</small></span>
+          <button id="discord-login" class="button primary compact">Mit Discord anmelden</button>
+          <button id="discord-logout" class="icon-button" title="Abmelden" aria-label="Abmelden" hidden><svg viewBox="0 0 24 24"><path d="M10 5H5v14h5m5-4 4-3-4-3m4 3H9"></path></svg></button>
+        </div>
+      </header>
+
+      <section class="view dashboard-view" id="center-view">
+        <header class="fh-console-head">
+          <div class="fh-console-title">
+            <p class="eyebrow">FALLEN HEAVEN / CONTROL CENTER</p>
+            <h1>Command Deck.</h1>
+            <p>Starte den Bot, kontrolliere Module, erstelle Content und behalte dein System im Blick.</p>
+          </div>
+          <div class="fh-console-actions">
+            <label id="guild-picker" class="select-field fh-guild-pick" hidden><span>Aktiver Server</span><select id="guild-select"></select></label>
+            <span class="fh-bot-state"><i id="control-dot" class="status-dot"></i><span><small>DISCORD BOT</small><b id="bot-state">Wird geprüft</b></span></span>
+          </div>
+        </header>
+
+        <section id="workspace-portal" class="fh-server-strip" hidden aria-labelledby="workspace-portal-title">
+          <h2 id="workspace-portal-title" class="sr-only">Wähle deinen Arbeitsbereich.</h2>
+          <div class="fh-server-strip-top">
+            <div class="fh-mode-switch" role="group" aria-label="Arbeitsbereich wechseln">
+              <button type="button" class="fh-mode-btn" data-workspace-open="minecraft"><span aria-hidden="true">◆</span>Minecraft</button>
+              <button type="button" class="fh-mode-btn" data-workspace-open="discord"><span aria-hidden="true">●</span>Discord</button>
+            </div>
+            <div class="fh-server-strip-status">
+              <span class="fh-count"><b id="workspace-server-count">0</b> Server verfügbar</span>
+              <span class="fh-current"><b id="workspace-current-server">Kein Server</b></span>
+            </div>
+          </div>
+          <div id="workspace-guilds" class="fh-server-strip-grid">
+            <div id="workspace-server-grid" class="workspace-server-grid"></div>
+          </div>
+        </section>
+
+        <div class="fh-metrics">
+          <article class="fh-metric"><span>BOT ENGINE</span><strong id="engine-label">OFFLINE</strong><small id="engine-copy">Kein aktiver Bot-Prozess</small></article>
+          <article class="fh-metric"><span>AKTIVE MODULE</span><strong id="module-stat">9</strong><small>Systeme für diesen Server</small></article>
+          <article class="fh-metric"><span>GESPEICHERTE INHALTE</span><strong id="draft-stat">0</strong><small>Entwürfe und Bot-Nachrichten</small></article>
+          <article class="fh-metric"><span>SYSTEMSTATUS</span><strong id="status-label">IDLE</strong><small>Letzte Live-Abfrage</small></article>
+        </div>
+
+        <div class="fh-main">
+          <article class="fh-service">
+            <div class="fh-card-head"><p class="eyebrow">BOT SERVICE</p><span class="fh-live-dot"><i></i> KONTROLLE</span></div>
+            <h2 id="service-headline">Dein Bot ist im Einsatz.</h2>
+            <p id="bot-detail">Status wird geladen.</p>
+            <div class="service-controls fh-service-controls">
+              <button class="button success" data-action="start">Starten</button>
+              <button class="button secondary" data-action="restart">Neustarten</button>
+              <button class="button danger" data-action="stop">Stoppen</button>
+            </div>
+          </article>
+          <article class="fh-quick">
+            <div class="fh-card-head"><div><p class="eyebrow">BEREICHE</p><h3>Direkt öffnen</h3></div></div>
+            <button data-view="modules"><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z"></path></svg></span><span><b>Module</b><small>Systeme konfigurieren</small></span><em>→</em></button>
+            <button data-view="studio"><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg></span><span><b>Embed Studio</b><small>Nachrichten erstellen</small></span><em>→</em></button>
+            <button data-view="system"><span class="feature-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v5l3 2"></path></svg></span><span><b>System</b><small>Logs und Prozesse</small></span><em>→</em></button>
+          </article>
+          <article class="fh-timeline">
+            <div class="fh-card-head"><div><p class="eyebrow">LIVE ACTIVITY</p><h3>App-Timeline</h3></div><span class="timeline-live"><i></i> LIVE</span></div>
+            <div id="timeline" class="timeline" aria-live="polite"></div>
+            <div class="timeline-footer"><span><i></i> Automatisch synchronisiert</span><small>alle 15 Sekunden</small></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view dashboard-view" id="community-view">
+        <div class="page-head community-head">
+          <div><p class="eyebrow">SERVER CONTROL</p><h1>Serververwaltung.</h1><p>Struktur, Menschen, Events und Inhalte direkt aus Discord. Nachrichten werden nur auf Anforderung geladen und nicht zusätzlich gespeichert.</p></div>
+          <div class="page-head-actions"><span id="community-freshness" class="data-freshness">Noch nicht geladen</span><button id="community-refresh" class="button secondary">Discord-Daten aktualisieren</button></div>
+        </div>
+        <div class="community-metrics" id="community-metrics"></div>
+        <div class="community-shell">
+          <aside class="community-menu" aria-label="Serververwaltung">
+            <button class="community-tab active" data-community-tab="events"><span class="community-tab-icon">◆</span><span><b>Events</b><small>Termine und Aktivitäten</small></span><em id="events-count">0</em></button>
+            <button class="community-tab" data-community-tab="structure"><span class="community-tab-icon">≡</span><span><b>Kanäle & Rollen</b><small>Struktur und Inhalte</small></span><em id="channels-count">0</em></button>
+            <button class="community-tab" data-community-tab="members"><span class="community-tab-icon">●</span><span><b>Mitglieder</b><small>Suche und Übersicht</small></span><em id="members-count">0</em></button>
+            <button class="community-tab" data-community-tab="boosts"><span class="community-tab-icon">◇</span><span><b>Server-Boosts</b><small>Tier und Unterstützer</small></span><em id="boosts-count">0</em></button>
+            <button class="community-tab" data-community-tab="vip"><span class="community-tab-icon">✦</span><span><b>VIP & Heaven Coins</b><small>Konten und VIP-Rollen</small></span><em id="vip-count">0</em></button>
+            <button class="community-tab" data-community-tab="backups"><span class="community-tab-icon">↺</span><span><b>Server-Backups</b><small>Struktur und Einstellungen</small></span><em id="backups-count">0</em></button>
+            <button class="community-tab" data-community-tab="system-events"><span class="community-tab-icon">◎</span><span><b>Systemereignisse</b><small>Boosts, Joins und Discord</small></span><em id="system-events-count">0</em></button>
+          </aside>
+          <div class="community-content">
+            <section class="community-panel active" data-community-panel="events"><div class="community-panel-head"><div><p class="eyebrow">EVENTS</p><h2>Geplante Server-Events</h2></div><span class="privacy-chip">LIVE AUS DISCORD</span></div><div id="community-events" class="event-grid"><p class="community-empty">Events werden geladen ...</p></div></section>
+            <section class="community-panel" data-community-panel="structure"><div class="community-panel-head"><div><p class="eyebrow">STRUKTUR</p><h2>Kanäle, Rollen & Inhalte</h2></div><label class="community-search">Suchen<input id="channel-search" placeholder="Kanal oder Rolle suchen ..."></label></div><div class="structure-layout"><div><h3>Kanalstruktur</h3><div id="community-channels" class="channel-tree"></div></div><div><h3>Rollenverwaltung</h3><div id="community-roles" class="role-list"></div></div><aside class="channel-reader"><div class="reader-head"><div><p class="eyebrow" id="reader-kicker">KANAL-INHALT</p><h3 id="reader-title">Kanal oder Rolle auswählen</h3></div><span id="reader-mode" class="privacy-chip">SERVERINDEX</span></div><p id="reader-topic" class="reader-topic">Wähle links einen Kanal für den paginierten Live-Verlauf oder eine Rolle für die sichere Bearbeitung.</p><div id="channel-messages" class="message-list"><p class="community-empty">Noch nichts ausgewählt.</p></div></aside></div></section>
+            <section class="community-panel" data-community-panel="members">
+              <div class="community-panel-head"><div><p class="eyebrow">MITGLIEDER</p><h2>User Intelligence Center</h2><p class="member-head-copy">Öffentliche Serverprofile mit belegten Interessen, Aktivität und sicheren Rollen- und Moderationsaktionen.</p></div><label class="community-search">Mitglied suchen<input id="member-search" placeholder="Name, Benutzername oder Discord-ID ..."></label></div>
+              <div class="member-toolbar">
+                <label>Filter<select id="member-filter"><option value="all">Alle Mitglieder</option><option value="humans">Nur Menschen</option><option value="bots">Bots</option><option value="online">Online</option><option value="boosters">Booster</option><option value="timedout">Im Timeout</option><option value="staff">Team / Moderation</option></select></label>
+                <label>Sortierung<select id="member-sort"><option value="inactivity">Längste Nachrichten-Inaktivität</option><option value="activity_desc">Zuletzt geschrieben</option><option value="joined_desc">Neueste Beitritte</option><option value="joined_asc">Älteste Beitritte</option><option value="name">Name A–Z</option><option value="boosters">Booster zuerst</option><option value="roles">Meiste Rollen</option><option value="roles_asc">Wenigste Rollen</option><option value="account_new">Neueste Accounts</option><option value="account_old">Älteste Accounts</option></select></label>
+                <label>Pro Seite<select id="member-page-size"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
+                <button id="member-sync" class="button secondary" type="button">Mit Discord abgleichen</button>
+              </div>
+              <div id="member-summary" class="member-summary"></div>
+              <div class="member-management-layout">
+                <div class="member-table-shell">
+                  <div class="member-table-head"><span>Mitglied</span><span>Status</span><span>Beigetreten</span><span>Rollen</span><span></span></div>
+                  <div id="community-members" class="member-table"><p class="community-empty">Mitglieder werden geladen ...</p></div>
+                  <div id="member-pagination" class="member-pagination"></div>
+                </div>
+                <aside id="member-detail" class="member-detail"><div class="member-detail-empty"><span>◇</span><h3>Mitglied auswählen</h3><p>Öffne rechts die sichere Detailansicht für Rollen, Timeout, Kick oder Ban.</p></div></aside>
+              </div>
+              <dialog id="member-action-dialog" class="member-action-dialog"><div><p class="eyebrow">BESTÄTIGUNG</p><h3 id="member-dialog-title">Aktion bestätigen</h3><p id="member-dialog-copy"></p><div class="member-dialog-actions"><button id="member-dialog-cancel" class="button secondary" type="button">Abbrechen</button><button id="member-dialog-confirm" class="button danger" type="button">Verbindlich ausführen</button></div></div></dialog>
+            </section>
+            <section class="community-panel" data-community-panel="boosts">
+              <div class="community-panel-head"><div><p class="eyebrow">SERVER BOOSTS</p><h2>Support & Server-Tier</h2><p class="member-head-copy">Ein einmaliger Stand aus Discord bildet die Basis. Danach verarbeitet der Bot neue Boost-Ereignisse automatisch und kontrolliert die Rollen weiterhin alle 15 Minuten.</p></div><span id="boost-tier" class="tier-badge">TIER 0</span></div>
+              <div id="boost-summary" class="boost-summary"></div>
+              <div id="boost-consistency-alert" class="boost-consistency-alert" hidden></div>
+              <section class="boost-activity-import">
+                <div><p class="eyebrow">EINMALIGER ERSTABGLEICH</p><h3>Discord-Aktivitätsliste als Basis übernehmen</h3><p>Frühere Mitglieder, die nicht mehr auf dem Server sind, werden automatisch ignoriert. Die App prüft eine eingefügte Liste selbstständig. Eine Gesamtdifferenz bleibt anschließend deutlich markiert, bis beide Discord-Summen übereinstimmen. Alte Nachrichten werden danach nicht erneut eingelesen.</p></div>
+                <label class="boost-activity-input"><span>Discord-Aktivitätsliste</span><textarea id="boost-activity-text" rows="7" placeholder="sagaonly 1 Boost gegeben. Heute&#10;razer_fokus 1 Boost ist abgelaufen. 12.07.2026"></textarea></label>
+                <div class="boost-import-actions"><button id="boost-activity-preview" type="button" class="button secondary">Jetzt prüfen</button><button id="boost-activity-apply" type="button" class="button primary" disabled>Geprüfte Liste übernehmen</button></div>
+                <div id="boost-activity-result" class="boost-activity-result">Noch keine Liste geprüft.</div>
+              </section>
+              <section id="boost-baseline-editor" class="boost-baseline-editor" hidden>
+                <header><div><p class="eyebrow">AKTUELLER BASISSTAND</p><h3>Booster einzeln korrigieren</h3><p>Alle aktuell von Discord bestätigten Booster stehen hier bereit. Änderungen werden pro Mitglied gespeichert und dessen Staffelrolle sofort synchronisiert.</p></div><span id="boost-baseline-health" class="boost-baseline-health">NOCH NICHT ANGELEGT</span></header>
+                <div class="boost-baseline-toolbar"><label>Mitglied suchen<input id="boost-baseline-search" type="search" placeholder="Name oder Benutzername ..."></label><label>Mitglied hinzufügen<select id="boost-baseline-member-add"><option value="">Aktiven Booster auswählen ...</option></select></label><button id="boost-baseline-member-open" class="button secondary" type="button">Öffnen</button></div>
+                <div id="boost-baseline-list" class="boost-baseline-list"></div>
+              </section>
+              <div id="boost-filter-tabs" class="boost-filter-tabs"><button type="button" class="active" data-boost-filter="active">Aktiv</button><button type="button" data-boost-filter="ended">Beendet</button><button type="button" data-boost-filter="unclear">Unklar</button><button type="button" data-boost-filter="all">Alle Ereignisse</button></div>
+              <div class="boost-workspace"><section><div class="member-section-title"><h4 id="boost-list-title">Aktive Booster</h4><span id="boost-list-count">0</span></div><div id="community-boosters" class="booster-grid"><p class="community-empty">Booster werden geladen ...</p></div></section><aside><div class="member-section-title"><h4>Boost-Verlauf</h4><span>GEFILTERT</span></div><div id="boost-events" class="boost-event-list"><p class="community-empty">Ereignisse werden geladen ...</p></div></aside></div>
+            </section>
+            <section class="community-panel" data-community-panel="vip">
+              <div class="community-panel-head"><div><p class="eyebrow">HEAVEN ECONOMY</p><h2>VIP & Heaven Coins</h2><p class="member-head-copy">Kontostände, VIP-Rollen und persönliche Boost-Meilensteine mit nachvollziehbarem Änderungsverlauf.</p></div><div class="vip-head-actions"><span class="privacy-chip">LOKAL · REVISIONSGESCHÜTZT</span><button id="vip-reconcile" class="button secondary" type="button">VIP & Coins abgleichen</button></div></div>
+              <div id="vip-summary" class="vip-summary"><p class="community-empty">VIP-Daten werden geladen ...</p></div>
+              <div class="vip-toolbar"><label>Mitglied suchen<input id="vip-search" type="search" placeholder="Name, Benutzername oder Discord-ID ..."></label><label>Filter<select id="vip-filter"><option value="all">Alle Mitglieder</option><option value="vip">Aktive VIPs</option><option value="balance">Mit Coins</option><option value="boosts">Mit Boost-Verlauf</option></select></label><label>Direkt auswählen<select id="vip-member-select"><option value="">Mitglied auswählen ...</option></select></label></div>
+              <div class="vip-workspace"><section><div class="member-section-title"><h4>Konten</h4><span id="vip-account-count">0</span></div><div id="vip-account-list" class="vip-account-list"><p class="community-empty">Konten werden geladen ...</p></div></section><aside id="vip-account-detail" class="vip-account-detail"><p class="community-empty">Wähle ein Mitglied, um Coins, VIP-Rolle und Boost-Rekord kontrolliert zu bearbeiten.</p></aside></div>
+              <section class="vip-ledger"><div class="member-section-title"><h4>Letzte Transaktionen</h4><span>AUDIT</span></div><div id="vip-ledger-list" class="vip-ledger-list"><p class="community-empty">Transaktionen werden geladen ...</p></div></section>
+            </section>
+            <section class="community-panel" data-community-panel="backups">
+              <div class="community-panel-head"><div><p class="eyebrow">SERVER-SICHERHEIT</p><h2>Tägliche Struktur-Backups</h2><p class="member-head-copy">Sichert Servereinstellungen, Kanäle, Rollen, Emojis, Sticker und geplante Events – ausdrücklich ohne Chat-Inhalte.</p></div><span class="privacy-chip">LOKAL · OHNE CHAT-INHALTE</span></div>
+              <div class="backup-control-panel">
+                <div><span id="backup-health" class="backup-health">Bereit</span><h3 id="backup-summary">Backups werden geladen ...</h3><p>Ein Restore ergänzt oder aktualisiert die gewählten Bereiche. Zusätzliche aktuelle Kanäle und Rollen werden niemals blind gelöscht.</p></div>
+                <div class="backup-actions"><button id="backup-create" class="button primary" type="button">Jetzt sichern</button><button id="backup-refresh" class="button secondary" type="button">Liste aktualisieren</button></div>
+              </div>
+              <div id="backup-list" class="backup-list"><p class="community-empty">Backups werden geladen ...</p></div>
+            </section>
+            <section id="community-system-events-panel" class="community-panel" data-community-panel="system-events"><div class="community-panel-head"><div><p class="eyebrow">DISCORD SYSTEMINDEX</p><h2>Systemereignisse</h2><p class="member-head-copy">Ausschließlich native Discord-Systemmeldungen, sauber getrennt von Bot-Logs und normalen Nutzerprofilen.</p></div><span class="privacy-chip">INDEXIERT · LOKAL</span></div><div id="system-event-progress" class="system-event-progress"></div><div id="system-event-summary" class="system-event-summary"></div><nav id="system-event-filters" class="boost-filter-tabs"><button type="button" class="active" data-system-event-filter="all">Alle</button><button type="button" data-system-event-filter="membership">Mitgliedschaft</button><button type="button" data-system-event-filter="boosts">Boosts</button><button type="button" data-system-event-filter="channel">Kanäle & Threads</button><button type="button" data-system-event-filter="stage">Stage</button><button type="button" data-system-event-filter="safety">Sicherheit</button><button type="button" data-system-event-filter="subscriptions">Abos & Käufe</button><button type="button" data-system-event-filter="other">Weitere</button></nav><div id="system-event-feed" class="system-event-feed"><p class="community-empty">Systemereignisse werden geladen ...</p></div></section>
+          </div>
+        </div>
+      </section>
+
+      <section class="view dashboard-view" id="modules-view">
+        <div class="page-head"><div><p class="eyebrow">SERVER-SYSTEME</p><h1>Module.</h1><p>Funktionen schnell finden, sicher konfigurieren und mit klarer Statusrückmeldung speichern.</p></div><div class="page-head-actions"><span class="module-page-stat"><b id="module-page-enabled">0</b><small>AKTIV</small></span><button id="enable-all" class="button primary" type="button">Alle aktivieren</button></div></div>
+        <div class="module-layout"><aside><div class="module-browser-head"><div class="section-label">Verfügbare Module</div><span id="module-result-count">0 Module</span></div><label class="module-search"><input id="module-search" type="search" autocomplete="off" placeholder="Modul suchen ..."></label><div id="module-filter" class="module-filter" role="group" aria-label="Module filtern"><button class="active" type="button" data-module-filter="all">Alle</button><button type="button" data-module-filter="active">Aktiv</button><button type="button" data-module-filter="inactive">Inaktiv</button></div><div id="module-grid" class="module-grid"></div></aside><article id="module-config" class="module-config"><p class="empty-drafts">Melde dich an und wähle einen Server, um ein Modul zu konfigurieren.</p></article></div>
+      </section>
+
+      <dialog id="backup-restore-dialog" class="backup-restore-dialog">
+        <form method="dialog">
+          <p class="eyebrow">KONTROLLIERTER RESTORE</p>
+          <h3>Backup prüfen und wiederherstellen</h3>
+          <div id="backup-restore-preview" class="backup-restore-preview"></div>
+          <fieldset class="backup-restore-options">
+            <legend>Bereiche wiederherstellen</legend>
+            <label><input type="checkbox" name="restoreServerSettings" checked> Servereinstellungen</label>
+            <label><input type="checkbox" name="restoreRoles" checked> Rollen und Berechtigungen</label>
+            <label><input type="checkbox" name="restoreChannels" checked> Kanäle und Einstellungen</label>
+            <label><input type="checkbox" name="restoreEmojis"> Fehlende Emojis</label>
+            <label><input type="checkbox" name="restoreStickers"> Fehlende Sticker</label>
+          </fieldset>
+          <label class="backup-restore-ack"><input id="backup-restore-ack" type="checkbox"> Ich habe die Vorschau geprüft und möchte den Restore ausführen.</label>
+          <div class="member-dialog-actions"><button class="button secondary" value="cancel" type="button" data-backup-restore-cancel>Abbrechen</button><button id="backup-restore-confirm" class="button danger" value="confirm" type="button" disabled>Ausgewählte Bereiche wiederherstellen</button></div>
+        </form>
+      </dialog>
+      <dialog id="vip-confirm-dialog" class="member-action-dialog vip-confirm-dialog">
+        <div><p class="eyebrow">VIP-KONTO ÄNDERN</p><h3>Änderung verbindlich bestätigen</h3><p id="vip-confirm-copy">Prüfe die Werte vor dem Speichern.</p><div class="member-dialog-actions"><button class="button secondary" type="button" data-vip-confirm-cancel>Abbrechen</button><button class="button danger" type="button" data-vip-confirm-apply>Änderung speichern</button></div></div>
+      </dialog>
+
+      <section class="view dashboard-view" id="studio-view">
+        <div class="page-head"><div><p class="eyebrow">CONTENT STUDIO</p><h1>Embed Studio.</h1><p>Nachrichten mit Live-Vorschau erstellen, speichern, senden und später bearbeiten.</p></div><div class="page-head-actions"><button id="save-draft" class="button secondary">Entwurf speichern</button><button id="send-studio-message" class="button primary">Mit Bot senden</button></div></div>
+        <div class="studio-shell">
+          <section class="studio-preview-column">
+            <div class="discord-window">
+              <div class="discord-channel"><span>#</span><b id="preview-channel-name">preview</b><small>LIVE-VORSCHAU</small></div>
+              <div class="discord-message-preview"><img class="discord-preview-avatar" src="assets/fallen-heaven-icon.png" alt=""><div class="discord-preview-body"><div class="discord-preview-head"><strong>FALLEN HEAVEN</strong><span>APP</span><time>Heute</time></div><p id="preview-content" class="discord-preview-content">Willkommen bei FALLEN HEAVEN.</p><img id="preview-outside-image" class="outside-message-image" src="" alt="" hidden><div id="embed-preview" class="embed-preview legacy-embed-preview"><span class="embed-line"></span><div class="embed-content"><div id="preview-author" class="embed-author" hidden><img id="preview-author-icon" src="" alt=""><span id="preview-author-name"></span></div><h3 id="preview-title">Willkommen in FALLEN HEAVEN</h3><p id="preview-description">Schön, dass du da bist.</p><div id="preview-fields" class="embed-fields"></div><img id="preview-image" class="embed-image" src="" alt="" hidden><div class="embed-footer"><img id="preview-footer-icon" src="assets/fallen-heaven-icon.png" alt=""><span id="preview-signature">FALLEN HEAVEN</span><time id="preview-timestamp">Heute</time></div><img id="preview-thumbnail" class="embed-thumbnail" src="" alt="" hidden></div></div><div id="preview-extra-embeds" class="legacy-embed-preview"></div><div id="preview-embed-stack" class="preview-embed-stack"></div><div id="preview-function-set" class="preview-function-set" hidden></div><div id="preview-reaction-roles" class="preview-reaction-roles" hidden></div></div></div>
+            </div>
+          </section>
+          <section class="studio-editor">
+            
+            <div class="studio-toolbar"><div id="template-row" class="template-row"><button data-template="welcome" class="active">Willkommen</button><button data-template="level">Level Up</button><button data-template="notice">Ankündigung</button><button data-template="rules">Regeln</button><button data-template="activityRace" class="studio-automation-template">Aktivitäts-Liga</button><button data-template="steamWorkshop" class="studio-automation-template">Steam Workshop</button></div><button id="clear-content" class="text-button">Leeren</button></div>
+            <section id="studio-special-template" class="studio-special-template" hidden><div><span>AUTOMATISCHE VORLAGE</span><strong data-studio-special-title>Aktivitäts-Liga</strong><small data-studio-special-detail>Du bearbeitest hier direkt die Live-Vorlage des Moduls. Ranglisten, Zeitraum und Navigation setzt der Bot weiterhin automatisch ein.</small></div><div class="studio-special-placeholders" data-studio-special-placeholders><code>{server}</code><code>{period}</code><code>{status}</code><code>{completion}</code><code>{range}</code><code>{nextEvaluation}</code></div><div id="studio-pcv-section-wrap" class="studio-pcv-section-wrap" hidden><span>BEREICH</span><label for="studio-pcv-section" aria-label="Zu bearbeitende Call-Moderations-Sektion wählen"><select id="studio-pcv-section"></select></label></div><button id="studio-special-back" class="button secondary" type="button">Normales Embed</button></section>
+            <div class="form-section"><div class="form-section-title"><span>→</span><div><b>Ziel & Nachricht</b><small>Wohin der Bot senden soll</small></div></div><div class="form-grid"><label class="full">Kanal<select id="studio-channel"><option value="">Nach dem Login Kanal auswählen</option></select></label><label class="full studio-message-field"><span class="studio-field-heading"><span>Nachricht über dem Embed</span><button id="studio-emoji-open" class="studio-emoji-trigger" type="button"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="M8.5 14.5c1.8 2 5.2 2 7 0M9 9.5h.01M15 9.5h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg><span>Emojis</span></button></span><textarea id="studio-content" maxlength="2000" rows="3">Willkommen bei FALLEN HEAVEN.</textarea></label><div class="full studio-file-field"><span>Bild außerhalb vom Embed</span><input id="studio-outside-image" type="hidden"><input id="studio-outside-image-name" type="hidden"><input id="studio-outside-image-size" type="hidden"><input id="studio-outside-image-file" class="studio-native-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"><div class="studio-file-picker"><label for="studio-outside-image-file" class="button secondary">Bild vom PC auswählen</label><div><strong id="studio-outside-image-label">Kein Bild ausgewählt</strong><small id="studio-outside-image-meta">PNG, JPG, WEBP oder GIF · maximal 25 MB</small></div><button id="studio-outside-image-remove" class="text-button" type="button" disabled>Entfernen</button></div></div></div></div>
+<div id="studio-emoji-picker" class="message-emoji-layer" hidden><button class="message-emoji-backdrop" type="button" data-emoji-close aria-label="Emoji-Auswahl schließen"></button><section class="message-emoji-dialog" role="dialog" aria-modal="true" aria-labelledby="message-emoji-title"><header><div><span>FALLEN HEAVEN ASSETS</span><h3 id="message-emoji-title">Emoji-Bibliothek</h3><p>Standard-, Bot- und Server-Emojis direkt auswählen.</p></div><button class="message-emoji-close" type="button" data-emoji-close aria-label="Schließen">×</button></header><div class="message-emoji-tools"><label><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg><input id="studio-emoji-search" type="search" autocomplete="off" placeholder="Emoji suchen ..."></label><span id="studio-emoji-count">0 Emojis</span></div><nav id="studio-emoji-filters" class="message-emoji-filters" aria-label="Emoji-Filter"><button class="active" type="button" data-emoji-filter="all">Alle</button><button type="button" data-emoji-filter="unicode">Standard</button><button type="button" data-emoji-filter="application">Bot-Emojis</button><button type="button" data-emoji-filter="guild">Server-Emojis</button><button type="button" data-emoji-filter="animated">Animiert</button><button type="button" data-emoji-filter="recent">Zuletzt verwendet</button></nav><div id="studio-emoji-grid" class="message-emoji-grid" aria-live="polite"><div class="message-emoji-empty">Emojis werden geladen ...</div></div><footer><span><i></i> Ein Klick fügt das Emoji an der Cursorposition ein.</span><kbd>ESC</kbd></footer></section></div>
+            <div class="form-section"><div class="form-section-title"><span>◆</span><div><b>Embed-Inhalt</b><small>Alle Embeds bleiben in ihrer echten Reihenfolge untereinander</small></div></div><div class="studio-toolbar"><div><strong id="studio-embed-count">1/10 Embeds</strong><div id="studio-embed-tabs" class="template-row"></div></div><div class="inline-actions"><button id="remove-studio-embed" class="button secondary" type="button" disabled>Embed entfernen</button><button id="add-studio-embed" class="button secondary" type="button">Embed hinzufügen</button></div></div><div id="studio-limit-status" class="studio-limit-status" role="status" aria-live="polite"><span><small>Nachricht</small><b>0 / 2.000</b></span><span><small>Embed-Zeichen</small><b>0 / 6.000</b></span><span><small>Embeds</small><b>1 / 10</b></span><span><small>Felder aktiv</small><b>0 / 25</b></span></div><div id="studio-embed-stack" class="studio-embed-stack" aria-label="Embeds untereinander bearbeiten"></div><div class="active-embed-editor-label"><span>AKTIVER EMBED</span><b>Vollständige Einstellungen</b></div><div class="form-grid"><label class="full">Titel<input id="studio-title" maxlength="256" value="Willkommen in FALLEN HEAVEN"></label><label class="full">Titel-Link URL<input id="studio-url" placeholder="https://..."></label><label class="full">Beschreibung<textarea id="studio-description" maxlength="4096" rows="6">Schön, dass du da bist.</textarea></label><label>Akzentfarbe<input id="studio-color" type="color" value="#8b82ff"></label><label>Footer<input id="studio-signature" maxlength="2048" value="FALLEN HEAVEN"></label><label>Autor<input id="studio-author-name" maxlength="256" placeholder="optional"></label><label>Autor-Icon URL<input id="studio-author-icon" placeholder="https://..."></label><label>Thumbnail URL<input id="studio-thumbnail" placeholder="https://..."></label><label>Großes Bild URL<input id="studio-image" placeholder="https://..."></label><label>Footer-Icon URL<input id="studio-footer-icon" placeholder="https://..."></label><label class="check-field"><input id="studio-timestamp" type="checkbox" checked><span>Zeitstempel anzeigen</span></label></div></div>
+            <div class="form-section"><div class="form-section-title"><span>＋</span><div><b>Embed-Felder</b><small>Zusätzliche Informationsblöcke</small></div></div><div id="studio-fields" class="studio-fields"></div><button id="add-embed-field" class="button secondary">Feld hinzufügen</button></div>
+            <div class="form-section studio-function-set"><div class="form-section-title"><span>⚡</span><div><b>Komplettes Funktionsset</b><small>Ein fertiges Bot-System direkt unter dieses Embed hängen</small></div><i id="studio-function-set-status" class="studio-chip">KEIN SET</i></div><div class="studio-function-set-grid"><label>Interaktive Funktion<select id="studio-component-set"><option value="none">Kein Funktionsset</option><option value="heavenEconomy">Heaven VIP & Coins</option></select></label><article id="studio-function-set-card"><span>FH</span><div><b>Heaven VIP & Coins</b><small>Konto, VIP-Shop, Geschenke, Coin-Kauf, Boost-Fortschritt, Vorteile und Verwaltung als vollständiges Button-Set.</small></div><em>2 BUTTON-REIHEN</em></article></div><p class="reaction-role-note">Das Set verwendet dein vorhandenes Heaven-Economy-Modul und dieselben sicheren Konten, Rollen und Transaktionen. Es entstehen keine getrennten Daten.</p></div>
+            <div class="form-section reaction-role-studio"><div class="form-section-title"><span>◎</span><div><b>Rollen-Buttons</b><small>Funktionale Emoji-Buttons für Rollen anlegen</small></div><i id="studio-reaction-role-count" class="studio-chip">0 Buttons</i></div><p class="reaction-role-note">Bestehende Server-Emojis werden über ihre Discord-ID exakt wiederverwendet. Bei „Nur eine Rolle“ darf jedes Mitglied aus dieser Nachricht nur eine der Rollen gleichzeitig besitzen.</p><div id="studio-reaction-role-list" class="studio-reaction-role-list"></div><button id="add-studio-reaction-role" class="button secondary" type="button">Button hinzufügen</button></div>
+            <div class="form-section thread-section"><div class="form-section-title"><span>↳</span><div><b>Neuen Thread erstellen</b><small>Direkt mit Startnachricht</small></div></div><div class="form-grid"><label>Parent-Channel<select id="thread-parent-channel"><option value="">Kanal auswählen</option></select></label><label>Thread-Name<input id="thread-name" maxlength="100" placeholder="Diskussion"></label><label class="full">Startnachricht<textarea id="thread-message" maxlength="2000" rows="3"></textarea></label></div><div class="inline-actions"><p id="thread-status">Der neue Thread wird automatisch als Ziel ausgewählt.</p><button id="create-thread" class="button secondary">Thread erstellen</button></div></div>
+            <div class="studio-sendbar"><button id="copy-content" class="button secondary">JSON kopieren</button><button id="edit-studio-message" class="button secondary" disabled>Nachricht bearbeiten</button><button id="send-studio-message-secondary" class="button primary">Mit Bot senden</button></div>
+            <details class="studio-drafts-panel"><summary><span><p class="eyebrow">GESPEICHERT</p><h3>Entwürfe & Nachrichten</h3></span><em>aufklappen · einzelne Einträge löschbar</em></summary><div id="draft-list" class="draft-list"></div></details>
+          </section>
+        </div>
+      </section>
+
+      <section class="view dashboard-view skin-editor-view" id="skin-view">
+        <div class="skin-studio-app">
+          <header class="skin-studio-bar">
+            <div class="skin-studio-brand"><span class="skin-brand-cube"><i></i></span><div><strong>FALLEN HEAVEN</strong><small>Skin Studio</small></div></div>
+            <div class="skin-file-actions">
+              <button id="skin-import" type="button"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 15v4h14v-4"></path></svg>Skin hochladen</button>
+              <button id="skin-reset" type="button"><svg viewBox="0 0 24 24"><path d="M5 8a8 8 0 1 1-1 8m1-8V3m0 5h5"></path></svg>Neu anfangen</button>
+            </div>
+            <div class="skin-mode-switch" role="tablist" aria-label="Editoransicht">
+              <button class="active" type="button" data-skin-mode="3d" role="tab" aria-selected="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 9 8-4.5M12 12 4 7.5M12 12v9"></path></svg>3D</button>
+              <button type="button" data-skin-mode="2d" role="tab" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"></path></svg>2D</button>
+              <button type="button" data-skin-mode="split" role="tab" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM12 4v16"></path></svg>Geteilt</button>
+            </div>
+            <button id="skin-walk-mode" class="skin-walk-toggle" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"></circle><path d="m10 21 2-6-3-3 2-5 4 3 3 1m-9 2-4 3m9-6-2 5 5 5"></path></svg>Lauf-Modus</button>
+            <button id="skin-export" class="skin-export-button" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v12m0 0 5-5m-5 5-5-5M5 20h14"></path></svg>Skin herunterladen</button>
+            <input id="skin-file" type="file" accept="image/png,.png" hidden>
+          </header>
+
+          <div class="skin-studio-body">
+            <aside class="skin-tool-rail" aria-label="Skin-Werkzeuge">
+              <div class="skin-tool-stack" role="toolbar">
+                <button class="active" type="button" data-skin-tool="pencil" title="Stift (B)"><svg viewBox="0 0 24 24"><path d="m4 20 4-1 11-11-3-3L5 16l-1 4Zm10-13 3 3"></path></svg><span>Stift</span><kbd>B</kbd></button>
+                <button type="button" data-skin-tool="shade" title="Auto-Ton (A)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9c0-1.1-.9-2-2-2h-2.2a2 2 0 0 1-1.8-2.8l.9-2A2 2 0 0 0 14.1 3H12Z"></path><circle cx="7.5" cy="11" r="1"></circle><circle cx="10" cy="7.5" r="1"></circle></svg><span>Auto-Ton</span><kbd>A</kbd></button>
+                <button type="button" data-skin-tool="fill" title="Fülleimer (G)"><svg viewBox="0 0 24 24"><path d="m4 13 8-8 7 7-8 8-7-7Zm11-5 3-3m1 11s-2 2.2-2 3.4a2 2 0 0 0 4 0c0-1.2-2-3.4-2-3.4Z"></path></svg><span>Füllen</span><kbd>G</kbd></button>
+                <button type="button" data-skin-tool="eraser" title="Radierer (E)"><svg viewBox="0 0 24 24"><path d="m5 15 7-9 7 6-6 8H9l-4-5Zm5 5h9"></path></svg><span>Radierer</span><kbd>E</kbd></button>
+                <button type="button" data-skin-tool="picker" title="Farbpipette (I)"><svg viewBox="0 0 24 24"><path d="m14 5 5 5M8 17l9-9-3-3-9 9v3h3Zm-3 0-1 3 3-1"></path></svg><span>Pipette</span><kbd>I</kbd></button>
+              </div>
+              <div class="skin-history-stack">
+                <button id="skin-undo" type="button" disabled title="Rückgängig (Strg+Z)"><span>↶</span><small>Rückgängig</small></button>
+                <button id="skin-redo" type="button" disabled title="Wiederholen (Strg+Y)"><span>↷</span><small>Wiederholen</small></button>
+              </div>
+              <div class="skin-color-stack">
+                <label class="skin-primary-color" title="Primärfarbe"><input id="skin-color" type="color" value="#5865f2"><span></span></label>
+                <label class="skin-secondary-color" title="Sekundärfarbe"><input id="skin-secondary-color" type="color" value="#ffffff"><span></span></label>
+                <button id="skin-swap-colors" type="button" title="Farben tauschen">⇄</button>
+                <small id="skin-color-value">#5865F2</small>
+              </div>
+            </aside>
+
+            <main id="skin-workspace" class="skin-workspace" data-mode="3d">
+              <div class="skin-brush-dock">
+                <span>Größe</span>
+                <div class="skin-brush-sizes" aria-label="Pinselgröße"><button class="active" type="button" data-skin-size="1">1</button><button type="button" data-skin-size="2">2</button><button type="button" data-skin-size="3">3</button><button type="button" data-skin-size="4">4</button></div>
+                <i></i>
+                <label class="skin-compact-toggle"><span>Symmetrie</span><input id="skin-mirror" type="checkbox"><b></b></label>
+              </div>
+
+              <section id="skin-model-stage" class="skin-viewport skin-viewport-3d" tabindex="0" aria-label="Flüssige drehbare Minecraft-Skin-Vorschau">
+                <canvas id="skin-webgl-canvas" aria-label="Minecraft Skin 3D-Modell"></canvas>
+                <div class="skin-stage-grid" aria-hidden="true"></div>
+                <div class="skin-render-badge"><i></i><span id="skin-render-state">GPU · BEREIT</span><b id="skin-fps">60 FPS</b></div>
+                <div class="skin-3d-paint-card"><b>3D-Malen aktiv</b><span>Linksklick malt direkt · Alt ziehen dreht</span></div>
+                <div id="skin-3d-brush-dot" class="skin-3d-brush-dot" aria-hidden="true"></div>
+                <div class="skin-camera-actions"><button type="button" data-skin-view="left" aria-label="Nach links drehen">↶</button><button id="skin-view-reset" type="button">Ansicht zurücksetzen</button><button type="button" data-skin-view="right" aria-label="Nach rechts drehen">↷</button></div>
+              </section>
+
+              <section id="skin-canvas-stage" class="skin-viewport skin-viewport-2d" aria-label="Minecraft Skin 2D-Textur">
+                <div class="skin-canvas-wrap">
+                  <canvas id="skin-texture-canvas" width="64" height="64" aria-label="Minecraft Skin Textur"></canvas>
+                  <div id="skin-pixel-grid-overlay" class="skin-pixel-grid-overlay" aria-hidden="true"></div>
+                  <canvas id="skin-uv-overlay" class="skin-uv-overlay" width="512" height="512" aria-hidden="true"></canvas>
+                  <div id="skin-brush-preview" class="skin-brush-preview" aria-hidden="true"></div>
+                </div>
+                <div class="skin-zoom-control"><button type="button" data-skin-zoom="out" aria-label="Verkleinern">−</button><b id="skin-zoom-label">800%</b><button type="button" data-skin-zoom="in" aria-label="Vergrößern">+</button></div>
+              </section>
+
+              <div id="skin-swatches" class="skin-palette-dock" aria-label="Gespeicherte Farben"></div>
+              <div class="skin-workspace-hints"><span><kbd>Linksklick</kbd> direkt auf 3D malen</span><span><kbd>Rechtsklick</kbd> Sekundärfarbe</span><span><kbd>Alt</kbd> Ansicht drehen</span></div>
+            </main>
+
+            <aside class="skin-inspector">
+              <header class="skin-inspector-tabs"><button class="active" type="button">Optionen</button></header>
+              <div class="skin-inspector-scroll">
+                <section class="skin-inspector-section">
+                  <div class="skin-inspector-title"><span>MODELL</span><small id="skin-model-detection">WIRD ERKANNT</small></div>
+                  <div class="skin-model-switch"><button class="active" type="button" data-skin-model="auto">Auto</button><button type="button" data-skin-model="classic">Classic</button><button type="button" data-skin-model="slim">Slim</button></div>
+                  <div class="skin-import-report" id="skin-import-report" data-state="ready"><i></i><div><b>Fallen-Heaven-Skin bereit</b><small>64 × 64 · Classic · Ebenen geprüft</small></div></div>
+                  <label class="skin-setting-row"><span><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"></path></svg><b>Pixelraster</b></span><input id="skin-pixel-grid" type="checkbox" checked><i></i></label>
+                  <label class="skin-setting-row"><span><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 10h16M10 4v16"></path></svg><b>UV-Layout (2D)</b></span><input id="skin-uv-layout" type="checkbox"><i></i></label>
+                </section>
+
+                <section class="skin-inspector-section">
+                  <div class="skin-inspector-title"><span>KÖRPERTEILE</span><small>ANKLICKEN ZUM UMSCHALTEN</small></div>
+                  <div class="skin-body-parts" aria-label="Sichtbare Körperteile">
+                    <button class="active" type="button" data-skin-part="head"><i></i><span>Kopf</span></button>
+                    <button class="active" type="button" data-skin-part="body"><i></i><span>Körper</span></button>
+                    <button class="active" type="button" data-skin-part="arms"><i></i><span>Arme</span></button>
+                    <button class="active" type="button" data-skin-part="legs"><i></i><span>Beine</span></button>
+                  </div>
+                  <div class="skin-layer-visibility">
+                    <label><input id="skin-base-layer" type="checkbox" checked><span><i class="base"></i><b>Basis</b><small>Skin-Textur</small></span></label>
+                    <label><input id="skin-overlay-layer" type="checkbox" checked><span><i class="overlay"></i><b>Overlay</b><small>Jacke &amp; Details</small></span></label>
+                  </div>
+                </section>
+
+                <section class="skin-inspector-section skin-layers-section">
+                  <div class="skin-inspector-title"><span>EBENEN</span><small id="skin-layer-count">2 EBENEN</small></div>
+                  <button id="skin-add-layer" class="skin-add-layer" type="button">＋ Neue Ebene</button>
+                  <div id="skin-layer-list" class="skin-layer-list"></div>
+                  <label class="skin-opacity-control"><span>Deckkraft</span><input id="skin-layer-opacity" type="range" min="0" max="100" value="100"><b id="skin-layer-opacity-value">100%</b></label>
+                  <p>Malen bleibt zerstörungsfrei auf separaten Ebenen. Der importierte Basis-Skin bleibt geschützt.</p>
+                </section>
+              </div>
+            </aside>
+          </div>
+
+          <footer id="skin-status" class="skin-studio-status" role="status" aria-live="polite">
+            <span><i></i><b>Stift</b></span><span id="skin-model-status">Auto · Classic</span><span id="skin-size-status">64 × 64</span><span id="skin-coordinates">X 00 · Y 00</span><span id="skin-save-state"><i></i>Lokal gespeichert</span>
+          </footer>
+        </div>
+      </section>
+
+      <section class="view dashboard-view" id="system-view">
+  <div class="page-head">
+    <div>
+      <span class="eyebrow">SYSTEM &amp; RECOVERY</span>
+      <h1>Stabilität &amp; Datenschutz</h1>
+      <p>Ein zentraler, sicherer Überblick über App, Bot-Prozess, lokale Daten und Diagnose.</p>
+    </div>
+    <div class="system-head-actions">
+      <button class="ghost-button" id="refresh-system" type="button">System aktualisieren</button>
+      <button class="primary-button" id="export-diagnostics" type="button">Sichere Diagnose speichern</button>
+    </div>
+  </div>
+  <div class="system-health-grid">
+    <article class="system-health-card"><span>App Release</span><strong id="system-app-version">–</strong><p>Installierte native Desktop-Version</p></article>
+    <article class="system-health-card"><span>Bot Service</span><strong id="system-bot-state">Wird geprüft</strong><p>Supervisor, Prozess und Discord-Verbindung</p></article>
+    <article class="system-health-card"><span>Secret-Schutz</span><strong id="system-security-state">Wird geprüft</strong><p>Nur Schutzstatus, niemals geheime Werte</p></article>
+    <article class="system-health-card"><span>Lokale Daten</span><strong id="system-storage-total">–</strong><p>Index, Logs und Backups</p></article>
+    <article class="system-health-card"><span>Updates</span><strong id="system-update-state">Wird geprüft</strong><p>Lokale Update-Quelle und Installationsstatus</p></article>
+  </div>
+  <div class="system-workspace">
+    <article class="system-data-panel">
+      <div class="system-panel-head">
+        <div><span class="eyebrow">DATENINVENTAR</span><h2>Lokaler Speicher</h2></div>
+        <small id="system-diagnostics-status">Systemzustand wird geprüft …</small>
+      </div>
+      <div class="system-data-inventory" id="system-data-inventory"></div>
+      <div class="system-recovery-actions">
+        <button class="ghost-button" id="open-data-folder" type="button">Datenordner öffnen</button>
+        <button class="ghost-button" id="open-log-folder" type="button">Logordner öffnen</button>
+        <button class="ghost-button" id="system-theme" type="button">Darstellung wechseln</button>
+      </div>
+      <p class="system-privacy-note"><strong>Privacy by default:</strong> Der Diagnose-Export enthält keine Nachrichteninhalte, Tokens, Passwörter oder Konfigurationswerte. Exportiert werden nur technische Zustände, Größen, Zähler und bereinigte Protokolle.</p>
+    </article>
+    <article class="system-data-panel update-panel">
+      <div class="system-panel-head">
+        <div><span class="eyebrow">APP UPDATES</span><h2>Neue Version installieren</h2></div>
+        <button class="ghost-button" id="update-check" type="button">Nach Updates suchen</button>
+      </div>
+      <div class="update-folder-row">
+        <label for="update-folder">Update-Ordner (auch Netzwerkfreigabe möglich)</label>
+        <div class="update-folder-input">
+          <input id="update-folder" type="text" placeholder="z. B. C:\FHCC-Updates oder \\SERVER\Freigabe" spellcheck="false">
+          <button class="ghost-button" id="update-folder-save" type="button">Speichern</button>
+        </div>
+      </div>
+      <div class="update-status" id="update-status">Update-Ordner noch nicht konfiguriert.</div>
+      <div class="update-actions">
+        <button class="primary-button" id="update-install" type="button" disabled>Update installieren</button>
+        <button class="text-button" id="update-open-folder" type="button">Ordner öffnen</button>
+      </div>
+      <p class="system-privacy-note"><strong>Sicher:</strong> Die Update-Datei wird vor der Installation anhand des SHA-512-Werts aus <code>latest.yml</code> geprüft und in den Temp-Ordner kopiert – die Freigabe muss während der Installation nicht mehr erreichbar sein. Die Installation läuft still (silent), die App startet danach neu.</p>
+    </article>
+    <article class="log-panel">
+      <div class="system-panel-head">
+        <div><span class="eyebrow">LIVE DIAGNOSE</span><h2>Bot-Protokoll</h2></div>
+        <button class="text-button" id="refresh-logs" type="button">Protokoll neu laden</button>
+      </div>
+      <pre id="logs-output">Noch keine Protokolle vorhanden.</pre>
+    </article>
+  </div>
+</section>
+    </main>
+  </div>
+  <dialog id="command-palette" class="command-palette" aria-labelledby="command-palette-title"><form method="dialog"><header><div><span>FALLEN HEAVEN</span><h2 id="command-palette-title">Schnellnavigation</h2></div><button value="cancel" type="submit" aria-label="Schließen">×</button></header><label><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg><input id="command-palette-search" type="search" autocomplete="off" placeholder="Seite oder Modul suchen ..."></label><div id="command-palette-results" class="command-palette-results"></div><footer><span><kbd>↑</kbd><kbd>↓</kbd> auswählen</span><span><kbd>Enter</kbd> öffnen</span><span><kbd>Esc</kbd> schließen</span></footer></form></dialog>
+  <dialog id="emoji-rename-confirm-dialog" class="emoji-rename-confirm-dialog" aria-labelledby="emoji-rename-confirm-title" aria-describedby="emoji-rename-confirm-copy">
+    <form method="dialog">
+      <div class="emoji-confirm-glow" aria-hidden="true"></div>
+      <header class="emoji-confirm-head">
+        <div class="emoji-confirm-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M8 9h.01M16 9h.01M8.5 15s1.3 1 3.5 1 3.5-1 3.5-1"></path><path d="M7 3.8h10a4 4 0 0 1 4 4v8.4a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7.8a4 4 0 0 1 4-4Z"></path></svg>
+        </div>
+        <div><span>EMOJI-VERWALTUNG</span><h2 id="emoji-rename-confirm-title" data-emoji-confirm-title>Emoji-Namen ändern?</h2></div>
+        <button class="emoji-confirm-close" type="submit" value="cancel" aria-label="Bestätigungsfenster schließen">×</button>
+      </header>
+      <div class="emoji-confirm-body">
+        <div class="emoji-confirm-operation">
+          <span><small>GEPRÜFTE ÄNDERUNG</small><strong data-emoji-confirm-prefix>vl_ → fh_</strong></span>
+          <b><span data-emoji-confirm-count>0</span> Namen</b>
+        </div>
+        <p id="emoji-rename-confirm-copy" class="emoji-confirm-copy">Prüfe die endgültigen Namen. Bilder, Animationen und Discord-IDs bleiben vollständig erhalten.</p>
+        <div class="emoji-confirm-metrics" aria-label="Zusammenfassung">
+          <article><small>STATISCH</small><strong data-emoji-confirm-static>0</strong><span>Bilder bleiben gleich</span></article>
+          <article><small>ANIMIERT</small><strong data-emoji-confirm-animated>0</strong><span>GIFs bleiben gleich</span></article>
+          <article><small>SICHERHEIT</small><strong>Nur Namen</strong><span>Keine Löschung</span></article>
+        </div>
+        <div class="emoji-confirm-list" data-emoji-confirm-list></div>
+        <div class="emoji-confirm-notice"><i aria-hidden="true">✓</i><span><b>Kontrollierte Serveraktion</b><small>Die Umbenennung wird protokolliert und erst nach deiner Bestätigung an Discord gesendet.</small></span></div>
+      </div>
+      <footer class="emoji-confirm-actions">
+        <button class="emoji-confirm-cancel" type="submit" value="cancel">Zurück zur Vorschau</button>
+        <button class="emoji-confirm-submit" type="submit" value="confirm"><span data-emoji-confirm-submit-label>Emojis umbenennen</span><i aria-hidden="true">→</i></button>
+      </footer>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script src="stability.js"></script>
+  <script src="runtime-state.js"></script>
+<script src="modern-ui-v5.js?v=3.9.198"></script>
+<script src="discord-reference-v7.js?v=3.9.198"></script>
+<script src="discord-reference-v8.js?v=3.9.198"></script>
+<script src="app.js?v=3.9.198"></script>
+    <!-- three.js + skinview3d werden erst beim ersten Öffnen des Skin Studios nachgeladen (skin-editor.js → loadViewerLibraries) -->
+<script src="skin-editor.js?v=3.9.198"></script>
+<script src="server-management.js?v=3.9.198"></script>
+    <script src="theme-bridge.js"></script>
+  <script src="admin-safety.js"></script>
+  <script src="media-resilience.js"></script>
+  <script src="live-discord-events.js"></script>
+  <script src="virtual-lists.js"></script>
+  <script src="public-pages.js"></script>
+  <script src="live-diagnostics.js"></script>
+  <script src="visual-effects.js"></script>
+</body>
+</html>

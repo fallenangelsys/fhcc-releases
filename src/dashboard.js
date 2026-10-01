@@ -486,8 +486,19 @@ export const mountDashboard = (app, options = {}) => {
     listDashboardMembers,
     getServerTagTrackerStatus,
     getVoiceChatCleanerStatus,
+    getTempVoiceStatus,
+    removeTempVoiceProfile,
+    removeAllTempVoiceProfiles,
+    saveTempVoiceInterfaceDesign,
+    getPublicCallVoteLocks,
+    getPublicCallVoteStatus,
+    removePublicCallVoteLock,
+    savePublicCallVoteDesign,
     getForumCleanerStatus,
     scanForumCleaner,
+    wipeLevelRoles,
+    grantLevelRolesToAll,
+    setMemberLevel,
     getSteamWorkshopStatus,
     syncSteamWorkshop,
     saveSteamWorkshopDesign,
@@ -497,6 +508,10 @@ export const mountDashboard = (app, options = {}) => {
     previewEmojiRename,
     applyEmojiRename,
     getActivityRaceStatus,
+    getCountingLocks,
+    getCountingStats,
+    removeCountingLock,
+    resetCounting,
     previewActivityRaceRoles,
     createActivityRaceRoles,
     refreshActivityRace,
@@ -508,28 +523,56 @@ export const mountDashboard = (app, options = {}) => {
     importBoostActivityList,
     updateBoostBaselineMember,
     verifyBoostCount,
+    getBoostTopStatus,
+    refreshBoostTopPanel,
+    saveBoostTopDesign,
     getHeavenEconomyAdmin,
     updateHeavenEconomyAdmin,
     reconcileHeavenEconomyAdmin,
+    getVipPanelStatus,
+    refreshVipPanels,
+    saveVipPanelDesign,
+    saveHeavenEconomyPanelDesign,
+    saveEconomyDmDesign,
+    syncVipSeparatorRole,
+    saveVerifyPanelDesign,
+    saveLevelsPanelDesign,
+    saveLevelUpInfoDesign,
+    saveBotUpdatesDesign,
+    saveCountingPanelDesign,
+    saveCountingDesign,
+    uploadStudioImage,
+    getRoleSaverStatus,
+    getInactiveReminderStatus,
+    runInactiveReminderScan,
+    runInactiveReminderPreview,
+    runInactiveReminderSend,
+    saveInactiveReminderDesign,
+    deleteReminderDm,
+    deleteAllReminderDms,
+    cleanupInactiveReminderDms,
+    sendManualInactiveReminder,
+    getVoiceLogImportStatus,
+    runVoiceLogBackfill,
+    getVoiceLogEvents,
+    getSavedRolesForMember,
+    clearSavedRolesForMember,
     getDashboardMember,
     getMemberIntelligenceStatus,
     moderateDashboardMember,
     getDashboardRole,
     updateDashboardRole,
-    generateEmbedAssistantText,
-    generateSkinAssistantRecipe,
     sendGuildEmbed,
     editGuildEmbed,
     createGuildThread,
-    listAiMemories,
-    getAiMemory,
-    deleteAiMemory,
     getLiveStatus,
+    getCustomRichPresenceStatus,
+    reconnectCustomRichPresence,
     isDiscordReady = () => true,
     systemActions = {}
   } = options;
 
-  const jwtSecret = process.env.DASHBOARD_SESSION_SECRET || 'change-this-token';
+  const jwtSecret = process.env.DASHBOARD_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
   const jwtTtl = process.env.DASHBOARD_JWT_TTL || '30d';
   const cookieMaxAge = parseCookieMaxAge(jwtTtl);
   const discordClientId = process.env.DISCORD_CLIENT_ID || '';
@@ -968,6 +1011,27 @@ export const mountDashboard = (app, options = {}) => {
     return res.json({ ok: true, status });
   });
 
+  app.get('/api/guild/:guildId/custom-rich-presence/status', requireAuth, requireGuildAccess, (_req, res) => {
+    const status = typeof getCustomRichPresenceStatus === 'function'
+      ? getCustomRichPresenceStatus()
+      : { state: 'disabled', enabled: false };
+    return res.json({ ok: true, status });
+  });
+
+  app.post('/api/guild/:guildId/custom-rich-presence/reconnect', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof reconnectCustomRichPresence !== 'function') {
+      return res.status(501).json({ error: 'Neuverbindung ist nicht konfiguriert.' });
+    }
+    try {
+      const guild = req.dashboardGuild;
+      const cfg = await (typeof getConfig === 'function' ? getConfig(req.dashboardGuildId) : Promise.resolve({}));
+      const status = await reconnectCustomRichPresence({ cfg, guild });
+      return res.json({ ok: true, status });
+    } catch (error) {
+      return res.status(500).json({ error: String(error?.message || error) });
+    }
+  });
+
   app.get('/api/guild/:guildId/stats', requireAuth, requireGuildAccess, async (req, res) => {
     if (typeof getGuildStats !== 'function') {
       return res.status(501).json({ error: 'Server-Statistiken sind nicht konfiguriert.' });
@@ -1022,7 +1086,9 @@ export const mountDashboard = (app, options = {}) => {
         page: req.query.page,
         pageSize: req.query.pageSize,
         filter: req.query.filter,
-        refresh: req.query.refresh === '1'
+        refresh: req.query.refresh === '1',
+        beforeCreatedAt: req.query.beforeCreatedAt,
+        beforeMessageId: req.query.beforeMessageId
       });
       if (!systemEvents) return res.status(404).json({ error: 'Server wurde nicht gefunden.' });
       return res.json({ ok: true, systemEvents });
@@ -1043,6 +1109,7 @@ export const mountDashboard = (app, options = {}) => {
         page: req.query.page,
         before: req.query.before,
         after: req.query.after,
+        messageId: req.query.messageId,
         actorUserId: req.dashboardUser.discordId
       });
       if (!result) {
@@ -1203,6 +1270,103 @@ export const mountDashboard = (app, options = {}) => {
     }
   });
 
+  app.get('/api/guild/:guildId/temp-voice', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getTempVoiceStatus !== 'function') {
+      return res.status(501).json({ error: 'TempVoice ist nicht konfiguriert.' });
+    }
+    try {
+      const status = await getTempVoiceStatus(req.dashboardGuildId);
+      return res.json({ ok: true, status });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Der TempVoice-Status konnte nicht geladen werden.' });
+    }
+  });
+
+  app.delete('/api/guild/:guildId/temp-voice/profiles/:userId', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof removeTempVoiceProfile !== 'function') {
+      return res.status(501).json({ error: 'TempVoice-Profile sind nicht konfiguriert.' });
+    }
+    try {
+      const result = await removeTempVoiceProfile(req.dashboardGuildId, String(req.params.userId || ''));
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'TempVoice-Profil konnte nicht zurueckgesetzt werden.' });
+    }
+  });
+
+  app.delete('/api/guild/:guildId/temp-voice/profiles', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof removeAllTempVoiceProfiles !== 'function') {
+      return res.status(501).json({ error: 'TempVoice-Profile sind nicht konfiguriert.' });
+    }
+    try {
+      const result = await removeAllTempVoiceProfiles(req.dashboardGuildId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'TempVoice-Profile konnten nicht zurueckgesetzt werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/temp-voice/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveTempVoiceInterfaceDesign !== 'function') {
+      return res.status(501).json({ error: 'Der TempVoice-Embed-Editor ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await saveTempVoiceInterfaceDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das TempVoice-Embed konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/public-call-vote', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getPublicCallVoteStatus !== 'function') {
+      return res.status(501).json({ error: 'Public-Call-Moderation ist nicht konfiguriert.' });
+    }
+    try {
+      const status = await getPublicCallVoteStatus(req.dashboardGuildId);
+      return res.json({ ok: true, status });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Der Public-Call-Vote-Status konnte nicht geladen werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/public-call-vote/locks', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getPublicCallVoteLocks !== 'function') {
+      return res.status(501).json({ error: 'Public-Call-Moderation ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await getPublicCallVoteLocks(req.dashboardGuildId);
+      return res.json({ ok: true, locks: result?.locks || [] });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die Call-Sperren konnten nicht geladen werden.' });
+    }
+  });
+
+  app.delete('/api/guild/:guildId/public-call-vote/locks/:userId', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof removePublicCallVoteLock !== 'function') {
+      return res.status(501).json({ error: 'Public-Call-Moderation ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await removePublicCallVoteLock(req.dashboardGuildId, String(req.params.userId || ''));
+      if (!result?.ok) return res.status(404).json({ error: 'Keine aktive Call-Sperre für diesen Spieler gefunden.' });
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die Call-Sperre konnte nicht aufgehoben werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/public-call-vote/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof savePublicCallVoteDesign !== 'function') {
+      return res.status(501).json({ error: 'Der Design-Editor der Call-Moderation ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await savePublicCallVoteDesign(req.dashboardGuildId, req.body || {}, req.dashboardUser.discordId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Design der Call-Moderation konnte nicht gespeichert werden.' });
+    }
+  });
+
   app.get('/api/guild/:guildId/forum-cleaner', requireAuth, requireGuildAccess, async (req, res) => {
     if (typeof getForumCleanerStatus !== 'function') {
       return res.status(501).json({ error: 'Der Forum-Cleaner ist nicht konfiguriert.' });
@@ -1224,6 +1388,45 @@ export const mountDashboard = (app, options = {}) => {
       return res.status(202).json({ ok: true, result });
     } catch (error) {
       return res.status(400).json({ error: error?.message || 'Der Forum-Tiefenscan konnte nicht gestartet werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/levels/wipe-roles', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof wipeLevelRoles !== 'function') {
+      return res.status(501).json({ error: 'Der Level-Rollen-Wipe ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await wipeLevelRoles(req.dashboardGuildId);
+      return res.status(result?.ok === false ? 400 : 200).json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Der Level-Rollen-Wipe konnte nicht ausgeführt werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/levels/grant-all', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof grantLevelRolesToAll !== 'function') {
+      return res.status(501).json({ error: 'Die Level-Rollen-Massenvergabe ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await grantLevelRolesToAll(req.dashboardGuildId);
+      return res.status(result?.ok === false ? 400 : 200).json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die Level-Rollen konnten nicht vergeben werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/levels/set-level', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof setMemberLevel !== 'function') {
+      return res.status(501).json({ error: 'Das manuelle Level-Setzen ist nicht konfiguriert.' });
+    }
+    const userId = String(req.body?.userId || '').trim();
+    const level = Math.max(0, Math.floor(Number(req.body?.level) || 0));
+    if (!userId) return res.status(400).json({ error: 'Es fehlt die Mitglieds-ID.' });
+    try {
+      const result = await setMemberLevel(req.dashboardGuildId, userId, level);
+      return res.status(result?.ok === false ? 400 : 200).json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Level konnte nicht gesetzt werden.' });
     }
   });
 
@@ -1296,6 +1499,47 @@ export const mountDashboard = (app, options = {}) => {
       return res.json({ ok: true, status });
     } catch (error) {
       return res.status(400).json({ error: error?.message || 'Die Aktivitäts-Liga konnte nicht geladen werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/counting', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getCountingStats !== 'function') return res.status(501).json({ error: 'Der Zähl-Kanal ist nicht konfiguriert.' });
+    try {
+      const stats = await getCountingStats(req.dashboardGuildId);
+      return res.json({ ok: true, stats });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Der Zähl-Kanal konnte nicht geladen werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/counting/locks', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getCountingLocks !== 'function') return res.status(501).json({ error: 'Der Zähl-Kanal ist nicht konfiguriert.' });
+    try {
+      const result = await getCountingLocks(req.dashboardGuildId);
+      return res.json({ ok: true, locks: result?.locks || [] });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die Sperren konnten nicht geladen werden.' });
+    }
+  });
+
+  app.delete('/api/guild/:guildId/counting/locks/:userId', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof removeCountingLock !== 'function') return res.status(501).json({ error: 'Der Zähl-Kanal ist nicht konfiguriert.' });
+    try {
+      const result = await removeCountingLock(req.dashboardGuildId, String(req.params.userId || ''));
+      if (!result?.ok) return res.status(404).json({ error: 'Keine aktive Sperre für diesen Spieler gefunden.' });
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die Sperre konnte nicht aufgehoben werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/counting/reset', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof resetCounting !== 'function') return res.status(501).json({ error: 'Der Zähl-Kanal ist nicht konfiguriert.' });
+    try {
+      const result = await resetCounting(req.dashboardGuildId, String(req.dashboardUser?.discordId || req.dashboardUser?.sub || ''));
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Der Zähl-Kanal konnte nicht zurückgesetzt werden.' });
     }
   });
 
@@ -1453,6 +1697,36 @@ export const mountDashboard = (app, options = {}) => {
     }
   });
 
+  app.get('/api/guild/:guildId/boost-top', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getBoostTopStatus !== 'function') return res.status(501).json({ error: 'Die Top-Booster-Liga ist nicht konfiguriert.' });
+    try {
+      const status = await getBoostTopStatus(req.dashboardGuildId);
+      return res.json({ ok: true, status });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die Top-Booster-Liga konnte nicht geladen werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/boost-top/refresh', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof refreshBoostTopPanel !== 'function') return res.status(501).json({ error: 'Die Top-Booster-Liga ist nicht konfiguriert.' });
+    try {
+      const result = await refreshBoostTopPanel(req.dashboardGuildId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Top-Booster-Panel konnte nicht aktualisiert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/boost-top/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveBoostTopDesign !== 'function') return res.status(501).json({ error: 'Der Top-Booster-Editor ist nicht konfiguriert.' });
+    try {
+      const result = await saveBoostTopDesign(req.dashboardGuildId, req.body || {}, req.dashboardUser.discordId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die Top-Booster-Vorlage konnte nicht gespeichert werden.' });
+    }
+  });
+
   app.get('/api/guild/:guildId/heaven-economy', requireAuth, requireGuildAccess, async (req, res) => {
     if (typeof getHeavenEconomyAdmin !== 'function') {
       return res.status(501).json({ error: 'Die VIP- und Coin-Verwaltung ist nicht konfiguriert.' });
@@ -1493,6 +1767,66 @@ export const mountDashboard = (app, options = {}) => {
       return res.json({ ok: true, result });
     } catch (error) {
       return res.status(400).json({ error: error?.message || 'Der VIP- und Coin-Abgleich konnte nicht ausgeführt werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/vip-panels', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getVipPanelStatus !== 'function') return res.status(501).json({ error: 'Die VIP-Panels sind nicht konfiguriert.' });
+    try {
+      const status = await getVipPanelStatus(req.dashboardGuildId);
+      return res.json({ ok: true, status });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die VIP-Panels konnten nicht geladen werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/vip-panels/refresh', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof refreshVipPanels !== 'function') return res.status(501).json({ error: 'Die VIP-Panels sind nicht konfiguriert.' });
+    try {
+      const result = await refreshVipPanels(req.dashboardGuildId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die VIP-Panels konnten nicht aktualisiert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/vip-panels/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveVipPanelDesign !== 'function') return res.status(501).json({ error: 'Der VIP-Panel-Editor ist nicht konfiguriert.' });
+    try {
+      const result = await saveVipPanelDesign(req.dashboardGuildId, req.body || {}, req.dashboardUser.discordId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die VIP-Panel-Vorlage konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/heaven-economy/dm-design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveEconomyDmDesign !== 'function') return res.status(501).json({ error: 'Der DM-Editor von Heaven Economy ist nicht konfiguriert.' });
+    try {
+      const result = await saveEconomyDmDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die VIP-DM-Vorlage konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/heaven-economy/panel-design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveHeavenEconomyPanelDesign !== 'function') return res.status(501).json({ error: 'Der VIP-Vorteile-Panel-Editor ist nicht konfiguriert.' });
+    try {
+      const result = await saveHeavenEconomyPanelDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das VIP-Vorteile-Panel konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/heaven-economy/separator-sync', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof syncVipSeparatorRole !== 'function') return res.status(501).json({ error: 'Die VIP-Trennerrolle ist nicht konfiguriert.' });
+    try {
+      const result = await syncVipSeparatorRole(req.dashboardGuildId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Die VIP-Trennerrolle konnte nicht abgeglichen werden.' });
     }
   });
 
@@ -1578,37 +1912,6 @@ export const mountDashboard = (app, options = {}) => {
     }
   });
 
-  app.get('/api/guild/:guildId/ai/memories', requireAuth, requireGuildAccess, async (req, res) => {
-    if (typeof listAiMemories !== 'function') {
-      return res.status(501).json({ error: 'AI Memory ist nicht konfiguriert.' });
-    }
-
-    const memories = await listAiMemories(req.dashboardGuildId);
-    return res.json({ ok: true, memories });
-  });
-
-  app.get('/api/guild/:guildId/ai/memory/:userId', requireAuth, requireGuildAccess, async (req, res) => {
-    if (typeof getAiMemory !== 'function') {
-      return res.status(501).json({ error: 'AI Memory ist nicht konfiguriert.' });
-    }
-
-    const memory = await getAiMemory(req.dashboardGuildId, req.params.userId);
-    if (!memory) {
-      return res.status(404).json({ error: 'Keine AI-Erinnerung für diesen User gefunden.' });
-    }
-
-    return res.json({ ok: true, memory });
-  });
-
-  app.delete('/api/guild/:guildId/ai/memory/:userId', requireAuth, requireGuildAccess, async (req, res) => {
-    if (typeof deleteAiMemory !== 'function') {
-      return res.status(501).json({ error: 'AI Memory ist nicht konfiguriert.' });
-    }
-
-    const result = await deleteAiMemory(req.dashboardGuildId, req.params.userId);
-    return res.json({ ok: true, result });
-  });
-
   app.post('/api/guild/:guildId/embed/send', requireAuth, requireGuildAccess, async (req, res) => {
     if (typeof sendGuildEmbed !== 'function') {
       return res.status(501).json({ error: 'Embed-Versand ist nicht konfiguriert.' });
@@ -1622,32 +1925,6 @@ export const mountDashboard = (app, options = {}) => {
     }
   });
 
-  app.post('/api/guild/:guildId/embed/assistant', requireAuth, requireGuildAccess, async (req, res) => {
-    if (typeof generateEmbedAssistantText !== 'function') {
-      return res.status(501).json({ error: 'Der lokale Text-Assistent ist nicht konfiguriert.' });
-    }
-
-    try {
-      const result = await generateEmbedAssistantText(req.dashboardGuildId, req.body || {});
-      return res.json({ ok: true, result });
-    } catch (error) {
-      return res.status(400).json({ error: error?.message || 'Der Text-Assistent konnte keinen Vorschlag erstellen.' });
-    }
-  });
-
-  app.post('/api/guild/:guildId/skin/assistant', requireAuth, requireGuildAccess, async (req, res) => {
-    if (typeof generateSkinAssistantRecipe !== 'function') {
-      return res.status(501).json({ error: 'Der lokale Skin-Assistent ist nicht konfiguriert.' });
-    }
-
-    try {
-      const result = await generateSkinAssistantRecipe(req.dashboardGuildId, req.body || {});
-      return res.json({ ok: true, result });
-    } catch (error) {
-      return res.status(400).json({ error: error?.message || 'Der Skin-Assistent konnte keinen Entwurf erstellen.' });
-    }
-  });
-
   app.post('/api/guild/:guildId/embed/edit', requireAuth, requireGuildAccess, async (req, res) => {
     if (typeof editGuildEmbed !== 'function') {
       return res.status(501).json({ error: 'Embed-Bearbeitung ist nicht konfiguriert.' });
@@ -1658,6 +1935,290 @@ export const mountDashboard = (app, options = {}) => {
       return res.json({ ok: true, result });
     } catch (error) {
       return res.status(400).json({ error: error?.message || 'Embed konnte nicht bearbeitet werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/member-verify/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveVerifyPanelDesign !== 'function') {
+      return res.status(501).json({ error: 'Der Verify-Embed-Editor ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await saveVerifyPanelDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Verify-Embed konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/studio-image', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof uploadStudioImage !== 'function') {
+      return res.status(501).json({ error: 'Der lokale Bild-Upload ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await uploadStudioImage(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Bild konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/levels/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveLevelsPanelDesign !== 'function') {
+      return res.status(501).json({ error: 'Der Levelrollen-Panel-Editor ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await saveLevelsPanelDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Levelrollen-Panel konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/levels/info-design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveLevelUpInfoDesign !== 'function') {
+      return res.status(501).json({ error: 'Der Kanal-Info-Editor ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await saveLevelUpInfoDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Kanal-Info-Embed konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/counting/design', requireAuth, requireGuildAccess, async (req, res) => {
+    const section = String(req.body?.section || '');
+    const isDmSection = section === 'strikeLock' || section === 'strikeRelease';
+    if (isDmSection && typeof saveCountingDesign !== 'function') {
+      return res.status(501).json({ error: 'Der DM-Editor des Zähl-Kanals ist nicht konfiguriert.' });
+    }
+    if (!isDmSection && typeof saveCountingPanelDesign !== 'function') {
+      return res.status(501).json({ error: 'Der Zähl-Kanal-Panel-Editor ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = isDmSection
+        ? await saveCountingDesign(req.dashboardGuildId, req.body || {})
+        : await saveCountingPanelDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Zähl-Kanal-Design konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/bot-updates/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveBotUpdatesDesign !== 'function') {
+      return res.status(501).json({ error: 'Der Bot-Updates-Editor ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await saveBotUpdatesDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Bot-Updates-Panel konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/inactive-reminder', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getInactiveReminderStatus !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await getInactiveReminderStatus(req.dashboardGuildId, {
+        page: Number(req.query.page || 0),
+        pageSize: Number(req.query.pageSize || 25)
+      });
+      return res.json({ ok: true, status: result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Status konnte nicht geladen werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/inactive-reminder/send-manual', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof sendManualInactiveReminder !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const userId = String(req.body?.userId || '').trim();
+      if (!userId) return res.status(400).json({ error: 'Mitglied-ID fehlt.' });
+      const result = await sendManualInactiveReminder(req.dashboardGuildId, userId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'DM konnte nicht gesendet werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/inactive-reminder/scan', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof runInactiveReminderScan !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await runInactiveReminderScan(req.dashboardGuildId, req.dashboardUser?.discordId || '');
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Scan fehlgeschlagen.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/inactive-reminder/preview', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof runInactiveReminderPreview !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await runInactiveReminderPreview(req.dashboardGuildId, req.dashboardUser?.discordId || '');
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Vorschau fehlgeschlagen.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/inactive-reminder/send', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof runInactiveReminderSend !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+      if (!userIds.length) return res.status(400).json({ error: 'Keine Mitglieder ausgewählt.' });
+      const result = await runInactiveReminderSend(req.dashboardGuildId, req.dashboardUser?.discordId || '', userIds);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Senden fehlgeschlagen.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/inactive-reminder/delete-dm', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof deleteReminderDm !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const userId = String(req.body?.userId || '').trim();
+      if (!userId) return res.status(400).json({ error: 'Mitglied fehlt.' });
+      const result = await deleteReminderDm(req.dashboardGuildId, userId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'DM konnte nicht gelöscht werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/inactive-reminder/delete-all-dms', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof deleteAllReminderDms !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await deleteAllReminderDms(req.dashboardGuildId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'DMs konnten nicht gelöscht werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/inactive-reminder/cleanup-responded', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof cleanupInactiveReminderDms !== 'function') {
+      return res.status(501).json({ error: 'Die Inaktivitäts-Erinnerung ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await cleanupInactiveReminderDms(req.dashboardGuildId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Bereinigung fehlgeschlagen.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/voice-log-import', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getVoiceLogImportStatus !== 'function') {
+      return res.status(501).json({ error: 'Der Carl-bot Voice-Log-Import ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await getVoiceLogImportStatus(req.dashboardGuildId);
+      return res.json({ ok: true, status: result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Status konnte nicht geladen werden.' });
+    }
+  });
+
+  app.post('/api/guild/:guildId/voice-log-import/backfill', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof runVoiceLogBackfill !== 'function') {
+      return res.status(501).json({ error: 'Der Carl-bot Voice-Log-Import ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await runVoiceLogBackfill(req.dashboardGuildId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Backfill fehlgeschlagen.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/voice-log-events', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getVoiceLogEvents !== 'function') {
+      return res.status(501).json({ error: 'Der Carl-bot Voice-Log-Import ist nicht konfiguriert.' });
+    }
+    try {
+      const limit = Math.min(Math.max(1, Number(req.query.limit) || 50), 100);
+      let cursor = null;
+      if (req.query.cursor) {
+        try {
+          cursor = JSON.parse(req.query.cursor);
+        } catch { cursor = null; }
+      }
+      const result = await getVoiceLogEvents(req.dashboardGuildId, { limit, cursor });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Voice-Events konnten nicht geladen werden.' });
+    }
+  });
+
+  app.put('/api/guild/:guildId/inactive-reminder/design', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof saveInactiveReminderDesign !== 'function') {
+      return res.status(501).json({ error: 'Der Inaktivitäts-Erinnerung-Editor ist nicht konfiguriert.' });
+    }
+    try {
+      const result = await saveInactiveReminderDesign(req.dashboardGuildId, req.body || {});
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Das Erinnerungs-Embed konnte nicht gespeichert werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/role-saver', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getRoleSaverStatus !== 'function') {
+      return res.status(501).json({ error: 'Der Rollen-Saver ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await getRoleSaverStatus(req.dashboardGuildId);
+      return res.json({ ok: true, status: result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Rollen-Saver-Status konnte nicht geladen werden.' });
+    }
+  });
+
+  app.get('/api/guild/:guildId/role-saver/member/:userId', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof getSavedRolesForMember !== 'function') {
+      return res.status(501).json({ error: 'Der Rollen-Saver ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await getSavedRolesForMember(req.dashboardGuildId, req.params.userId);
+      return res.json({ ok: true, saved: result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Gespeicherte Rollen konnten nicht geladen werden.' });
+    }
+  });
+
+  app.delete('/api/guild/:guildId/role-saver/member/:userId', requireAuth, requireGuildAccess, async (req, res) => {
+    if (typeof clearSavedRolesForMember !== 'function') {
+      return res.status(501).json({ error: 'Der Rollen-Saver ist nicht konfiguriert.' });
+    }
+
+    try {
+      const result = await clearSavedRolesForMember(req.dashboardGuildId, req.params.userId);
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Gespeicherte Rollen konnten nicht entfernt werden.' });
     }
   });
 

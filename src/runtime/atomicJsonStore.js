@@ -1,8 +1,27 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { clone } from './utils.js';
 
 const fileQueues = new Map();
-const clone = (value) => JSON.parse(JSON.stringify(value));
+// Zeitliche Drosselung der teuren Nebenarbeiten (Backup-Rotation + Directory-
+// Sync). Sie laufen nur noch einmal pro Datei und Intervall – der atomare
+// Schreibpfad (tmp + rename) selbst bleibt bei jedem Write erhalten, sodass
+// die Datenintegrität unverändert gewährleistet ist.
+const lastHeavyWriteAt = new Map();
+const HEAVY_WRITE_INTERVAL_MS = 60_000;
+
+// true, wenn für diese Datei die teuren Nebenarbeiten (Backup-Rotation,
+// Directory-Sync) anstehen: beim allerersten Write immer, danach höchstens
+// einmal pro Intervall.
+const heavyWriteDue = (filePath) => {
+  const key = path.resolve(filePath);
+  const last = lastHeavyWriteAt.get(key) || 0;
+  if (Date.now() - last >= HEAVY_WRITE_INTERVAL_MS) {
+    lastHeavyWriteAt.set(key, Date.now());
+    return true;
+  }
+  return false;
+};
 
 const queued = (filePath, task) => {
   const key = path.resolve(filePath);
@@ -67,6 +86,7 @@ const replaceFile = async (temporaryFile, filePath) => {
 export async function atomicWriteJson(filePath, value, options = {}) {
   const backupLimit = Math.max(0, Math.min(20, Number(options.backupLimit ?? 5)));
   const spacing = Number.isInteger(options.spacing) ? options.spacing : 2;
+  const heavy = heavyWriteDue(filePath);
   return queued(filePath, async () => {
     const directory = path.dirname(filePath);
     await fs.mkdir(directory, { recursive: true });
@@ -79,9 +99,14 @@ export async function atomicWriteJson(filePath, value, options = {}) {
       await handle.sync();
       await handle.close();
       handle = null;
-      await rotateBackups(filePath, backupLimit);
+      // Backup-Rotation und Directory-Sync sind teuer (komplette Datei-Kopien)
+      // und werden zeitlich gedrosselt ausgeführt. Der atomare Ersatz der
+      // Hauptdatei (tmp + rename) passiert bei jedem Write.
+      if (heavy) {
+        await rotateBackups(filePath, backupLimit);
+        await syncDirectory(directory);
+      }
       await replaceFile(temporaryFile, filePath);
-      await syncDirectory(directory);
       return { ok: true, bytes: Buffer.byteLength(payload), writtenAt: new Date().toISOString() };
     } catch (error) {
       await handle?.close().catch(() => {});

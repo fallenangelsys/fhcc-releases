@@ -5,7 +5,6 @@
     const paths = {
       community: '<path d="M5 17a4 4 0 0 1 8 0M9 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm6 1a2.5 2.5 0 0 1 4 2v4M16 4.5a2.5 2.5 0 0 1 0 5"/>',
       members: '<circle cx="9" cy="7" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M17 8v6m-3-3h6"/>',
-      ai: '<path d="M7 8h10M8 12h8M6 18l-3 2 1-4a8 8 0 1 1 4 3"/><path d="M9 4.5 10 3l1 1.5L12.5 6 11 7.5 10 6Z"/>',
       shield: '<path d="M12 3 4.5 6v5c0 4.8 3.1 8 7.5 10 4.4-2 7.5-5.2 7.5-10V6L12 3Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/>',
       logs: '<path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h4"/>',
       service: '<path d="M12 3v9M8.5 5a8 8 0 1 0 7 0"/>',
@@ -22,17 +21,12 @@
     community: {
       group: 'COMMUNITY OS', title: 'Community\nControl.', lead: 'Eine vollständige Schaltzentrale für Struktur, Mitglieder und Serverwissen.',
       icon: 'community', layout: 'command', accent: '#65f0c2', stats: [['2.236', 'Mitglieder'], ['164', 'Kanäle'], ['Live', 'Serverindex']],
-      features: [['Member Intelligence', 'Aktivität, Rollen und belegte Interessen in einem klaren Profil.'], ['Serverstruktur', 'Kanäle, Rollen, Themen und Inhalte direkt verwalten.'], ['Systemereignisse', 'Joins, Boosts und relevante Änderungen chronologisch erfassen.'], ['Orientierung', 'Die AI kennt Regeln, wichtige Kanäle und die aktuelle Community-Struktur.']]
+      features: [['Member Intelligence', 'Aktivität, Rollen und belegte Interessen in einem klaren Profil.'], ['Serverstruktur', 'Kanäle, Rollen, Themen und Inhalte direkt verwalten.'], ['Systemereignisse', 'Joins, Boosts und relevante Änderungen chronologisch erfassen.'], ['Vollindex', 'Der gesamte Serverindex bleibt durchsuchbar und lokal.']]
     },
     members: {
       group: 'MEMBER INTELLIGENCE', title: 'Menschen.\nNicht Zeilen.', lead: 'Verstehe Aktivität und Historie mit nachvollziehbaren Originalbelegen.',
       icon: 'members', layout: 'profile', accent: '#8ce8ff', stats: [['30 Tage', 'Aktivität'], ['Belegt', 'Interessen'], ['Privat', 'Lokale Daten']],
       features: [['Profil-Timeline', 'Account, Serverbeitritt, Boosts und Systemereignisse auf einer Zeitachse.'], ['Aktivitätsanalyse', 'Letzte Nachricht, aktive Tage und Kanäle ohne starre Tabellen.'], ['Belegsystem', 'Jede Aussage bleibt mit Nachricht, Kanal und Datum nachvollziehbar.'], ['Moderationskontext', 'Rollen, Notizen und Aktionen übersichtlich an einem Ort.']]
-    },
-    ai: {
-      group: 'FALLEN HEAVEN AI', title: 'Lokal denken.\nRichtig antworten.', lead: 'Serverwissen, persönliche Erinnerung und Webrecherche mit klarer Werkzeugwahl.',
-      icon: 'ai', layout: 'conversation', accent: '#7cf5d1', stats: [['Ollama', 'Lokal'], ['30 Tage', 'Kontext'], ['Smart', 'Routing']],
-      features: [['Tool Router', 'Unterscheidet Dialog, Serverfrage, Nutzerprofil und aktuelle Webfrage.'], ['Serverwissen', 'Nutzt Index, Regeln, Kanäle und Profile statt Dinge zu erfinden.'], ['Natürlicher Dialog', 'Kurze, passende Antworten ohne Assistenten-Floskeln.'], ['Sicherheitskern', 'Prompt-Injection, Spam und sensible Daten bleiben zuverlässig begrenzt.']]
     },
     antiraid: {
       group: 'DEFENSE GRID', title: 'Ruhe bei\njedem Angriff.', lead: 'Erkennt ungewöhnliche Beitritte und reagiert abgestuft statt blind.',
@@ -62,7 +56,7 @@
     embeds: {
       group: 'MESSAGE LAB', title: 'Discord Content.\nOhne Umwege.', lead: 'Mehrteilige Embeds gestalten, als Entwurf sichern und mit dem Bot senden.',
       icon: 'embed', layout: 'content', accent: '#5bc8ff', stats: [['10', 'Embeds'], ['Live', 'Preview'], ['Bot', 'Versand']],
-      features: [['Live Preview', 'Nachricht, Bilder, Felder und Footer stabil nebeneinander bearbeiten.'], ['Kompletter Import', 'Bestehende Nachrichten mit allen Embeds und Medien übernehmen.'], ['AI Textassistent', 'Ton, Länge und Grammatik passend zur Community überarbeiten.'], ['Nachrichtenarchiv', 'Gesendete Inhalte später erneut öffnen und bearbeiten.']]
+      features: [['Live Preview', 'Nachricht, Bilder, Felder und Footer stabil nebeneinander bearbeiten.'], ['Kompletter Import', 'Bestehende Nachrichten mit allen Embeds und Medien übernehmen.'], ['Funktionssets', 'Bot-Systeme wie VIP & Coins direkt ans Embed hängen.'], ['Nachrichtenarchiv', 'Gesendete Inhalte später erneut öffnen und bearbeiten.']]
     },
     threads: {
       group: 'THREAD CONTROL', title: 'Gespräche sauber\nstrukturieren.', lead: 'Threads erstellen, verwalten und mit passenden Nachrichten starten.',
@@ -87,7 +81,7 @@
     support: {
       group: 'SUPPORT CENTER', title: 'Probleme lösen.\nNicht suchen.', lead: 'Diagnose, Reparatur und Hilfe mit dem richtigen Kontext an einem Ort.',
       icon: 'support', layout: 'support', accent: '#ffcf70', stats: [['Lokal', 'Diagnose'], ['Direkt', 'Logs'], ['Sicher', 'Export']],
-      features: [['Schnellprüfung', 'Verbindung, Prozess, Index und AI automatisch testen.'], ['Reparaturaktionen', 'Gezielte Lösungen statt pauschalem Zurücksetzen.'], ['Support Paket', 'Relevante Logs ohne Tokens und Secrets exportieren.'], ['Recovery Guide', 'Schrittweise Wiederherstellung bei Login- oder Prozessproblemen.']]
+      features: [['Schnellprüfung', 'Verbindung, Prozess und Index automatisch testen.'], ['Reparaturaktionen', 'Gezielte Lösungen statt pauschalem Zurücksetzen.'], ['Support Paket', 'Relevante Logs ohne Tokens und Secrets exportieren.'], ['Recovery Guide', 'Schrittweise Wiederherstellung bei Login- oder Prozessproblemen.']]
     }
   };
 
@@ -116,7 +110,6 @@
 
   function renderVisual(page) {
     if (page.layout === 'profile') return '<div class="fh-visual-profile"><div class="fh-profile-head"><span class="fh-avatar">FH</span><div><strong>Member Intelligence</strong><small>Belegte Serverhistorie</small></div><b>96%</b></div><div class="fh-profile-bars"><i style="--w:88%"></i><i style="--w:64%"></i><i style="--w:76%"></i></div><div class="fh-profile-timeline"><span></span><span></span><span></span><span></span></div></div>';
-    if (page.layout === 'conversation') return '<div class="fh-visual-chat"><header><span></span><span></span><span></span><b>FALLEN HEAVEN AI</b><small>LOCAL · OLLAMA</small></header><p class="user">Was gibt es Neues auf dem Server?</p><p class="assistant">Heute sind neue Mitglieder dazugekommen. Die wichtigsten Serverinfos sind bereits zusammengefasst.</p><footer><i></i><strong>Persönliche Erinnerung aktiv</strong></footer></div>';
     if (page.layout === 'defense') return '<div class="fh-visual-defense"><div class="fh-radar-ring r1"></div><div class="fh-radar-ring r2"></div><div class="fh-radar-core">' + icon('shield') + '</div><span class="signal s1">JOIN · NORMAL</span><span class="signal s2">FILTER · AKTIV</span><span class="signal s3">RISIKO · 0</span></div>';
     if (page.layout === 'audit') return '<div class="fh-visual-audit"><header>LIVE EVENT STREAM <b>●</b></header><p><i></i><strong>Rolle aktualisiert</strong><small>vor 2 Sekunden</small></p><p><i></i><strong>Systemereignis erfasst</strong><small>vor 8 Sekunden</small></p><p><i></i><strong>Index-Checkpoint</strong><small>vor 14 Sekunden</small></p></div>';
     if (page.layout === 'content') return '<div class="fh-visual-embed"><header><span># preview</span><small>LIVE</small></header><div class="fh-discord-message"><span class="fh-avatar">FH</span><p><b>FALLEN HEAVEN <em>APP</em></b><small>Heute</small><i></i><strong>Willkommen in FALLEN HEAVEN</strong><span>Professionell gestaltet und direkt mit dem Bot gesendet.</span></p></div></div>';

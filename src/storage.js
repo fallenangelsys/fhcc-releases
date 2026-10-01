@@ -1,6 +1,9 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defaultGuildConfig, normalizeConfig } from './defaultConfig.js';
 import { atomicWriteJson, createMigrationSnapshot, readJsonWithRecovery } from './runtime/atomicJsonStore.js';
+import { clone } from './runtime/utils.js';
 
 const STORAGE_FILE = path.join(process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data'), 'guild-configs.json');
 const STORAGE_META_FILE = `${STORAGE_FILE}.meta.json`;
@@ -8,6 +11,9 @@ const STORAGE_SCHEMA_VERSION = 2;
 const runtime = {
   initialized: false,
   data: {},
+  // Guilds, deren Config bereits einmal normalisiert wurde – danach entfällt
+  // der teure Normalize- + JSON.stringify-Vergleich bei jedem Config-Zugriff.
+  normalizedGuilds: new Set(),
   revision: 0,
   persistedRevision: 0,
   lastWriteAt: null,
@@ -17,8 +23,6 @@ const runtime = {
 };
 let initializationPromise = null;
 let writeQueue = Promise.resolve();
-
-const clone = (value) => JSON.parse(JSON.stringify(value));
 
 const mergeDeep = (base, patch) => {
   if (!patch || typeof patch !== 'object') return clone(base);
@@ -80,12 +84,56 @@ const migrateStorage = async (data, fromVersion) => {
   return { data: migrated, version, changed: true };
 };
 
+const SEED_FILE = fileURLToPath(new URL('./seed-guild-configs.json', import.meta.url));
+
+const hasAnyGuild = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+
+const readSeedConfig = () => {
+  try {
+    const parsed = JSON.parse(readFileSync(SEED_FILE, 'utf8'));
+    if (!hasAnyGuild(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+// Eine Guild-Config gilt als „unverändert“, wenn sie exakt der normalisierten
+// Default-Config entspricht (der Bot hat sie beim ersten Start angelegt, der
+// User aber noch nichts angepasst). In diesem Fall darf der Seed sie ersetzen,
+// damit frische Installationen (z. B. auf PC 2) die echten Settings erhalten.
+const isUnmodifiedDefaultConfigImpl = (guildId, config) => {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+  try {
+    const guildName = typeof config.guildName === 'string' && config.guildName.trim() ? config.guildName : 'Server';
+    const baseline = normalizeConfig(defaultGuildConfig(guildId, guildName));
+    const current = normalizeConfig({ ...config, guildId, guildName });
+    return JSON.stringify(baseline) === JSON.stringify(current);
+  } catch {
+    return false;
+  }
+};
+
+const shouldApplySeed = (value) => {
+  if (!hasAnyGuild(value)) return true;
+  const guilds = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return Object.keys(guilds).length > 0
+    && Object.entries(guilds).every(([guildId, config]) => isUnmodifiedDefaultConfigImpl(guildId, config));
+};
+
 const initializeStorageInternal = async () => {
   const loaded = await readJsonWithRecovery(STORAGE_FILE, {
     fallback: {},
     backupLimit: 5,
     validate: (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value))
   });
+  if (shouldApplySeed(loaded.value)) {
+    const seed = readSeedConfig();
+    if (hasAnyGuild(seed)) {
+      loaded.value = seed;
+      loaded.source = 'seed';
+    }
+  }
   const metadata = await readJsonWithRecovery(STORAGE_META_FILE, {
     fallback: { schemaVersion: 0 },
     backupLimit: 3,
@@ -96,7 +144,7 @@ const initializeStorageInternal = async () => {
   runtime.schemaVersion = migration.version;
   runtime.recoveredFrom = loaded.recovered ? loaded.source : null;
   runtime.initialized = true;
-  if (loaded.recovered || migration.changed || loaded.source === 'fallback') await persist();
+  if (loaded.recovered || migration.changed || loaded.source === 'fallback' || loaded.source === 'seed') await persist();
   await atomicWriteJson(STORAGE_META_FILE, {
     schemaVersion: STORAGE_SCHEMA_VERSION,
     migratedAt: migration.changed ? new Date().toISOString() : metadata.value.migratedAt || null,
@@ -122,15 +170,25 @@ const ensureGuild = (guildId, guildName = 'Server') => {
   let changed = false;
   if (!runtime.data[guildId]) {
     runtime.data[guildId] = normalizeConfig(defaultGuildConfig(guildId, guildName));
+    runtime.normalizedGuilds.add(guildId);
     changed = true;
-  }
-  const normalized = normalizeConfig({
-    ...runtime.data[guildId],
-    guildId,
-    guildName: guildName || runtime.data[guildId].guildName
-  });
-  if (JSON.stringify(normalized) !== JSON.stringify(runtime.data[guildId])) {
-    runtime.data[guildId] = normalized;
+  } else if (!runtime.normalizedGuilds.has(guildId)) {
+    // Erster Zugriff: normalisieren und nur hier prüfen, ob sich dadurch etwas
+    // geändert hat (→ persistieren). Danach gilt die Config als normalisiert.
+    const normalized = normalizeConfig({
+      ...runtime.data[guildId],
+      guildId,
+      guildName: guildName || runtime.data[guildId].guildName
+    });
+    if (JSON.stringify(normalized) !== JSON.stringify(runtime.data[guildId])) {
+      runtime.data[guildId] = normalized;
+      changed = true;
+    }
+    runtime.normalizedGuilds.add(guildId);
+  } else if (guildName && guildName !== runtime.data[guildId].guildName) {
+    // Server umbenannt: Namen günstig nachziehen, ohne die ganze Config neu zu
+    // normalisieren oder zu vergleichen.
+    runtime.data[guildId] = { ...runtime.data[guildId], guildName };
     changed = true;
   }
   return { config: runtime.data[guildId], changed };
@@ -151,6 +209,7 @@ export async function setGuildConfig(guildId, patch = {}, options = {}) {
   const current = ensureGuild(guildId, guildName).config || defaultGuildConfig(guildId, guildName);
   const base = reset ? defaultGuildConfig(guildId, guildName) : current;
   runtime.data[guildId] = normalizeConfig(mergeDeep(base, { ...patch, guildId, guildName }));
+  runtime.normalizedGuilds.add(guildId);
   await persist();
   return clone(runtime.data[guildId]);
 }
@@ -164,6 +223,10 @@ export async function flushStorage() {
   await initializeStorage();
   await writeQueue;
   if (runtime.persistedRevision < runtime.revision) await persist();
+}
+
+export function isUnmodifiedDefaultConfig(guildId, config) {
+  return isUnmodifiedDefaultConfigImpl(guildId, config);
 }
 
 export function getStorageStatus() {

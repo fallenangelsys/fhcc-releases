@@ -6,8 +6,11 @@ import {
   getDiscordSystemEventLabel,
   getDiscordSystemEventName,
   getServerIndexSystemEvents,
-  persistServerIndexMessages
+  persistServerIndexMessages,
+  runServerIndexVacuum,
+  verifyServerIndexJsonlMigrated
 } from '../serverIndexStore.js';
+import { quietLog, QUIET_LOG_SCOPE } from '../runtime/quietLog.js';
 
 const DATA_ROOT = path.join(process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data'), 'server-context');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -145,7 +148,7 @@ export const startServerSystemEventBackfill = (guild, cfg = {}) => {
             const messages = [...page.values()];
             const records = [];
             for (const message of messages) {
-              const event = discordSystemEvent(message) || (message.author?.bot ? botSystemEvent(message) : null);
+              const event = discordSystemEvent(message);
               if (event) records.push(indexedSystemRecord(message, event));
             }
             if (records.length) await persistServerIndexMessages(records, { source: 'system-event-backfill', batchId: `system-${channel.id}-${messages.at(-1)?.id || Date.now()}` });
@@ -240,15 +243,37 @@ const listContextFiles = async () => {
   return files;
 };
 
-export const maintainServerContextStorage = async (cfg = {}) => {
+// Löschen nur, wenn die Integritätsprüfung bestanden ist: Jede referenzierte
+// Nachricht muss bereits im SQLite-Index liegen (verifiziert über
+// verifyServerIndexJsonlMigrated). Fehlt etwas, bleibt die Datei liegen und
+// wird beim nächsten Durchlauf erneut geprüft - kein stiller Datenverlust.
+const removeFileWhenMigrated = async (filePath) => {
+  const verified = await verifyServerIndexJsonlMigrated(filePath)
+    .catch(() => ({ checked: 0, present: 0, missing: -1, unparsed: 0 }));
+  // Löschen nur, wenn jede prüfbare Zeile im Index liegt UND keine Zeile
+  // unlesbar/nicht eindeutig prüfbar war (kein stiller Datenverlust).
+  if (verified.missing === 0 && verified.unparsed === 0) {
+    await fs.rm(filePath, { force: true }).catch(() => {});
+    return { removed: true, missing: 0 };
+  }
+  return {
+    removed: false,
+    missing: Math.max(0, Number(verified.missing || 0)),
+    unparsed: Math.max(0, Number(verified.unparsed || 0))
+  };
+};
+
+export const maintainServerContextStorage = async (cfg = {}, options = {}) => {
   const conf = normalizedConfig(cfg);
   const now = Date.now();
   const cutoff = now - conf.retentionDays * DAY_MS;
   let files = await listContextFiles();
+  let skippedVerification = 0;
   for (const file of files) {
     const parsedDate = Date.parse(`${path.basename(file.filePath, '.jsonl')}T00:00:00.000Z`);
     if ((Number.isFinite(parsedDate) ? parsedDate : file.mtimeMs) < cutoff) {
-      await fs.rm(file.filePath, { force: true }).catch(() => {});
+      const outcome = await removeFileWhenMigrated(file.filePath);
+      if (!outcome.removed) skippedVerification += 1;
     }
   }
   files = await listContextFiles();
@@ -258,18 +283,30 @@ export const maintainServerContextStorage = async (cfg = {}) => {
     files.sort((a, b) => a.mtimeMs - b.mtimeMs);
     for (const file of files) {
       if (totalBytes <= capBytes) break;
-      await fs.rm(file.filePath, { force: true }).catch(() => {});
+      const outcome = await removeFileWhenMigrated(file.filePath);
+      if (!outcome.removed) {
+        skippedVerification += 1;
+        continue;
+      }
       totalBytes -= file.size;
     }
   }
   lastCleanupAt = now;
-  return { totalBytes: Math.max(0, totalBytes), capBytes, retentionDays: conf.retentionDays };
+  // Kontrolliertes Wartungs-VACUUM nur im geregelten Wartungstakt (nicht beim
+  // Botstart): throttled, ohne offene Schreibstapel, ab Mindestgröße.
+  if (options.vacuum === true) await runServerIndexVacuum().catch(() => {});
+  return {
+    totalBytes: Math.max(0, totalBytes),
+    capBytes,
+    retentionDays: conf.retentionDays,
+    skippedVerification
+  };
 };
 
 export const recordServerEvent = async ({ cfg, guildId, channelId, channelName = '', userId = '', userName = '', type = 'chat', text = '', messageId = '', timestamp = Date.now(), attachments = [], metadata = {}, respectChannelFilter = true } = {}) => {
   const conf = normalizedConfig(cfg);
   if (!conf.enabled || !safeId(guildId) || (respectChannelFilter && !channelAllowed(channelId, conf))) return false;
-  const cleanText = String(text || '').replace(/\u0000/g, '').trim().slice(0, MAX_TEXT_LENGTH);
+  const cleanText = String(text || '').replace(/\u0000/g, '').trim().slice(0, MAX_TEXT_LENGTH); // eslint-disable-line no-control-regex
   const safeAttachments = conf.storeAttachmentLinks ? attachments.slice(0, 10).map((attachment) => ({
     name: String(attachment?.name || '').slice(0, 256),
     url: String(attachment?.url || '').slice(0, 2048),
@@ -292,7 +329,7 @@ export const recordServerEvent = async ({ cfg, guildId, channelId, channelName =
     metadata: metadata && typeof metadata === 'object' ? metadata : {}
   };
   await appendLine(dailyFile(entry.guildId, entry.ts), JSON.stringify(entry));
-  if (Date.now() - lastCleanupAt > 6 * 60 * 60 * 1000) await maintainServerContextStorage(conf).catch(() => {});
+  if (Date.now() - lastCleanupAt > 6 * 60 * 60 * 1000) await maintainServerContextStorage(conf, { vacuum: true }).catch(() => {});
   return true;
 };
 
@@ -303,13 +340,19 @@ const refreshLatestSystemEventHead = async (guild, pageLimit = 5) => {
   if (systemHeadRefreshRunners.has(guildId)) return systemHeadRefreshRunners.get(guildId);
   const runner = (async () => {
     const channel = guild.channels?.cache?.get(systemChannelId)
-      || await guild.channels?.fetch?.(systemChannelId).catch(() => null);
+      || await guild.channels?.fetch?.(systemChannelId).catch((error) => {
+        quietLog(QUIET_LOG_SCOPE.serverContext, error, `channels.fetch (System) fehlgeschlagen: ${systemChannelId}`);
+        return null;
+      });
     if (!channel?.isTextBased?.() || !channel.messages?.fetch) return { scanned: 0, events: 0 };
     let before;
     let scanned = 0;
     const records = [];
     for (let pageIndex = 0; pageIndex < Math.max(1, Number(pageLimit || 1)); pageIndex += 1) {
-      const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
+      const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch((error) => {
+        quietLog(QUIET_LOG_SCOPE.serverContext, error, `messages.fetch (SystemEvents) fehlgeschlagen: Kanal ${channel.id}`);
+        return null;
+      });
       if (!page?.size) break;
       const messages = [...page.values()];
       scanned += messages.length;
@@ -339,7 +382,7 @@ const scheduleSystemEventHeadRefresh = (guild) => {
   if (previous) clearInterval(previous);
   const timer = setInterval(() => {
     refreshLatestSystemEventHead(guild).catch((error) => console.error('[Server Context] Systemkanal-Kopfabgleich fehlgeschlagen:', error));
-  }, 2 * 60 * 1000);
+  }, 10 * 60 * 1000);
   timer.unref?.();
   systemHeadRefreshTimers.set(guildId, timer);
 };
@@ -354,7 +397,10 @@ const waitForAuditLog = (delayMs = 1_200) => new Promise((resolve) => setTimeout
 
 const findRecentMemberAuditEntry = async (guild, type, userId, windowMs = 30_000) => {
   if (!guild?.fetchAuditLogs || !userId) return null;
-  const audit = await guild.fetchAuditLogs({ type, limit: 10 }).catch(() => null);
+  const audit = await guild.fetchAuditLogs({ type, limit: 10 }).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.serverContext, error, `fetchAuditLogs fehlgeschlagen`);
+    return null;
+  });
   if (!audit?.entries) return null;
   const now = Date.now();
   return audit.entries.find((entry) => {
@@ -409,71 +455,6 @@ const readTail = async (filePath) => {
   } finally {
     await handle.close();
   }
-};
-
-const queryTerms = (query) => [...new Set(String(query || '').toLocaleLowerCase('de-DE')
-  .replace(/[^\p{L}\p{N}]+/gu, ' ')
-  .split(/\s+/)
-  .filter((word) => word.length >= 3 && !['aber', 'auch', 'dann', 'eine', 'einen', 'einer', 'haben', 'hier', 'oder', 'sind', 'über', 'wurde', 'wer', 'was', 'wie'].includes(word))
-  .slice(0, 16))];
-
-export const shouldUseServerContext = (query, serverIntent = null) => {
-  if (serverIntent) return true;
-  const text = String(query || '').trim().toLocaleLowerCase('de-DE');
-  if (!text || /^(?:lol|lmao|haha+|hehe+|xd+|moin|hallo|hi|hey|ok(?:ay)?|ja|nein|danke|gn8|gute nacht)[.!? ]*$/.test(text)) return false;
-  if (/\b(?:server|channel|kanal|boost|booster|mitglied|member|rolle|event|regel|regeln|regelwerk|richtlinie|erlaubt|verboten|heute|gestern|zuletzt|vorhin|thema|gesagt|geschrieben|gepostet|passiert)\b/i.test(text)) return true;
-  if (/\b(?:wo sind wir|in welchem kanal|aktueller kanal|darf ich|darf man)\b/i.test(text)) return true;
-  return queryTerms(text).length >= 4 && /[?]$/.test(text);
-};
-
-export const getRecentServerContext = async ({
-  guildId,
-  channelId = '',
-  query = '',
-  cfg = {},
-  allowedChannelIds = null,
-  excludedChannelIds = [],
-  excludeMessageIds = [],
-  maxEntries
-} = {}) => {
-  const conf = normalizedConfig(cfg);
-  if (!conf.enabled || !safeId(guildId)) return '';
-  const allowedChannels = Array.isArray(allowedChannelIds)
-    ? new Set(allowedChannelIds.map(String).filter(Boolean))
-    : null;
-  // Ein AI-Aufruf muss seine Sicht explizit mitgeben. Ohne sicheren Scope darf
-  // der historische Fallback keine Nachrichteninhalte liefern.
-  if (!allowedChannels?.size) return '';
-  const limit = clamp(maxEntries, 5, 200, conf.maxContextEntries);
-  const terms = queryTerms(query);
-  const excludedChannels = new Set((excludedChannelIds || []).map(String).filter(Boolean));
-  const excludedMessages = new Set((excludeMessageIds || []).map(String).filter(Boolean));
-  const entries = [];
-  const now = Date.now();
-  for (let day = 0; day < conf.retentionDays; day += 1) {
-    const rows = await readTail(dailyFile(guildId, now - day * DAY_MS));
-    for (const row of rows) {
-      if (!row?.ts || now - Number(row.ts) > conf.retentionDays * DAY_MS) continue;
-      if (!allowedChannels.has(String(row.channelId || ''))) continue;
-      if (excludedChannels.has(String(row.channelId || '')) || excludedMessages.has(String(row.messageId || ''))) continue;
-      const searchable = `${row.type || ''} ${row.channelName || ''} ${row.userName || ''} ${row.text || ''}`.toLocaleLowerCase('de-DE');
-      const hits = terms.reduce((sum, term) => sum + (searchable.includes(term) ? 1 : 0), 0);
-      const sameChannel = String(row.channelId || '') === String(channelId || '');
-      const boostQuery = /boost/i.test(query) && /^boost/.test(String(row.type || ''));
-      const score = hits * 20 + (sameChannel ? 8 : 0) + (boostQuery ? 50 : 0) + Math.max(0, 30 - day);
-      if (!terms.length || hits || boostQuery) entries.push({ ...row, score });
-    }
-  }
-  const selected = entries.sort((a, b) => b.score - a.score || Number(b.ts) - Number(a.ts)).slice(0, limit).sort((a, b) => Number(a.ts) - Number(b.ts));
-  if (!selected.length) return '';
-  const lines = selected.map((entry) => {
-    const when = new Date(Number(entry.ts)).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' });
-    const where = entry.channelName ? `#${entry.channelName}` : `Kanal ${entry.channelId}`;
-    const who = entry.userName || entry.userId || 'System';
-    const attachmentNote = entry.attachments?.length ? ` [${entry.attachments.length} Anhang/Anhänge]` : '';
-    return `- ${when} | ${where} | ${who} | ${entry.type}: ${entry.text || '(Ereignis)'}${attachmentNote}`;
-  });
-  return ['LOKALER SERVER-KONTEXT (echte Discord-Ereignisse, getrennt vom persönlichen AI-Memory, maximal 30 Tage):', 'Nutze nur passende Einträge. Erfinde nichts und sage klar, wenn die Notizen keine sichere Antwort enthalten.', ...lines].join('\n');
 };
 
 export const getServerSystemEvents = async ({ guildId, maxEntries = 0, retentionDays = 0 } = {}) => {
@@ -549,13 +530,7 @@ export const getServerSystemEvents = async ({ guildId, maxEntries = 0, retention
       label: entry.metadata?.label || getDiscordSystemEventLabel(entry.type)
     }
   }));
-  const scanChannels = Object.values(scanState.channels || {});
-  const completedChannels = scanChannels.filter((channel) => channel.complete).length;
-  const scanProgress = scanState.complete
-    ? 100
-    : scanChannels.length
-      ? scanChannels.reduce((sum, channel) => sum + Math.min(100, Math.max(0, Number(channel.progress || 0))), 0) / scanChannels.length
-      : 0;
+  const scan = await getServerSystemScanSummary(guildId);
   const categories = events.reduce((result, entry) => {
     const category = String(entry?.metadata?.category || getDiscordSystemEventCategory(entry?.type) || 'other');
     result[category] = Number(result[category] || 0) + 1;
@@ -563,17 +538,7 @@ export const getServerSystemEvents = async ({ guildId, maxEntries = 0, retention
   }, {});
   return {
     events,
-    scan: {
-      running: Boolean(scanState.running || systemScanRunners.has(String(guildId))),
-      complete: Boolean(scanState.complete),
-      progress: scanProgress,
-      scannedMessages: scanChannels.reduce((sum, channel) => sum + Number(channel.scannedMessages || 0), 0),
-      foundEvents: scanChannels.reduce((sum, channel) => sum + Number(channel.foundEvents || 0), 0),
-      completedChannels,
-      totalChannels: scanChannels.length,
-      lastError: scanChannels.find((channel) => channel.lastError)?.lastError || null,
-      updatedAt: scanState.updatedAt || null
-    },
+    scan,
     summary: {
       total: events.length,
       boosts: Number(categories.boosts || 0),
@@ -581,6 +546,31 @@ export const getServerSystemEvents = async ({ guildId, maxEntries = 0, retention
       ended: events.filter((entry) => entry.type === 'boost_ended' || entry.type === 'member_left').length,
       categories
     }
+  };
+};
+
+// Kompakte Zusammenfassung des Systemereignis-Backfill-Scans für die
+// Dashboard-Ansicht – unabhängig von der Ereignisliste nutzbar, damit die
+// Systemereignisse serverseitig per Keyset paginiert werden können.
+export const getServerSystemScanSummary = async (guildId) => {
+  const scanState = await readSystemScanState(guildId).catch(() => ({ channels: {} }));
+  const scanChannels = Object.values(scanState.channels || {});
+  const completedChannels = scanChannels.filter((channel) => channel.complete).length;
+  const scanProgress = scanState.complete
+    ? 100
+    : scanChannels.length
+      ? scanChannels.reduce((sum, channel) => sum + Math.min(100, Math.max(0, Number(channel.progress || 0))), 0) / scanChannels.length
+      : 0;
+  return {
+    running: Boolean(scanState.running || systemScanRunners.has(String(guildId))),
+    complete: Boolean(scanState.complete),
+    progress: scanProgress,
+    scannedMessages: scanChannels.reduce((sum, channel) => sum + Number(channel.scannedMessages || 0), 0),
+    foundEvents: scanChannels.reduce((sum, channel) => sum + Number(channel.foundEvents || 0), 0),
+    completedChannels,
+    totalChannels: scanChannels.length,
+    lastError: scanChannels.find((channel) => channel.lastError)?.lastError || null,
+    updatedAt: scanState.updatedAt || null
   };
 };
 
@@ -655,19 +645,5 @@ export const feature = {
       });
       return;
     }
-    if (!conf.enabled || message.author?.bot || !channelAllowed(message.channelId, conf)) return;
-    await recordServerEvent({
-      cfg,
-      guildId: message.guildId,
-      channelId: message.channelId,
-      channelName: message.channel?.name || '',
-      userId: message.author?.id,
-      userName: message.member?.displayName || message.author?.globalName || message.author?.username || '',
-      type: 'chat',
-      text: message.content || '',
-      messageId: message.id,
-      timestamp: message.createdTimestamp,
-      attachments: [...message.attachments.values()].map((attachment) => ({ name: attachment.name, url: attachment.url, contentType: attachment.contentType, size: attachment.size }))
-    });
   }
 };

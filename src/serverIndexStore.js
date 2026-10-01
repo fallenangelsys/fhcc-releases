@@ -2,7 +2,11 @@ import fs from 'node:fs/promises';
 import fsSync, { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { Worker } from 'node:worker_threads';
+import { createRequire } from 'node:module';
 import Database from 'better-sqlite3';
+
+const requireFromStore = createRequire(import.meta.url);
 
 const DATA_ROOT = process.env.FALLEN_HEAVEN_DATA_DIR
   || (process.platform === 'win32' && process.env.APPDATA
@@ -54,6 +58,97 @@ const DISCORD_SYSTEM_EVENT_CATALOG = [
 const SYSTEM_EVENT_NAMES = new Map(DISCORD_SYSTEM_EVENT_CATALOG.map((entry) => [entry.messageType, entry.name]));
 const SYSTEM_EVENT_DESCRIPTORS = new Map(DISCORD_SYSTEM_EVENT_CATALOG.flatMap((entry) => [[entry.messageType, entry], [entry.name, entry]]));
 const SYSTEM_MESSAGE_TYPES_SQL = DISCORD_SYSTEM_EVENT_CATALOG.map((entry) => entry.messageType).join(',');
+
+// Kategorie -> SQL-Prädikat über message_type/system_event, damit Filter und
+// Zähler serverseitig über die schmalen partiellen Indizes laufen (kein
+// Materialisieren aller Ereignisse im Speicher).
+const SYSTEM_CATEGORY_EVENT_NAMES = new Map();
+for (const entry of DISCORD_SYSTEM_EVENT_CATALOG) {
+  const list = SYSTEM_CATEGORY_EVENT_NAMES.get(entry.category) || [];
+  list.push(entry.name);
+  SYSTEM_CATEGORY_EVENT_NAMES.set(entry.category, list);
+}
+// App-interne Systemereignisse, die keinem Discord-message_type entsprechen.
+const SYSTEM_CATEGORY_EXTRA_NAMES = {
+  boosts: ['boost_ended', 'boost_expired'],
+  membership: ['member_joined', 'member_left']
+};
+for (const [category, names] of Object.entries(SYSTEM_CATEGORY_EXTRA_NAMES)) {
+  const list = SYSTEM_CATEGORY_EVENT_NAMES.get(category) || [];
+  SYSTEM_CATEGORY_EVENT_NAMES.set(category, [...list, ...names]);
+}
+const SYSTEM_CATEGORY_FILTERS = new Set(['all', 'membership', 'boosts', 'channel', 'stage', 'safety', 'subscriptions', 'other']);
+
+const buildSystemCategoryPredicate = (category) => {
+  const key = String(category || 'all').trim();
+  if (!key || key === 'all') return '';
+  if (!SYSTEM_CATEGORY_FILTERS.has(key)) return '';
+  if (key === 'other') {
+    const allTypes = DISCORD_SYSTEM_EVENT_CATALOG.map((entry) => entry.messageType).join(',');
+    const allNames = [...new Set([
+      ...DISCORD_SYSTEM_EVENT_CATALOG.map((entry) => entry.name),
+      ...Object.values(SYSTEM_CATEGORY_EXTRA_NAMES).flat()
+    ])].map((name) => `'${name}'`).join(',');
+    return ` AND NOT (message_type IN (${allTypes}) OR (system_event IS NOT NULL AND system_event IN (${allNames})))`;
+  }
+  const names = (SYSTEM_CATEGORY_EVENT_NAMES.get(key) || []).map((name) => `'${name}'`).join(',');
+  const types = DISCORD_SYSTEM_EVENT_CATALOG.filter((entry) => entry.category === key).map((entry) => entry.messageType).join(',');
+  if (!names && !types) return ' AND 0';
+  const clauses = [];
+  if (types) clauses.push(`message_type IN (${types})`);
+  if (names) clauses.push(`system_event IN (${names})`);
+  return ` AND (${clauses.join(' OR ')})`;
+};
+
+// Systemereignis-Zähler komplett serverseitig über die schmalen partiellen
+// Indizes (is_system=1 bzw. message_type=8). Läuft in zwei disjunkten
+// Partitionen, damit jeder Index greifen kann – nie über die volle Tabelle.
+export const getServerIndexSystemEventCounts = async ({ guildId, retentionDays = 0, category = null } = {}) => {
+  const database = initializeDatabase();
+  await flushPendingWrites();
+  const safeGuildId = String(guildId || '').trim();
+  const empty = { total: 0, boosts: 0, joins: 0, ended: 0, categories: {} };
+  if (!safeGuildId) return empty;
+  const days = Number(retentionDays) || 0;
+  const cutoff = days > 0 ? new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString() : null;
+  const timePredicate = cutoff ? 'AND created_at>=?' : '';
+  const categoryPredicate = buildSystemCategoryPredicate(category);
+  const params = (extra = []) => [safeGuildId, ...(cutoff ? [cutoff] : []), ...extra];
+
+  // UNION ALL über die beiden partiellen Indizes statt OR (siehe
+  // getServerIndexSystemEvents): beide Zweige laufen index-only über die
+  // schmalen Indizes, nie über den vollen Guild-Index.
+  const systemRows = database.prepare(`
+    SELECT message_type, system_event, COUNT(*) AS n
+      FROM (
+        SELECT message_type, system_event FROM messages WHERE guild_id=? ${timePredicate} AND is_system=1 ${categoryPredicate}
+        UNION ALL
+        SELECT message_type, system_event FROM messages WHERE guild_id=? ${timePredicate} AND is_system=0 AND message_type=8 ${categoryPredicate}
+      )
+     GROUP BY message_type, system_event
+  `).all(...params(), ...params());
+
+  let total = 0;
+  let boosts = 0;
+  let joins = 0;
+  let ended = 0;
+  const categories = {};
+  const countRow = (row) => {
+    const count = Number(row?.n || 0);
+    if (!count) return;
+    total += count;
+    const messageType = Number(row?.message_type || 0);
+    const eventName = String(row?.system_event || '');
+    const type = eventName || getDiscordSystemEventName(messageType) || 'discord_system';
+    const eventCategory = getDiscordSystemEventCategory(type);
+    categories[eventCategory] = Number(categories[eventCategory] || 0) + count;
+    if (type === 'boost_started') boosts += count;
+    if (type === 'member_joined') joins += count;
+    if (type === 'boost_ended' || type === 'member_left') ended += count;
+  };
+  for (const row of systemRows) countRow(row);
+  return { total, boosts, joins, ended, categories };
+};
 
 export const getDiscordSystemEventName = (value) => SYSTEM_EVENT_DESCRIPTORS.get(Number(value))?.name
   || SYSTEM_EVENT_DESCRIPTORS.get(String(value || ''))?.name
@@ -278,7 +373,10 @@ const initializeDatabase = () => {
     CREATE INDEX IF NOT EXISTS messages_guild_created_idx ON messages(guild_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS messages_channel_created_idx ON messages(guild_id, channel_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS messages_author_created_idx ON messages(guild_id, author_id, created_at DESC);
-    CREATE INDEX IF NOT EXISTS messages_system_idx ON messages(guild_id, is_system, message_type, created_at DESC);
+    -- Schmale partielle Indizes statt des vollen messages_system_idx: nur
+    -- Systemzeilen bzw. Boost-Zeilen (message_type=8) werden indexiert.
+    CREATE INDEX IF NOT EXISTS messages_system_partial_idx ON messages(guild_id, created_at DESC) WHERE is_system = 1;
+    CREATE INDEX IF NOT EXISTS messages_boost_partial_idx ON messages(guild_id, created_at ASC) WHERE message_type = 8;
     CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(
       message_id UNINDEXED, guild_id UNINDEXED, channel_id UNINDEXED, author_id UNINDEXED,
       content, author_name, channel_name, tokenize = 'unicode61 remove_diacritics 2'
@@ -314,11 +412,29 @@ const initializeDatabase = () => {
       imported_messages INTEGER NOT NULL DEFAULT 0, complete INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL, PRIMARY KEY(guild_id,relative_path)
     );
+    -- Vorberechnete Mitgliederstatistiken: Profile lesen O(1) statt bei jedem
+    -- Aufruf tausende Nachrichten des Autors zu scannen (COUNT/GROUP BY/JSON).
+    CREATE TABLE IF NOT EXISTS member_stats(
+      guild_id TEXT NOT NULL, author_id TEXT NOT NULL,
+      message_count INTEGER NOT NULL DEFAULT 0, channel_count INTEGER NOT NULL DEFAULT 0,
+      link_count INTEGER NOT NULL DEFAULT 0, media_count INTEGER NOT NULL DEFAULT 0,
+      first_message_at TEXT, last_message_at TEXT, updated_at TEXT NOT NULL,
+      backfill_complete INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(guild_id, author_id)
+    );
+    CREATE TABLE IF NOT EXISTS index_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS member_channel_stats(
+      guild_id TEXT NOT NULL, author_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+      channel_name TEXT NOT NULL DEFAULT '',
+      message_count INTEGER NOT NULL DEFAULT 0, link_count INTEGER NOT NULL DEFAULT 0, media_count INTEGER NOT NULL DEFAULT 0,
+      first_message_at TEXT, last_message_at TEXT,
+      PRIMARY KEY(guild_id, author_id, channel_id)
+    );
   `);
   database.prepare('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)').run(SCHEMA_VERSION, nowIso());
   statements = {
     hasMessage: database.prepare('SELECT 1 FROM messages WHERE message_id=?'),
-    getMessageLocation: database.prepare('SELECT guild_id,channel_id FROM messages WHERE message_id=?'),
+    getMessageLocation: database.prepare('SELECT guild_id,channel_id,author_id FROM messages WHERE message_id=?'),
     deleteMessage: database.prepare('DELETE FROM messages WHERE message_id=? AND guild_id=?'),
     upsertMessage: database.prepare(`
       INSERT INTO messages(message_id,guild_id,channel_id,channel_name,parent_channel_id,is_thread,author_id,author_name,author_bot,message_type,is_system,system_event,created_at,edited_at,content,search_text,record_json,ingested_at,updated_at)
@@ -362,7 +478,45 @@ const initializeDatabase = () => {
       ON CONFLICT(guild_id) DO UPDATE SET migration_complete=excluded.migration_complete,
         migration_started_at=COALESCE(guild_index_state.migration_started_at,excluded.migration_started_at),
         migration_completed_at=excluded.migration_completed_at,last_error=excluded.last_error,updated_at=excluded.updated_at
-    `)
+    `),
+    messageLinkMediaFlags: database.prepare(`
+      SELECT (content LIKE '%://%') AS link_flag,
+             (json_valid(record_json)=1 AND json_array_length(json_extract(record_json,'$.attachments'))>0) AS media_flag
+        FROM messages WHERE message_id=?
+    `),
+    memberChannelList: database.prepare('SELECT * FROM member_channel_stats WHERE guild_id=? AND author_id=?'),
+    memberChannelInsertIgnore: database.prepare(`
+      INSERT OR IGNORE INTO member_channel_stats(guild_id,author_id,channel_id,channel_name,message_count,link_count,media_count,first_message_at,last_message_at)
+      VALUES(@guild_id,@author_id,@channel_id,@channel_name,0,0,0,NULL,NULL)
+    `),
+    memberChannelDelta: database.prepare(`
+      INSERT INTO member_channel_stats(guild_id,author_id,channel_id,channel_name,message_count,link_count,media_count,first_message_at,last_message_at)
+      VALUES(@guild_id,@author_id,@channel_id,@channel_name,@count_delta,@link_delta,@media_delta,@created_at,@created_at)
+      ON CONFLICT(guild_id,author_id,channel_id) DO UPDATE SET
+        channel_name=CASE WHEN excluded.channel_name<>'' THEN excluded.channel_name ELSE member_channel_stats.channel_name END,
+        message_count=member_channel_stats.message_count+excluded.message_count,
+        link_count=member_channel_stats.link_count+excluded.link_count,
+        media_count=member_channel_stats.media_count+excluded.media_count,
+        first_message_at=CASE WHEN member_channel_stats.first_message_at IS NULL OR excluded.first_message_at<member_channel_stats.first_message_at THEN excluded.first_message_at ELSE member_channel_stats.first_message_at END,
+        last_message_at=CASE WHEN member_channel_stats.last_message_at IS NULL OR excluded.last_message_at>member_channel_stats.last_message_at THEN excluded.last_message_at ELSE member_channel_stats.last_message_at END
+    `),
+    memberStatsDelta: database.prepare(`
+      INSERT INTO member_stats(guild_id,author_id,message_count,channel_count,link_count,media_count,first_message_at,last_message_at,updated_at)
+      VALUES(@guild_id,@author_id,@count_delta,@channel_delta,@link_delta,@media_delta,@created_at,@created_at,@updated_at)
+      ON CONFLICT(guild_id,author_id) DO UPDATE SET
+        message_count=member_stats.message_count+excluded.message_count,
+        channel_count=member_stats.channel_count+excluded.channel_count,
+        link_count=member_stats.link_count+excluded.link_count,
+        media_count=member_stats.media_count+excluded.media_count,
+        first_message_at=CASE WHEN member_stats.first_message_at IS NULL OR excluded.first_message_at<member_stats.first_message_at THEN excluded.first_message_at ELSE member_stats.first_message_at END,
+        last_message_at=CASE WHEN member_stats.last_message_at IS NULL OR excluded.last_message_at>member_stats.last_message_at THEN excluded.last_message_at ELSE member_stats.last_message_at END,
+        updated_at=excluded.updated_at
+    `),
+    memberStatsClear: database.prepare('DELETE FROM member_stats WHERE guild_id=? AND author_id=?'),
+    memberChannelClear: database.prepare('DELETE FROM member_channel_stats WHERE guild_id=? AND author_id=?'),
+    memberBackfillComplete: database.prepare('SELECT 1 FROM member_stats WHERE guild_id=? AND author_id=? AND backfill_complete=1'),
+    metaGet: database.prepare('SELECT value FROM index_meta WHERE key=?'),
+    metaSet: database.prepare('INSERT INTO index_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
   };
   const systemClassificationMigration = 1001;
   const classificationApplied = database.prepare('SELECT 1 FROM schema_migrations WHERE version=?').get(systemClassificationMigration);
@@ -393,6 +547,41 @@ const initializeDatabase = () => {
     `);
     database.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)').run(systemClassificationMigration, nowIso());
   }
+  // Migration 1002: Der alte volle System-Index (guild,is_system,message_type,created_at)
+  // indexierte ALLE Nachrichten. Ersetzt wird er durch zwei schmale partielle
+  // Indizes (nur System- bzw. Boost-Zeilen) -> deutlich kleinere DB, schnellere
+  // Ingests und schnellere System-/Boost-Abfragen.
+  const partialIndexMigration = 1002;
+  if (!database.prepare('SELECT 1 FROM schema_migrations WHERE version=?').get(partialIndexMigration)) {
+    database.exec(`
+      DROP INDEX IF EXISTS messages_system_idx;
+      CREATE INDEX IF NOT EXISTS messages_system_partial_idx ON messages(guild_id, created_at DESC) WHERE is_system = 1;
+      CREATE INDEX IF NOT EXISTS messages_boost_partial_idx ON messages(guild_id, created_at ASC) WHERE message_type = 8;
+    `);
+    database.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)').run(partialIndexMigration, nowIso());
+  }
+  // Migration 1003: Vollständigkeits-Flag je Mitglied. Vorberechnete Werte
+  // gelten erst nach einem kompletten Recompute als vollständige Historie,
+  // sonst meldet ein frisch erzeugter Stat-Eintrag fälschlich „1 Nachricht“,
+  // obwohl historische Nachrichten nie nachgezogen wurden.
+  const backfillFlagMigration = 1003;
+  if (!database.prepare('SELECT 1 FROM schema_migrations WHERE version=?').get(backfillFlagMigration)) {
+    const memberStatsColumns = database.prepare('PRAGMA table_info(member_stats)').all().map((column) => column.name);
+    if (!memberStatsColumns.includes('backfill_complete')) {
+      database.exec('ALTER TABLE member_stats ADD COLUMN backfill_complete INTEGER NOT NULL DEFAULT 0');
+    }
+    database.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)').run(backfillFlagMigration, nowIso());
+  }
+  // Migration 1004: Alle Katalog-System-message_types zuverlässig auf
+  // is_system=1 heben – auch Altbestand, der vor 1001 ohne systemEvent in
+  // record_json geschrieben wurde. Danach läuft die Systemabfrage NUR über den
+  // schmalen partiellen System-Index (kein breiter message_type-IN-Fallback,
+  // der SQLite auf den vollen Guild-Index zwingt).
+  const systemFlagMigration = 1004;
+  if (!database.prepare('SELECT 1 FROM schema_migrations WHERE version=?').get(systemFlagMigration)) {
+    database.exec(`UPDATE messages SET is_system=1, updated_at='${nowIso()}' WHERE message_type IN (${SYSTEM_MESSAGE_TYPES_SQL})`);
+    database.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)').run(systemFlagMigration, nowIso());
+  }
   bindLifecycle();
   return database;
 };
@@ -404,11 +593,118 @@ const toDatabaseRow = (record) => {
     channel_name: record.channelName || '', parent_channel_id: record.parentChannelId || null,
     is_thread: record.thread ? 1 : 0, author_id: record.authorId || '', author_name: record.authorName || '',
     author_bot: record.authorBot ? 1 : 0, message_type: Number(record.type || 0),
-    is_system: record.system ? 1 : 0, system_event: record.systemEvent || null,
+    is_system: (record.system || SYSTEM_EVENT_NAMES.has(Number(record.type || 0))) ? 1 : 0, system_event: record.systemEvent || null,
     created_at: record.createdAt, edited_at: record.editedAt || null, content: record.content || '',
     search_text: searchableText(record), record_json: JSON.stringify(record),
     ingested_at: timestamp, updated_at: timestamp
   };
+};
+
+// Mitgliederstatistik inkrementell pflegen (gleiche Transaktion wie der
+// Message-Upsert). Neue Nachricht -> +1; Bearbeitung -> Link-/Medien-Deltas
+// korrigieren. Die Kanal-Anzahl wächst nur, wenn die Kanalzeile neu ist.
+const applyMemberStatsDelta = (record, row, exists) => {
+  if (!row.author_id) return;
+  const createdAt = row.created_at || nowIso();
+  const linkFlag = row.content.includes('://') ? 1 : 0;
+  const mediaFlag = (Array.isArray(record.attachments) && record.attachments.length > 0) ? 1 : 0;
+  let linkDelta = linkFlag;
+  let mediaDelta = mediaFlag;
+  if (exists) {
+    const previous = statements.messageLinkMediaFlags.get(record.id);
+    if (previous) {
+      linkDelta = linkFlag - Number(previous.link_flag || 0);
+      mediaDelta = mediaFlag - Number(previous.media_flag || 0);
+    }
+  }
+  const insertedChannel = statements.memberChannelInsertIgnore.run({
+    guild_id: row.guild_id, author_id: row.author_id, channel_id: row.channel_id, channel_name: row.channel_name
+  }).changes;
+  statements.memberChannelDelta.run({
+    guild_id: row.guild_id, author_id: row.author_id, channel_id: row.channel_id, channel_name: row.channel_name,
+    count_delta: exists ? 0 : 1, link_delta: linkDelta, media_delta: mediaDelta, created_at: createdAt
+  });
+  statements.memberStatsDelta.run({
+    guild_id: row.guild_id, author_id: row.author_id,
+    count_delta: exists ? 0 : 1, channel_delta: insertedChannel, link_delta: linkDelta, media_delta: mediaDelta,
+    created_at: createdAt, updated_at: row.ingested_at
+  });
+};
+
+// Vorberechnete Statistiken aus einer bereits aggregierten Zeilengruppe
+// (pro Autor: eine Zeile pro Kanal) in EINER Transaktion neu aufbauen und das
+// Mitglied als vollständig (backfill_complete=1) markieren.
+const rebuildMemberStatsFromAggregate = (guildId, authorIds, rowsByAuthor) => {
+  database.transaction(() => {
+    const insertChannel = database.prepare(`
+      INSERT INTO member_channel_stats(guild_id,author_id,channel_id,channel_name,message_count,link_count,media_count,first_message_at,last_message_at)
+      VALUES(?,?,?,?,?,?,?,?,?)
+    `);
+    const insertStats = database.prepare(`
+      INSERT INTO member_stats(guild_id,author_id,message_count,channel_count,link_count,media_count,first_message_at,last_message_at,updated_at,backfill_complete)
+      VALUES(?,?,?,?,?,?,?,?,?,1)
+    `);
+    for (const authorId of authorIds) {
+      statements.memberChannelClear.run(guildId, authorId);
+      statements.memberStatsClear.run(guildId, authorId);
+      const rows = rowsByAuthor.get(authorId) || [];
+      if (!rows.length) continue;
+      for (const row of rows) {
+        insertChannel.run(
+          guildId, authorId, String(row.channel_id || ''), String(row.channel_name || ''),
+          Number(row.message_count || 0), Number(row.link_count || 0), Number(row.media_count || 0),
+          row.first_message_at || null, row.last_message_at || null
+        );
+      }
+      insertStats.run(
+        guildId, authorId,
+        rows.reduce((sum, row) => sum + Number(row.message_count || 0), 0),
+        rows.length,
+        rows.reduce((sum, row) => sum + Number(row.link_count || 0), 0),
+        rows.reduce((sum, row) => sum + Number(row.media_count || 0), 0),
+        rows.reduce((best, row) => !best || row.first_message_at < best ? row.first_message_at : best, null),
+        rows.reduce((best, row) => !best || row.last_message_at > best ? row.last_message_at : best, null),
+        nowIso()
+      );
+    }
+  })();
+};
+
+// Statistiken eines Autors vollständig aus den messages neu aggregieren
+// (nach Löschungen und als Lazy-Backfill für Bestandsdaten).
+const recomputeMemberStats = (guildId, authorId) => {
+  const aggregate = database.prepare(`
+    SELECT channel_id, MAX(channel_name) AS channel_name, COUNT(*) AS message_count,
+           SUM(CASE WHEN content LIKE '%://%' THEN 1 ELSE 0 END) AS link_count,
+           SUM(CASE WHEN json_valid(record_json)=1 AND json_array_length(json_extract(record_json,'$.attachments'))>0 THEN 1 ELSE 0 END) AS media_count,
+           MIN(created_at) AS first_message_at, MAX(created_at) AS last_message_at
+      FROM messages WHERE guild_id=? AND author_id=?
+     GROUP BY channel_id
+  `).all(guildId, authorId);
+  rebuildMemberStatsFromAggregate(guildId, [String(authorId)], new Map([[String(authorId), aggregate]]));
+  return aggregate.length > 0;
+};
+
+// Mehrere Autoren in EINEM Scan + EINER Transaktion neu aggregieren
+// (Bulk-Löschungen statt N voller Einzelaggregationen).
+const recomputeMemberStatsBatch = (guildId, authorIds) => {
+  const ids = [...new Set(authorIds.map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!ids.length) return;
+  const aggregate = database.prepare(`
+    SELECT author_id, channel_id, MAX(channel_name) AS channel_name, COUNT(*) AS message_count,
+           SUM(CASE WHEN content LIKE '%://%' THEN 1 ELSE 0 END) AS link_count,
+           SUM(CASE WHEN json_valid(record_json)=1 AND json_array_length(json_extract(record_json,'$.attachments'))>0 THEN 1 ELSE 0 END) AS media_count,
+           MIN(created_at) AS first_message_at, MAX(created_at) AS last_message_at
+      FROM messages WHERE guild_id=? AND author_id IN (${ids.map(() => '?').join(',')})
+     GROUP BY author_id, channel_id
+  `).all(guildId, ...ids);
+  const rowsByAuthor = new Map();
+  for (const row of aggregate) {
+    const list = rowsByAuthor.get(String(row.author_id)) || [];
+    list.push(row);
+    rowsByAuthor.set(String(row.author_id), list);
+  }
+  rebuildMemberStatsFromAggregate(guildId, ids, rowsByAuthor);
 };
 
 const ingestTransaction = (records, options = {}) => {
@@ -420,6 +716,8 @@ const ingestTransaction = (records, options = {}) => {
       if (!record.id || !record.guildId || !record.channelId) continue;
       const exists = Boolean(statements.hasMessage.get(record.id));
       const row = toDatabaseRow(record);
+      // Vor dem Upsert, damit messageLinkMediaFlags die ALTE Zeile liest.
+      applyMemberStatsDelta(record, row, exists);
       statements.upsertMessage.run(row);
       statements.upsertCheckpoint.run({
         guild_id: record.guildId, channel_id: record.channelId, channel_name: record.channelName || '',
@@ -507,6 +805,7 @@ export const deleteServerIndexMessages = async ({ guildId, messageIds = [] } = {
   const result = database.transaction((targets) => {
     let deleted = 0;
     const affectedChannels = new Set();
+    const affectedAuthors = new Set();
     for (const messageId of targets) {
       const location = statements.getMessageLocation.get(messageId);
       if (!location || String(location.guild_id) !== safeGuildId) continue;
@@ -514,6 +813,7 @@ export const deleteServerIndexMessages = async ({ guildId, messageIds = [] } = {
       if (change.changes) {
         deleted += change.changes;
         affectedChannels.add(String(location.channel_id));
+        if (String(location.author_id || '')) affectedAuthors.add(String(location.author_id));
       }
     }
     for (const channelId of affectedChannels) {
@@ -536,9 +836,49 @@ export const deleteServerIndexMessages = async ({ guildId, messageIds = [] } = {
         newest?.message_id || null, aggregate?.newest_at || null, nowIso(), safeGuildId, channelId
       );
     }
+    recomputeMemberStatsBatch(safeGuildId, [...affectedAuthors]);
     return deleted;
   })(ids);
   return { deleted: result, requested: ids.length };
+};
+
+export const deleteServerIndexByAuthor = async ({ guildId, authorId } = {}) => {
+  const safeGuildId = String(guildId || '').trim();
+  const safeAuthorId = String(authorId || '').trim();
+  if (!safeGuildId || !safeAuthorId) return { deleted: 0 };
+  await flushPendingWrites();
+  initializeDatabase();
+  const result = database.transaction(() => {
+    const affectedChannels = database.prepare(
+      'SELECT DISTINCT channel_id AS id FROM messages WHERE guild_id=? AND author_id=?'
+    ).all(safeGuildId, safeAuthorId);
+    const change = database.prepare(
+      'DELETE FROM messages WHERE guild_id=? AND author_id=?'
+    ).run(safeGuildId, safeAuthorId);
+    for (const row of affectedChannels) {
+      const aggregate = database.prepare(`
+        SELECT COUNT(*) AS count,MIN(created_at) AS oldest_at,MAX(created_at) AS newest_at
+          FROM messages WHERE guild_id=? AND channel_id=?
+      `).get(safeGuildId, String(row.id));
+      const oldest = aggregate?.oldest_at
+        ? database.prepare('SELECT message_id FROM messages WHERE guild_id=? AND channel_id=? AND created_at=? ORDER BY message_id ASC LIMIT 1').get(safeGuildId, String(row.id), aggregate.oldest_at)
+        : null;
+      const newest = aggregate?.newest_at
+        ? database.prepare('SELECT message_id FROM messages WHERE guild_id=? AND channel_id=? AND created_at=? ORDER BY message_id DESC LIMIT 1').get(safeGuildId, String(row.id), aggregate.newest_at)
+        : null;
+      database.prepare(`
+        UPDATE channel_checkpoints
+           SET indexed_count=?,oldest_message_id=?,oldest_message_at=?,newest_message_id=?,newest_message_at=?,updated_at=?
+         WHERE guild_id=? AND channel_id=?
+      `).run(
+        Number(aggregate?.count || 0), oldest?.message_id || null, aggregate?.oldest_at || null,
+        newest?.message_id || null, aggregate?.newest_at || null, nowIso(), safeGuildId, String(row.id)
+      );
+    }
+    recomputeMemberStats(safeGuildId, safeAuthorId);
+    return Number(change.changes || 0);
+  })();
+  return { deleted: result };
 };
 
 export const deleteServerIndexMessage = async ({ guildId, messageId } = {}) => deleteServerIndexMessages({
@@ -720,8 +1060,7 @@ export const searchServerIndex = async ({
     };
   }).filter((row) => row.id);
   // Vollständige Mitgliederhistorien bleiben chronologisch. Normale Wissenssuchen
-  // behalten dagegen die FTS-Relevanzreihenfolge, damit das kleine Ollama-Fenster
-  // die besten Belege zuerst sieht.
+  // behalten dagegen die FTS-Relevanzreihenfolge, damit die besten Belege zuerst kommen.
   if (fullAuthorHistory) parsed.sort((left, right) => left.timestamp - right.timestamp);
   const guildState = statements.guildState.get(key);
   const scopedChannels = Array.isArray(allowedChannelIds)
@@ -768,33 +1107,66 @@ export const getServerIndexMessageContext = async ({ guildId, channelId, message
   return { before: parseRows(previous).reverse(), after: parseRows(following) };
 };
 
+// Kanalzeilen des Autors aus der Precompute-Tabelle lesen. Vorberechnete Werte
+// gelten erst als vollständige Historie, wenn backfill_complete=1 gesetzt ist
+// (kompletter Recompute über ALLE Nachrichten des Mitglieds). Fehlt das Flag,
+// wird einmalig aus den messages nachgezogen – auch wenn bereits Zeilen durch
+// neue Nachrichten entstanden sind (sonst meldet das Profil fälschlich nur die
+// neuen Nachrichten statt der gesamten Historie).
+const memberChannelRows = (guildId, authorId) => {
+  if (statements.memberBackfillComplete.get(guildId, authorId)) return statements.memberChannelList.all(guildId, authorId);
+  recomputeMemberStats(guildId, authorId);
+  return statements.memberChannelList.all(guildId, authorId);
+};
+
+const memberScopeFilter = (rows, allowedChannelIds) => {
+  const channels = [...new Set((allowedChannelIds || []).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (Array.isArray(allowedChannelIds) && !channels.length) return [];
+  return channels.length ? rows.filter((row) => channels.includes(String(row.channel_id))) : rows;
+};
+
 export const getServerIndexAuthorSummary = async ({ guildId, authorId, allowedChannelIds = [] } = {}) => {
   const database = initializeDatabase();
   await flushPendingWrites();
   const safeGuildId = String(guildId || '').trim();
   const safeAuthorId = String(authorId || '').trim();
   if (!safeGuildId || !safeAuthorId) return { count: 0, channelCount: 0, firstMessageAt: null, lastMessageAt: null };
-  const channels = [...new Set((allowedChannelIds || []).map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 800);
-  if (Array.isArray(allowedChannelIds) && !channels.length) return { count: 0, channelCount: 0, firstMessageAt: null, lastMessageAt: null };
-  const clauses = ['guild_id = ?', 'author_id = ?'];
-  const params = [safeGuildId, safeAuthorId];
-  if (channels.length) {
-    clauses.push(`channel_id IN (${channels.map(() => '?').join(', ')})`);
-    params.push(...channels);
+  const rows = memberScopeFilter(memberChannelRows(safeGuildId, safeAuthorId), allowedChannelIds);
+  let count = 0;
+  let firstMessageAt = null;
+  let lastMessageAt = null;
+  for (const row of rows) {
+    count += Number(row.message_count || 0);
+    const first = row.first_message_at;
+    const last = row.last_message_at;
+    if (first && (!firstMessageAt || first < firstMessageAt)) firstMessageAt = first;
+    if (last && (!lastMessageAt || last > lastMessageAt)) lastMessageAt = last;
   }
-  const row = database.prepare(`
-    SELECT COUNT(*) AS message_count,
-           COUNT(DISTINCT channel_id) AS channel_count,
-           MIN(created_at) AS first_message_at,
-           MAX(created_at) AS last_message_at
-      FROM messages
-     WHERE ${clauses.join(' AND ')}
-  `).get(...params);
   return {
-    count: Number(row?.message_count || 0),
-    channelCount: Number(row?.channel_count || 0),
-    firstMessageAt: row?.first_message_at || null,
-    lastMessageAt: row?.last_message_at || null
+    count,
+    channelCount: rows.length,
+    firstMessageAt,
+    lastMessageAt
+  };
+};
+
+export const getServerIndexAuthorChannelBreakdown = async ({ guildId, authorId, allowedChannelIds = [] } = {}) => {
+  const database = initializeDatabase();
+  await flushPendingWrites();
+  const safeGuildId = String(guildId || '').trim();
+  const safeAuthorId = String(authorId || '').trim();
+  if (!safeGuildId || !safeAuthorId) return { channels: [], linkCount: 0, mediaCount: 0 };
+  const rows = memberScopeFilter(memberChannelRows(safeGuildId, safeAuthorId), allowedChannelIds)
+    .sort((left, right) => Number(right.message_count || 0) - Number(left.message_count || 0));
+  return {
+    channels: rows.map((row) => ({
+      channelId: String(row.channel_id || ''),
+      channelName: String(row.channel_name || 'Kanal'),
+      count: Number(row.message_count || 0),
+      lastMessageAt: row.last_message_at || null
+    })),
+    linkCount: rows.reduce((sum, row) => sum + Number(row.link_count || 0), 0),
+    mediaCount: rows.reduce((sum, row) => sum + Number(row.media_count || 0), 0)
   };
 };
 
@@ -936,7 +1308,38 @@ export const getServerIndexUserSystemEvents = async ({ guildId, userId, limit = 
   }).filter((entry) => entry.id);
 };
 
-export const getServerIndexSystemEvents = async ({ guildId, limit = 0, retentionDays = 0 } = {}) => {
+// Gemeinsame SQL-Vorlage für die Systemereignis-Seite (auch für den
+// EXPLAIN-QUERY-PLAN-Regressionstest genutzt). UNION ALL über die zwei
+// schmalen partiellen Indizes statt eines OR: ein OR über is_system=1 und
+// message_type IN (...) würde SQLite zwingen, den vollen
+// messages_guild_created_idx über ALLE Nachrichten zu scannen. Der Fallback-
+// Zweig ist bewusst NUR message_type=8 (Boost-Index), weil Migration 1004
+// alle Katalog-Systemtypen zuverlässig auf is_system=1 gehoben hat.
+const buildSystemEventPageSql = ({ cutoff = null, categoryPredicate = '', hasCursor = false, cursorCreatedAt = null }) => {
+  const branchWhere = `
+       WHERE guild_id=?
+       ${cutoff ? 'AND created_at>=?' : ''}
+       ${categoryPredicate}
+       ${hasCursor && cursorCreatedAt ? 'AND (created_at < ? OR (created_at = ? AND message_id < ?))' : ''}`;
+  return `
+    SELECT message_id,channel_id,channel_name,author_id,author_name,message_type,system_event,created_at,record_json
+      FROM (
+        SELECT * FROM messages ${branchWhere} AND is_system=1
+        UNION ALL
+        SELECT * FROM messages ${branchWhere} AND is_system=0 AND message_type=8
+      )
+     ORDER BY created_at DESC,message_id DESC
+     LIMIT ?`;
+};
+
+export const getServerIndexSystemEvents = async ({
+  guildId,
+  limit = 0,
+  retentionDays = 0,
+  beforeCreatedAt = null,
+  beforeMessageId = null,
+  category = null
+} = {}) => {
   const database = initializeDatabase();
   await flushPendingWrites();
   const safeGuildId = String(guildId || '').trim();
@@ -948,15 +1351,19 @@ export const getServerIndexSystemEvents = async ({ guildId, limit = 0, retention
   const maximum = Number(limit) > 0
     ? Math.max(1, Math.min(100_000, Number(limit)))
     : DEFAULT_SYSTEM_EVENT_LIMIT;
-  const rows = database.prepare(`
-    SELECT message_id,channel_id,channel_name,author_id,author_name,message_type,system_event,created_at,record_json
-      FROM messages
-     WHERE guild_id=?
-       ${cutoff ? 'AND created_at>=?' : ''}
-       AND (is_system=1 OR message_type IN (${SYSTEM_MESSAGE_TYPES_SQL}))
-     ORDER BY created_at DESC,message_id DESC
-     LIMIT ?
-  `).all(safeGuildId, ...(cutoff ? [cutoff] : []), maximum);
+  // Keyset-Cursor für serverseitige Paginierung (optional).
+  const cursorAt = String(beforeCreatedAt || '').trim();
+  const cursorId = String(beforeMessageId || '').trim();
+  const hasCursor = Boolean(cursorAt || cursorId);
+  const cursorCreatedAt = cursorAt || (cursorId ? new Date(snowflakeTimestampMs(cursorId)).toISOString() : null);
+  const categoryPredicate = buildSystemCategoryPredicate(category);
+  const branchParams = [
+    safeGuildId,
+    ...(cutoff ? [cutoff] : []),
+    ...(hasCursor && cursorCreatedAt ? [cursorCreatedAt, cursorCreatedAt, cursorId] : [])
+  ];
+  const rows = database.prepare(buildSystemEventPageSql({ cutoff, categoryPredicate, hasCursor, cursorCreatedAt }))
+    .all(...branchParams, ...branchParams, maximum);
   return rows.map((row) => {
     const record = safeJson(row.record_json, {});
     const messageType = Number(record.type ?? row.message_type ?? 0);
@@ -987,6 +1394,121 @@ export const getServerIndexSystemEvents = async ({ guildId, limit = 0, retention
       }
     };
   }).filter((entry) => entry.messageId);
+};
+
+// Discord-Systemmeldungen vom Typ 8 (ein Boost pro Meldung) direkt aus der
+// SQLite-Instanz des persistenten Serverindex lesen. Seit der SQLite-Migration
+// werden die älteren JSONL-Kanaldateien nicht mehr geschrieben – dieser Pfad
+// ist die einzige zuverlässige Quelle für frische Boost-Meldungen (bekannter
+// Fehler: Bot-Neustart beim Boost → Meldungen blieben dauerhaft unentdeckt,
+// weil der Boost-Backfill nur die eingefrorenen JSONL-Dateien las).
+// Integritätsprüfung vor dem Löschen alter JSONL-Dateien: Jede Zeile mit
+// messageId muss in der SQLite-Instanz vorhanden sein, sonst wird die Datei
+// NICHT entfernt (Datenverlust-Schutz). Rückgabe: { checked, present, missing },
+// missing === -1 bedeutet "Prüfung fehlgeschlagen".
+export const verifyServerIndexJsonlMigrated = async (filePath) => {
+  initializeDatabase();
+  let checked = 0;
+  let present = 0;
+  let unparsed = 0;
+  try {
+    const stat = await fs.stat(filePath).catch(() => null);
+    if (!stat || !stat.size) return { checked: 0, present: 0, missing: 0, unparsed: 0 };
+    let batch = [];
+    const flushBatch = (rows) => {
+      if (!rows.length) return 0;
+      const clauses = rows.map(() => '(guild_id=? AND message_id=?)').join(' OR ');
+      const params = rows.flatMap(([guildId, messageId]) => [guildId, messageId]);
+      return Number(database.prepare(`SELECT COUNT(*) AS n FROM messages WHERE ${clauses}`).get(...params)?.n || 0);
+    };
+    const lines = createInterface({ input: createReadStream(filePath, { encoding: 'utf8' }), crlfDelay: Infinity });
+    for await (const line of lines) {
+      if (!String(line || '').trim()) continue;
+      const parsed = safeJson(line);
+      const messageId = String(parsed?.messageId || parsed?.id || '').trim();
+      const guildId = String(parsed?.guildId || '').trim();
+      // Nicht eindeutig prüfbare Zeilen (kaputt, ohne ID) blockieren die
+      // Löschung – kein stiller Datenverlust, auch nicht bei Einzelzeilen.
+      if (!messageId || !guildId || !/^\d{1,25}$/.test(messageId)) {
+        unparsed += 1;
+        continue;
+      }
+      batch.push([guildId, messageId]);
+      if (batch.length >= 250) {
+        present += flushBatch(batch);
+        checked += batch.length;
+        batch = [];
+      }
+    }
+    if (batch.length) {
+      present += flushBatch(batch);
+      checked += batch.length;
+    }
+    return { checked, present, missing: checked - present, unparsed };
+  } catch (error) {
+    console.error(`[serverIndex] Integritätsprüfung fehlgeschlagen für ${filePath}: ${error?.message || error}`);
+    return { checked, present, missing: -1, unparsed };
+  }
+};
+
+export const getServerIndexNativeBoostEvents = async ({
+  guildId = '',
+  channelIds = [],
+  activeUserIds = [],
+  since = 0,
+  limit = 5000
+} = {}) => {
+  const safeGuildId = String(guildId || '').trim();
+  if (!safeGuildId) return [];
+  await flushPendingWrites();
+  initializeDatabase();
+  const normalizedChannels = [...new Set((channelIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const params = [safeGuildId];
+  let channelClause = '';
+  if (normalizedChannels.length) {
+    channelClause = ` AND channel_id IN (${normalizedChannels.map(() => '?').join(',')})`;
+    params.push(...normalizedChannels);
+  }
+  const sinceValue = Number(since) || 0;
+  if (sinceValue > 0) {
+    channelClause += ' AND created_at >= ?';
+    params.push(new Date(sinceValue).toISOString());
+  }
+  const maximum = Math.min(20000, Math.max(1, Math.trunc(Number(limit) || 5000)));
+  let rows = [];
+  try {
+    rows = database.prepare(`
+      SELECT message_id, channel_id, channel_name, author_id, author_name, created_at, content, record_json
+        FROM messages
+       WHERE guild_id = ? AND message_type = 8
+         ${channelClause}
+       ORDER BY created_at ASC
+       LIMIT ?
+    `).all(...params, maximum);
+  } catch {
+    return [];
+  }
+  const active = new Set((activeUserIds || []).map((id) => String(id)));
+  return rows
+    .filter((row) => !active.size || active.has(String(row.author_id || '')))
+    .map((row) => {
+      const record = safeJson(row.record_json, {});
+      const rawContent = String(record.content || row.content || '').trim();
+      const reported = extractDiscordBoostCount(rawContent);
+      return {
+        messageId: String(row.message_id),
+        channelId: String(row.channel_id),
+        channelName: String(row.channel_name || ''),
+        userId: String(row.author_id || ''),
+        userName: String(row.author_name || ''),
+        timestamp: Date.parse(row.created_at || '') || 0,
+        discordMessageType: 8,
+        reportedCount: Number.isFinite(Number(reported)) && Number(reported) > 0
+          ? Math.min(99, Math.max(1, Math.trunc(Number(reported))))
+          : 0
+      };
+    })
+    .filter((entry) => entry.userId && entry.timestamp);
 };
 
 export const getServerKnowledgeResult = async (options = {}) => {
@@ -1142,34 +1664,94 @@ export const getServerIndexChannelMessageCount = async (guildId, channelId) => {
   return Number(statements.getCheckpoint.get(String(guildId || ''), String(channelId || ''))?.indexed_count || 0);
 };
 
-export const getServerIndexChannelPage = async ({ guildId, channelId, page = 1, pageSize = 80 } = {}) => {
+const snowflakeTimestampMs = (value) => {
+  try {
+    return Number((BigInt(String(value || '0')) >> 22n) + 1420070400000n);
+  } catch {
+    return 0;
+  }
+};
+
+export const getServerIndexChannelPage = async ({
+  guildId,
+  channelId,
+  page = 1,
+  pageSize = 80,
+  beforeMessageId = null
+} = {}) => {
   const guildKey = String(guildId || '').trim();
   const channelKey = String(channelId || '').trim();
   if (!guildKey || !channelKey) return {
-    rows: [], page: 1, pageSize: 80, totalMessages: 0, totalPages: 1, complete: false, updatedAt: null
+    rows: [], page: 1, pageSize: 80, totalMessages: 0, totalPages: 1, complete: false, updatedAt: null,
+    hasMore: false, nextBefore: null
   };
   initializeDatabase();
   await flushPendingWrites();
   const safePageSize = Math.min(100, Math.max(10, Math.trunc(Number(pageSize) || 80)));
-  const countRow = database.prepare('SELECT COUNT(*) AS total FROM messages WHERE guild_id=? AND channel_id=?').get(guildKey, channelKey);
-  const totalMessages = Number(countRow?.total || 0);
+  const checkpoint = statements.getCheckpoint.get(guildKey, channelKey);
+  // Gesamtzahl kommt aus dem Checkpoint (laufend gepflegt) statt aus einem
+  // COUNT(*) ueber den kompletten Kanalbereich der mehreren GB grossen Tabelle.
+  const totalMessages = Number(checkpoint?.indexed_count || 0)
+    || Number(database.prepare('SELECT COUNT(*) AS total FROM messages WHERE guild_id=? AND channel_id=?').get(guildKey, channelKey)?.total || 0);
   const totalPages = Math.max(1, Math.ceil(totalMessages / safePageSize));
+  const parseIndexRows = (rawRows) => rawRows
+    .map((row) => {
+      const record = safeJson(row.record_json, {});
+      return { ...record, message_id: String(row.message_id || ''), createdAt: record.createdAt || row.created_at };
+    })
+    .filter((row) => row.id);
+  // Keyset-Cursor: "aelter als diese Nachricht" - kein OFFSET, kein COUNT.
+  // Der exakte Zeitstempel kommt aus der indexierten Zeile selbst (PK-Lookup),
+  // Snowflake-Dekodierung dient nur als Fallback fuer Fremd-IDs.
+  const beforeId = String(beforeMessageId || '').trim();
+  if (beforeId) {
+    const cursorRow = database.prepare(
+      'SELECT created_at FROM messages WHERE guild_id=? AND channel_id=? AND message_id=?'
+    ).get(guildKey, channelKey, beforeId);
+    const beforeAtMs = snowflakeTimestampMs(beforeId);
+    const beforeAt = cursorRow?.created_at
+      || (beforeAtMs > 0 ? new Date(beforeAtMs).toISOString() : null);
+    if (!beforeAt) return {
+      rows: [], page: 1, pageSize: safePageSize, totalMessages, totalPages,
+      complete: Boolean(checkpoint?.scan_complete), updatedAt: checkpoint?.updated_at || null,
+      hasMore: false, nextBefore: null
+    };
+    const rawRows = database.prepare(`
+      SELECT record_json,created_at,message_id
+        FROM messages
+       WHERE guild_id=? AND channel_id=?
+         AND (created_at < ? OR (created_at = ? AND message_id < ?))
+       ORDER BY created_at DESC,message_id DESC
+       LIMIT ?
+    `).all(guildKey, channelKey, beforeAt, beforeAt, beforeId, safePageSize + 1);
+    const hasMore = rawRows.length > safePageSize;
+    const pageRows = parseIndexRows(rawRows.slice(0, safePageSize));
+    // WICHTIG: nextBefore vor dem Reverse berechnen (pageRows ist DESC sortiert,
+    // das letzte Element ist die älteste Nachricht der Seite).
+    const nextBefore = hasMore && pageRows.length ? String(pageRows[pageRows.length - 1].message_id || '') : null;
+    return {
+      rows: pageRows.reverse(),
+      page: 0,
+      pageSize: safePageSize,
+      totalMessages,
+      totalPages,
+      complete: Boolean(checkpoint?.scan_complete),
+      updatedAt: checkpoint?.updated_at || null,
+      hasMore,
+      nextBefore
+    };
+  }
   const safePage = Math.min(totalPages, Math.max(1, Math.trunc(Number(page) || 1)));
   const offset = (safePage - 1) * safePageSize;
-  const rows = database.prepare(`
-    SELECT record_json,created_at
+  const rawRows = database.prepare(`
+    SELECT record_json,created_at,message_id
       FROM messages
      WHERE guild_id=? AND channel_id=?
      ORDER BY created_at DESC,message_id DESC
      LIMIT ? OFFSET ?
-  `).all(guildKey, channelKey, safePageSize, offset)
-    .map((row) => {
-      const record = safeJson(row.record_json, {});
-      return { ...record, createdAt: record.createdAt || row.created_at };
-    })
-    .filter((row) => row.id)
-    .reverse();
-  const checkpoint = statements.getCheckpoint.get(guildKey, channelKey);
+  `).all(guildKey, channelKey, safePageSize, offset);
+  const rows = parseIndexRows(rawRows).reverse();
+  const hasMore = safePage < totalPages || !checkpoint?.scan_complete;
   return {
     rows,
     page: safePage,
@@ -1177,7 +1759,9 @@ export const getServerIndexChannelPage = async ({ guildId, channelId, page = 1, 
     totalMessages,
     totalPages,
     complete: Boolean(checkpoint?.scan_complete),
-    updatedAt: checkpoint?.updated_at || null
+    updatedAt: checkpoint?.updated_at || null,
+    hasMore,
+    nextBefore: hasMore && rows.length ? String(rows[0].message_id || '') : null
   };
 };
 
@@ -1211,4 +1795,117 @@ export const getServerIndexSnapshot = async (guildId) => {
     updatedAt: checkpoints.reduce((latest, row) => !latest || row.updated_at > latest ? row.updated_at : latest, null),
     channels, users: {}, events: {}
   };
+};
+
+// VACUUM in einem Worker-Thread: better-sqlite3 arbeitet synchron, ein großes
+// VACUUM im Haupt-Thread würde den Event-Loop blockieren und Discord-
+// Timeouts verursachen. Der Worker öffnet die Datenbank in einem eigenen
+// Thread und gibt das Ergebnis über postMessage zurück.
+const runVacuumInWorker = (workerData) => new Promise((resolve) => {
+  let settled = false;
+  const settle = (result) => {
+    if (settled) return;
+    settled = true;
+    resolve(result);
+  };
+  const code = `
+    const { parentPort, workerData } = require('node:worker_threads');
+    const Database = require(workerData.betterSqlite3Path);
+    let db;
+    try {
+      db = new Database(workerData.databaseFile, { readonly: false });
+      db.pragma('busy_timeout = 30000');
+      const started = Date.now();
+      db.exec('VACUUM');
+      const afterPageCount = Number(db.pragma('page_count', { simple: true }) || 0);
+      try { db.close(); } catch {}
+      parentPort.postMessage({ ran: true, tookMs: Date.now() - started, afterPageCount });
+    } catch (error) {
+      try { db?.close(); } catch {}
+      parentPort.postMessage({ ran: false, reason: 'error', message: String(error?.message || error) });
+    }
+  `;
+  const worker = new Worker(code, {
+    eval: true,
+    workerData: { ...workerData, betterSqlite3Path: requireFromStore.resolve('better-sqlite3') }
+  });
+  const watchdog = setTimeout(() => {
+    settle({ ran: false, reason: 'timeout' });
+    worker.terminate().catch(() => {});
+  }, 5 * 60 * 1_000);
+  worker.once('message', (result) => {
+    clearTimeout(watchdog);
+    settle(result);
+    worker.terminate().catch(() => {});
+  });
+  worker.once('error', (error) => {
+    clearTimeout(watchdog);
+    settle({ ran: false, reason: 'error', message: String(error?.message || error) });
+  });
+  worker.once('exit', () => {
+    clearTimeout(watchdog);
+    settle({ ran: false, reason: 'worker-exit' });
+  });
+});
+
+// Kontrolliertes Wartungs-VACUUM: DROP INDEX und viele Löschungen geben
+// SQLite-Seiten intern frei, verkleinern die Datei auf der Platte aber erst
+// nach einem VACUUM. Läuft throttled (max. 1×/Tag), nur ohne offene
+// Schreibstapel, NUR bei wirklich relevantem freien Speicher (freelist) und
+// in einem Worker-Thread – nie blockierend für den Event-Loop.
+export const runServerIndexVacuum = async ({ force = false } = {}) => {
+  initializeDatabase();
+  if (pendingWrites.length) return { ran: false, reason: 'writes-pending' };
+  const lastAt = Number(statements.metaGet.get('last_vacuum_at')?.value || 0);
+  if (!force && lastAt && Date.now() - lastAt < 24 * 60 * 60 * 1_000) return { ran: false, reason: 'throttled' };
+  let pageCount = 0;
+  let freelistCount = 0;
+  try {
+    pageCount = Number(database.pragma('page_count', { simple: true }) || 0);
+    freelistCount = Number(database.pragma('freelist_count', { simple: true }) || 0);
+  } catch {
+    return { ran: false, reason: 'pragma-error' };
+  }
+  const freeBytes = freelistCount * 4096;
+  const totalBytes = pageCount * 4096;
+  const freeRatio = totalBytes > 0 ? freelistCount / pageCount : 0;
+  if (!force && (freeRatio < 0.1 || freeBytes < 64 * 1024 * 1024)) {
+    return { ran: false, reason: 'not-enough-free', freeBytes, totalBytes, freeRatio };
+  }
+  const result = await runVacuumInWorker({ databaseFile: DATABASE_FILE });
+  if (result.ran) statements.metaSet.run('last_vacuum_at', String(Date.now()));
+  return { ...result, freeBytes, totalBytes, freeRatio };
+};
+
+// Test-Schnittstelle: erlaubt Smoke-Tests Zugriff auf die DB-Instanz und eine
+// Live-Referenzaggregation (ohne Precompute), um die Konsistenz zu belegen.
+export const _serverIndexInternals = {
+  getDatabase: () => initializeDatabase(),
+  // Query-Plan der ECHTEN Systemereignis-Abfrage – Regressionstest verbietet
+  // den vollen messages_guild_created_idx und verlangt beide partiellen
+  // Indizes (System + Boost).
+  explainSystemEventsQuery: (guildId, limit = 25) => {
+    initializeDatabase();
+    const sql = buildSystemEventPageSql({ cutoff: null, categoryPredicate: '', hasCursor: false, cursorCreatedAt: null });
+    const key = String(guildId || '');
+    return database.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(key, key, Math.max(1, Number(limit) || 25));
+  },
+  liveAuthorSummaryForTest: async (guildId, authorId) => {
+    initializeDatabase();
+    await flushPendingWrites();
+    const row = database.prepare(`
+      SELECT COUNT(*) AS message_count,
+             COUNT(DISTINCT channel_id) AS channel_count,
+             MIN(created_at) AS first_message_at,
+             MAX(created_at) AS last_message_at
+        FROM messages
+       WHERE guild_id=? AND author_id=?
+    `).get(String(guildId), String(authorId));
+    return {
+      count: Number(row?.message_count || 0),
+      channelCount: Number(row?.channel_count || 0),
+      firstMessageAt: row?.first_message_at || null,
+      lastMessageAt: row?.last_message_at || null
+    };
+  }
 };

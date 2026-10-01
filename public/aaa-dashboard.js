@@ -30,8 +30,6 @@
     globe: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm7.7 9h-3.9a17.8 17.8 0 0 0-.9-4.9A8 8 0 0 1 19.7 11ZM12 4.1c.7 1 1.4 2.6 1.7 4.9h-3.4c.3-2.3 1-3.9 1.7-4.9ZM4.3 13h3.9c.1 1.8.4 3.5.9 4.9A8 8 0 0 1 4.3 13Zm3.9-2H4.3a8 8 0 0 1 4.8-4.9A17.8 17.8 0 0 0 8.2 11Zm3.8 8.9c-.7-1-1.4-2.6-1.7-4.9h3.4c-.3 2.3-1 3.9-1.7 4.9Zm2-6.9h-4v-2h4v2Zm.9 4.9c.5-1.4.8-3.1.9-4.9h3.9a8 8 0 0 1-4.8 4.9Z"/></svg>',
     modules: '<svg viewBox="0 0 24 24"><path d="M12 2 9.4 8.8 2 12l7.4 3.2L12 22l2.6-6.8L22 12l-7.4-3.2L12 2Z"/></svg>',
     embed: '<svg viewBox="0 0 24 24"><path d="M4 4h16v3H4V4Zm0 5h10v11H4V9Zm12 0h4v5h-4V9Zm0 7h4v4h-4v-4Z"/></svg>',
-    ai: '<svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v2a4 4 0 0 0 3 3.9V12H7v-2a5 5 0 0 1 10 0v2h-1v4h1a4 4 0 0 0 2-7.5A7 7 0 0 0 12 3Zm-2 10h4v7h-4v-7Z"/></svg>',
-    memory: '<svg viewBox="0 0 24 24"><path d="M12 2 4.5 5.2v5.6c0 5 3.2 9.4 7.5 11.2 4.3-1.8 7.5-6.2 7.5-11.2V5.2L12 2Zm0 3.1 4.8 2v3.7c0 3.5-1.9 6.6-4.8 8.1-2.9-1.5-4.8-4.6-4.8-8.1V7.1l4.8-2Z"/></svg>',
     users: '<svg viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-6 1.8-6 4v2h12v-2c0-2.2-2.7-4-6-4Zm8.5-1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 2c-.6 0-1.2.1-1.7.2 1.3 1 2.2 2.2 2.2 3.8v1h4v-1.7c0-1.9-2-3.3-4.5-3.3Z"/></svg>',
     settings: '<svg viewBox="0 0 24 24"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.3 8.3 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8.3 8.3 0 0 0 7 6L4.6 5l-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a8.3 8.3 0 0 0 2.6 1.5L10 22h4l.4-2.5A8.3 8.3 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>',
     system: '<svg viewBox="0 0 24 24"><path d="M4 19h16v2H4V3h2v16Zm4-2V9h3v8H8Zm5 0V5h3v12h-3Zm5 0v-6h3v6h-3Z"/></svg>',
@@ -43,8 +41,6 @@
     ['overview', 'Übersicht', 'dashboard'],
     ['modules', 'Module', 'modules'],
     ['embed', 'Embed Studio', 'embed'],
-    ['ai', 'AI Center', 'ai'],
-    ['memory', 'AI Memory', 'memory'],
     ['users', 'Nutzerliste', 'users'],
     ['settings', 'Bot Settings', 'settings'],
     ['system', 'System', 'system']
@@ -200,7 +196,7 @@
       <div class="fh-side-fill"></div>
       <nav class="fh-meta">
         ${navButton('impressum', 'Impressum', 'legal', false, 'data-info="impressum"')}
-        ${navButton('privacy', 'Datenschutz', 'memory', false, 'data-info="privacy"')}
+        ${navButton('privacy', 'Datenschutz', 'legal', false, 'data-info="privacy"')}
         ${navButton('support', 'Support Discord', 'support', false, 'data-info="support"')}
       </nav>
       <div class="fh-account">
@@ -213,12 +209,10 @@
 
   const statusCards = () => {
     const botOnline = state.live?.bot?.online !== false;
-    const aiOnline = state.live?.ai?.online !== false;
     const ping = state.live?.bot?.pingMs ?? state.live?.bot?.ping;
     return [
       ['Dashboard', 'Online', 'dashboard', 'ok'],
       ['Bot-Service', botOnline ? `Online${ping != null ? ` · ${ping} ms` : ''}` : 'Offline', 'support', botOnline ? 'ok' : 'bad'],
-      ['Ollama AI', aiOnline ? (state.live?.ai?.model || 'Online') : 'Offline', 'ai', aiOnline ? 'ok' : 'bad'],
       ['Bot-Auslastung', `${bytes(state.live?.botProcess?.memoryBytes)} RAM${state.live?.botProcess?.cpuPercent != null ? ` · ${state.live.botProcess.cpuPercent}% CPU` : ''}`, 'system', 'info']
     ];
   };
@@ -268,7 +262,6 @@
                 </section>
                 <section class="fh-nav-dd-col">
                   <strong class="fh-dd-title">FALLEN HEAVEN</strong>
-                  <a href="#" role="menuitem"><i>AI</i><span><b>AI Chat</b><small>Lokale Ollama-AI mit Memory und Websuche</small></span></a>
                   <a href="#" role="menuitem"><i>EM</i><span><b>Embed Studio</b><small>Nachrichten visuell bauen und speichern</small></span></a>
                   <a href="#" role="menuitem"><i>↗</i><span><b>Dashboard</b><small>Server professionell konfigurieren</small></span></a>
                 </section>
@@ -317,7 +310,6 @@
                 </section>
                 <section class="fh-nav-dd-col">
                   <strong class="fh-dd-title">Hilfe</strong>
-                  <a href="#" role="menuitem"><i>AI</i><span><b>AI Hilfe</b><small>Ollama, Memory und Websuche prüfen</small></span></a>
                   <a href="#" role="menuitem"><i>☰</i><span><b>Support Discord</b><small>Community und direkte Hilfe</small></span></a>
                 </section>
                 <img class="fh-dd-decor" src="https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/678a4e92695af76b1f7487a3_Set%201%2015.webp" alt="">
@@ -331,7 +323,6 @@
                   <a href="#" role="menuitem"><i>✦</i><span><b>Design Notes</b><small>Dashboard, UI und UX Verbesserungen</small></span></a>
                 </section>
                 <section class="fh-nav-dd-col">
-                  <a href="#" role="menuitem"><i>AI</i><span><b>AI News</b><small>Modelle, Websuche und Sicherheit</small></span></a>
                   <a href="#" role="menuitem"><i>⚙</i><span><b>Technik</b><small>Selfhosting und Performance</small></span></a>
                 </section>
               </div>
@@ -378,7 +369,7 @@
             </div>
             <div class="fh-preview-chat">
               <div><b>Serverauswahl</b><small>Nur erlaubte Server</small></div>
-              <div><b>Module</b><small>Moderation, AI, Embeds</small></div>
+              <div><b>Module</b><small>Moderation, Embeds, Leveling</small></div>
               <div><b>Live Status</b><small>Bot, Ping und Dienste</small></div>
             </div>
             <div class="fh-preview-console">
@@ -393,7 +384,7 @@
             <div>
               <span>SERVER CONTROL</span>
               <h2>Ein Dashboard, das sich wie eine echte App anfühlt.</h2>
-              <p>Server auswählen, Module öffnen, Embeds bauen, AI verwalten und Bot-Service steuern, ohne zwischen Tools zu springen.</p>
+              <p>Server auswählen, Module öffnen, Embeds bauen und Bot-Service steuern, ohne zwischen Tools zu springen.</p>
             </div>
             <div class="fh-landing-mock">
               <b>FALLEN HEAVEN</b>
@@ -408,9 +399,9 @@
               <p>Jedes Modul bekommt eine eigene Fläche, klare Erklärungen und Info-Hover statt zusammengequetschter Einstellungen.</p>
             </div>
             <div>
-              <span>AI CENTER</span>
-              <h2>Lokale AI mit Memory, Websuche und Flood-Schutz.</h2>
-              <p>Antwortstil, Persönlichkeit, Websuche, Speicherlimits und Nutzer-Erinnerungen bleiben zentral einstellbar.</p>
+              <span>LEVELING</span>
+              <h2>XP, Levelrollen und Belohnungen automatisiert.</h2>
+              <p>Level-System, Rollen-Stufen und Belohnungen bleiben zentral einstellbar.</p>
             </div>
           </article>
 
@@ -427,7 +418,7 @@
             <div class="fh-showcase-copy">
               <span>COMMUNITY SUITE</span>
               <h2>Alles bleibt an einem Ort.</h2>
-              <p>FALLEN HEAVEN verbindet Serverauswahl, Bot-Service, Module, AI und Speicherverwaltung in einer Oberfläche.</p>
+              <p>FALLEN HEAVEN verbindet Serverauswahl, Bot-Service, Module und Speicherverwaltung in einer Oberfläche.</p>
             </div>
             <div class="fh-showcase-art">
               <img src="https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/6841ca4c5468891aedebb224_homepage-hero-mobile-858x803.webp" alt="">
@@ -437,7 +428,7 @@
 
           <section class="fh-feature-cloud">
             <article><b>Moderation</b><span>Anti-Spam, Warnungen, Filter und Logs.</span></article>
-            <article><b>AI Chat</b><span>Lokale Memory-AI mit Websuche und Schutz.</span></article>
+            <article><b>Leveling</b><span>XP, Rollen und Belohnungen automatisiert.</span></article>
             <article><b>Embeds</b><span>Templates, Vorschau, Speichern und Senden.</span></article>
             <article><b>Selfhosting</b><span>Start, Stop, Neustart und Live-Status.</span></article>
           </section>
@@ -495,8 +486,6 @@
     overview: ['#dashboard-view'],
     modules: ['#feature-grid', '#dashboard-view'],
     embed: ['#embed-form', '#embed-studio', '[data-view="embed"]'],
-    ai: ['[data-feature="aiChat"]', '[data-module="aiChat"]', '#ai-center'],
-    memory: ['#memory-list', '#ai-memory'],
     users: ['#member-list', '#user-list', '#users-view'],
     settings: ['[data-feature="botProfile"]', '[data-feature="general"]', '#settings-view'],
     system: ['#system-view', '#bot-controls']
@@ -507,8 +496,6 @@
       overview: 'overview',
       modules: 'modules',
       embed: 'embed',
-      ai: 'modules',
-      memory: 'memory',
       users: 'users',
       settings: 'modules',
       system: 'system'
@@ -655,8 +642,8 @@
 
   const infoPages = {
     impressum: ['Impressum', 'Offizielle Angaben zum Betreiber des FALLEN HEAVEN Bot Control Centers.', [['Projekt', 'FALLEN HEAVEN Discord Bot'], ['Betreiber', 'Noch nicht hinterlegt'], ['Adresse', 'Noch nicht hinterlegt'], ['Kontakt', 'Noch nicht hinterlegt']]],
-    privacy: ['Datenschutzerklärung', 'Übersicht, welche Daten Dashboard, Bot und AI Memory lokal verarbeiten.', [['Discord Login', 'Discord-ID, Name, Avatar und Serverliste'], ['Serverdaten', 'Name, ID, Icon, Rollen, Kanäle und Statistiken'], ['AI Memory', 'Lokale Erinnerungen pro Nutzer, löschbar im Dashboard'], ['Speicherort', 'Self-hosted auf diesem PC']]],
-    support: ['Support Discord', 'Support- und Diagnosebereich für Bot, Dashboard, Ollama und Rechte.', [['Support-Link', 'Noch nicht hinterlegt'], ['Dashboard lädt nicht', 'Bot-Service starten und Strg + F5 drücken'], ['AI antwortet nicht', 'Ollama und Modell im AI Center prüfen']]]
+    privacy: ['Datenschutzerklärung', 'Übersicht, welche Daten Dashboard und Bot lokal verarbeiten.', [['Discord Login', 'Discord-ID, Name, Avatar und Serverliste'], ['Serverdaten', 'Name, ID, Icon, Rollen, Kanäle und Statistiken'], ['Speicherort', 'Self-hosted auf diesem PC']]],
+    support: ['Support Discord', 'Support- und Diagnosebereich für Bot, Dashboard und Rechte.', [['Support-Link', 'Noch nicht hinterlegt'], ['Dashboard lädt nicht', 'Bot-Service starten und Strg + F5 drücken']]]
   };
 
   const openInfo = (key) => {

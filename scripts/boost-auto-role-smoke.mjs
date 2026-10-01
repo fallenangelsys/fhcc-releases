@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { Collection } from 'discord.js';
 
 process.env.BOOST_NOTIFICATION_BOT_ID = '1067880912538304583';
 process.env.BOOST_LOSS_CHANNEL_ID = '1404532593575067690';
@@ -10,9 +15,11 @@ const {
   buildBoostTopPayload,
   calculateActivityBaselineCount,
   calculateVerifiedBoostCount,
+  effectiveBoostCycleStart,
   evaluateBoostConsistency,
   filterCurrentServerBoosters,
   isActiveDiscordBooster,
+  isManualBoostCorrectionTarget,
   normalizeBoostTopConf,
   parseBoostInfoMessage,
   parseTrustedBoostLossMessage,
@@ -332,6 +339,20 @@ assert.equal(isActiveDiscordBooster(memberWithRole, { id: 'no-role-guild', roles
 // Standardaufruf ohne Guild-Parameter nutzt member.guild.
 assert.equal(isActiveDiscordBooster({ ...memberWithRole, guild: roleGuild }), true);
 assert.equal(isActiveDiscordBooster({ ...memberWithoutRole, guild: roleGuild }), false);
+
+// Die automatische Vergabe ist streng (Boosterrolle Pflicht), die manuelle
+// Basiskorrektur nicht: nach dem Boost-Ende entfernt Discord die Systemrolle
+// sofort, lässt premiumSince aber bis zu drei Tage stehen („Restboost“).
+// Genau in diesem Fenster muss der Basisstand noch korrigierbar sein, sonst
+// ist die manuelle Vergabe nach jedem Boost-Ende für Stunden blockiert.
+assert.equal(isManualBoostCorrectionTarget(memberWithRole, roleGuild), true, 'Aktiver Booster bleibt manuell korrigierbar.');
+assert.equal(isManualBoostCorrectionTarget(memberWithoutRole, roleGuild), true, 'Restboost ohne Boosterrolle bleibt manuell korrigierbar.');
+assert.equal(isManualBoostCorrectionTarget({ ...memberWithoutRole, guild: roleGuild }), true, 'Standardaufruf ohne Guild-Parameter nutzt member.guild.');
+assert.equal(isManualBoostCorrectionTarget(memberNoPremium, roleGuild), false, 'Rolle ohne premiumSince ist kein Korrekturziel.');
+const memberNoBoostRelation = { id: 'u4', premiumSinceTimestamp: 0, roles: { cache: new Map() } };
+assert.equal(isManualBoostCorrectionTarget(memberNoBoostRelation, roleGuild), false, 'Ohne jeden Boost-Bezug ist keine Korrektur möglich.');
+assert.equal(isManualBoostCorrectionTarget({ ...memberWithRole, user: { bot: true } }, roleGuild), false, 'Bots sind nie Korrekturziele.');
+assert.equal(isManualBoostCorrectionTarget(null, roleGuild), false, 'Fehlendes Mitglied ist kein Korrekturziel.');
 
 // Regression: Eine veraltete Aktivitätslisten-Zeilen-Basis darf einen neuen
 // Discord-Boost nicht doppelt zählen. Discord meldet per Systemmeldung die
@@ -742,5 +763,243 @@ const secondPass = normalizeBoostTopConf(firstPass);
 assert.equal(secondPass.enabled, true, 'bereits normalisierte Config darf enabled nicht verlieren');
 assert.equal(secondPass.channelId, 'top-chan', 'bereits normalisierte Config behält den Kanal');
 assert.equal(secondPass.pingsEnabled, false, 'bereits normalisierte Config behält Pings-Aus');
+
+// Die Oberfläche muss die manuelle Korrektur an das neue Status-Feld hängen
+// und weiterhin an den einmalig angelegten Basisstand aus der Aktivitätsliste.
+const serverManagementSource = readFileSync(new URL('../desktop/renderer/server-management.js', import.meta.url), 'utf8');
+assert.ok(serverManagementSource.includes('manuallyCorrectable'), 'Der Basis-Editor nutzt das Status-Feld manuallyCorrectable.');
+assert.ok(!serverManagementSource.includes('member.nativeActive && importedActivity'), 'Der Button „Basis bearbeiten“ ist nicht mehr an nativeActive gebunden.');
+assert.ok(serverManagementSource.includes('status.manualCorrection'), 'Der Basis-Editor liest die korrigierbare Mitgliederliste aus dem Status.');
+
+// === Regression: zweiter Boost innerhalb derselben Boost-Periode ========
+// Produktionsfall _kyiuno_ (30.09.2026 00:52 UTC): zwei Discord-Systemmeldungen
+// „hat den Server gerade geboostet!“, aber nur ein Embed mit „jetzt 1×“ und
+// nur die 1×-Rolle. Ursache: Discord setzt premiumSince bei JEDEM weiteren
+// Boost eines bereits boostenden Mitglieds auf den Zeitpunkt des letzten
+// Boosts. onGuildMemberUpdate wertete das als neue Boost-Periode, setzte den
+// Ledgerstand hart auf 1 zurück, und der Zyklusfilter löschte anschließend die
+// Systemmeldung des ersten Boosts als „alte Periode“.
+const isActiveDiscordBoosterRecord = (premiumSince, roles, guildRoles) => Boolean(premiumSince) && roles.includes(guildRoles.premiumSubscriberRole.id);
+
+// Zyklusstart = frühester bekannter Zeitpunkt der LAUFENDEN Periode.
+const periodStartCases = [
+  {
+    label: 'weiterer Boost: gespeicherter Periodenstart schlägt späteres premiumSince',
+    member: { premiumSinceTimestamp: 2000 },
+    record: { cycleStartedAt: 1000, count: 1, active: true },
+    expected: 1000
+  },
+  {
+    label: 'ohne Ledger-Eintrag zählt premiumSince',
+    member: { premiumSinceTimestamp: 2000 },
+    record: null,
+    expected: 2000
+  },
+  {
+    label: 'beendeter Boost (count 0) startet eine neue Periode',
+    member: { premiumSinceTimestamp: 2000 },
+    record: { cycleStartedAt: 1000, count: 0, active: false },
+    expected: 2000
+  },
+  {
+    label: 'neue Periode nach Neustart: späterer Ledger-Start wird nicht übernommen',
+    member: { premiumSinceTimestamp: 2000 },
+    record: { cycleStartedAt: 9000, count: 2, active: true },
+    expected: 2000
+  },
+  {
+    label: 'Boost ohne premiumSince bleibt bei 0',
+    member: { premiumSinceTimestamp: 0 },
+    record: { cycleStartedAt: 1000, count: 1, active: true },
+    expected: 1000
+  }
+];
+for (const testCase of periodStartCases) {
+  assert.equal(
+    effectiveBoostCycleStart(testCase.member, testCase.record),
+    testCase.expected,
+    `effectiveBoostCycleStart: ${testCase.label}`
+  );
+}
+
+// Replay über die echten Feature-Hooks: ein Mitglied boostet zweimal kurz
+// nacheinander. Beide Systemmeldungen müssen als zwei Boosts gezählt werden,
+// das Ledger darf die erste Systemmeldung nicht verwerfen, das zweite Embed
+// muss rausgehen und die 2×-Rolle vergeben werden.
+const replayDir = await mkdtemp(path.join(os.tmpdir(), 'fhcc-boost-replay-'));
+process.env.FALLEN_HEAVEN_DATA_DIR = replayDir;
+const { feature: boostFeature, waitForBoostRoleReconcile: waitForReplayReconcile } = await import(`../src/features/boostRoles.js?replay=${Date.now()}`);
+const replayGuildId = '999000000000000001';
+const replayUserId = '999000000000000002';
+const replaySystemRoleId = '999000000000000003';
+const replayAutomaticRole = '999000000000000004';
+const replayTier1 = '999000000000000005';
+const replayTier2 = '999000000000000006';
+const replayAnnounceChannelId = '999000000000000007';
+const replaySent = [];
+const replayRoleCalls = [];
+const replayRole = (id, position = 1) => ({ id, name: `Rolle ${id}`, managed: false, position, editable: true });
+const replayChannel = (id) => ({
+  id,
+  isTextBased: () => true,
+  async send(payload) {
+    replaySent.push(JSON.stringify(payload));
+    return { id: `replay-${replaySent.length}`, attachments: { first: () => null }, channelId: id, edit: async () => ({}) };
+  },
+  messages: { fetch: async () => null }
+});
+const replayGuild = {
+  id: replayGuildId,
+  name: 'REPLAY',
+  premiumSubscriptionCount: 2,
+  systemChannel: replayChannel(replayAnnounceChannelId),
+  roles: {
+    premiumSubscriberRole: replayRole(replaySystemRoleId, 0),
+    cache: new Collection([
+      [replaySystemRoleId, replayRole(replaySystemRoleId, 0)],
+      [replayAutomaticRole, replayRole(replayAutomaticRole, 1)],
+      [replayTier1, replayRole(replayTier1, 2)],
+      [replayTier2, replayRole(replayTier2, 3)]
+    ]),
+    async fetch() {}
+  },
+  channels: { cache: new Collection(), async fetch() { return null; } },
+  members: {
+    cache: new Collection(),
+    me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } },
+    async fetch() { return null; },
+    async fetchMe() { return replayGuild.members.me; }
+  },
+  client: { user: { id: 'replay-bot' } }
+};
+replayGuild.channels.cache.set(replayAnnounceChannelId, replayChannel(replayAnnounceChannelId));
+
+const makeReplayMember = (premiumSince, roleIds) => {
+  const ids = [...roleIds];
+  const cache = new Collection(ids.map((id) => [id, replayRole(id)]));
+  const member = {
+    id: replayUserId,
+    guild: replayGuild,
+    manageable: true,
+    user: { id: replayUserId, username: '_kyiuno_', tag: '_kyiuno_#0001', bot: false, displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png' },
+    displayName: 'k1r0x',
+    nickname: '',
+    premiumSince: premiumSince ? new Date(premiumSince) : null,
+    premiumSinceTimestamp: premiumSince,
+    roles: {
+      cache,
+      add: async (roleIdsToAdd) => {
+        for (const id of [].concat(roleIdsToAdd)) {
+          if (!ids.includes(id)) ids.push(id);
+          cache.set(id, replayRole(id));
+          replayRoleCalls.push(`+${id}`);
+        }
+        return member;
+      },
+      remove: async (roleIdsToRemove) => {
+        for (const id of [].concat(roleIdsToRemove)) {
+          const index = ids.indexOf(id);
+          if (index >= 0) ids.splice(index, 1);
+          cache.delete(id);
+          replayRoleCalls.push(`-${id}`);
+        }
+        return member;
+      }
+    }
+  };
+  member.roleIds = ids;
+  return member;
+};
+const replayConf = {
+  enabled: true,
+  automaticRoleIds: [replayAutomaticRole],
+  tierRoleMappings: [`1=${replayTier1}`, `2=${replayTier2}`],
+  cumulativeRoles: false,
+  boostAnnounceEnabled: true,
+  boostAnnounceChannelId: replayAnnounceChannelId,
+  boostAnnounceTemplate: {},
+  boostTopEnabled: false,
+  auditLogChannelId: ''
+};
+const settle = async () => { for (let i = 0; i < 12; i += 1) await new Promise((resolve) => setTimeout(resolve, 25)); };
+const replayLedger = async () => JSON.parse(await readFile(path.join(replayDir, 'boost-role-ledger.json'), 'utf8'));
+const replaySystemMessage = async (member, createdTimestamp, id) => {
+  await boostFeature.onMessageCreate({
+    message: {
+      id,
+      type: 8,
+      createdTimestamp,
+      channelId: replayAnnounceChannelId,
+      content: '',
+      embeds: [],
+      attachments: { first: () => null },
+      author: member.user,
+      member,
+      client: replayGuild.client,
+      guild: replayGuild,
+      async reply() { return null; }
+    },
+    cfg: { boostRoles: replayConf }
+  });
+  await settle();
+};
+
+const T1 = 1790729545503;
+const T2 = 1790729552700;
+const replayBefore = makeReplayMember(0, []);
+const replayAfterFirst = makeReplayMember(T1, [replaySystemRoleId]);
+const replayAfterSecond = makeReplayMember(T2, [replaySystemRoleId]);
+
+await boostFeature.onGuildMemberUpdate({ oldMember: replayBefore, newMember: replayAfterFirst, cfg: { boostRoles: replayConf } });
+await settle();
+replayGuild.members.cache.set(replayUserId, replayAfterFirst);
+await replaySystemMessage(replayAfterFirst, T1 + 656, 'replay-boost-1');
+const afterFirst = (await replayLedger()).guilds[replayGuildId].members[replayUserId];
+assert.equal(afterFirst.count, 1, 'erster Boost ergibt genau 1');
+assert.ok(replayRoleCalls.includes(`+${replayTier1}`), 'der 1×-Rolle wird beim ersten Boost vergeben');
+assert.equal(replaySent.length, 1, 'der erste Boost sendet genau ein Embed');
+
+// Der zweite Boost: Discord springt premiumSince auf den neuen Zeitpunkt.
+replayGuild.members.cache.set(replayUserId, replayAfterSecond);
+await boostFeature.onGuildMemberUpdate({ oldMember: replayAfterFirst, newMember: replayAfterSecond, cfg: { boostRoles: replayConf } });
+await settle();
+const afterCycleChange = (await replayLedger()).guilds[replayGuildId].members[replayUserId];
+assert.equal(afterCycleChange.count, 1, 'ein weiters premiumSince ist kein Rücksetzen auf eine leere Periode');
+assert.ok(
+  (afterCycleChange.evidenceMessageIds || []).includes('replay-boost-1'),
+  'die Systemmeldung des ersten Boosts bleibt als Beleg erhalten'
+);
+
+await replaySystemMessage(replayAfterSecond, T2 + 664, 'replay-boost-2');
+await settle();
+await waitForReplayReconcile(replayGuildId);
+await settle();
+const replayState = (await replayLedger()).guilds[replayGuildId];
+const replayRecord = replayState.members[replayUserId];
+const replayEvents = (replayState.events || []).filter((event) => String(event.userId) === replayUserId);
+assert.equal(replayEvents.length, 2, 'beide Systemmeldungen bleiben als Boost-Belege im Ledger');
+assert.equal(replayRecord.count, 2, 'zwei Boosts ergeben den Count 2');
+assert.equal(replayRecord.cycleStartedAt, T1, 'der Zyklusstart bleibt der Anfang der Boost-Periode');
+assert.ok(replayRoleCalls.includes(`+${replayTier2}`), 'die 2×-Rolle wird vergeben');
+assert.equal(replaySent.length, 2, 'jeder Boost sendet sein eigenes Embed');
+await rm(replayDir, { recursive: true, force: true });
+
+// Der Neuaufbau der Boost-Historie beim Start muss dieselbe Periode verwenden
+// wie der laufende Betrieb: premiumSince springt bei jedem weiteren Boost nach
+// vorn. Ohne das gespeicherte Gedächtnis würde der Start die Systemmeldung des
+// ersten Boosts wieder löschen und der Zähler auf 1 zurückspringen.
+const boostRolesSource = readFileSync(new URL('../src/features/boostRoles.js', import.meta.url), 'utf8');
+const historyRebuild = boostRolesSource.slice(boostRolesSource.indexOf('const rebuildLedgerFromHistory'));
+const previousRecordsIndex = historyRebuild.indexOf('const previousRecords = { ...(guildLedger.members || {}) }');
+const membersResetIndex = historyRebuild.indexOf('guildLedger.members = {}');
+assert.ok(previousRecordsIndex > 0 && membersResetIndex > previousRecordsIndex, 'der Neuaufbau sichert die alten Ledgerstände, BEVOR er sie neu aufbaut.');
+assert.ok(
+  historyRebuild.includes('effectiveBoostCycleStart(member, previousRecords[String(event.userId || \'\')])'),
+  'der Neuaufbau filtert Systemmeldungen mit dem gespeicherten Periodenstart, nicht mit premiumSince.'
+);
+assert.ok(
+  historyRebuild.includes('effectiveBoostCycleStart(member, previousRecords[member.id])'),
+  'der Neuaufbau zählt mit dem gespeicherten Periodenstart.'
+);
 
 console.log('Booster-Smoke-Test bestanden: Rollenstaffel, unabhängige Coin-Meilensteine, Boost-Benachrichtigung und Top-Booster-Liga sind konsistent.');

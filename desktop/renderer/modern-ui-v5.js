@@ -37,7 +37,7 @@
           <nav class="discord-guild-rail">
             <span class="discord-rail-home">${discordMark}</span><i></i>
             <span class="discord-guild active"><img src="assets/fallen-heaven-icon.png" alt=""></span>
-            <span class="discord-guild purple">FH</span><span class="discord-guild blue">AI</span><span class="discord-guild mint">+</span>
+            <span class="discord-guild purple">FH</span><span class="discord-guild blue">XP</span><span class="discord-guild mint">+</span>
           </nav>
           <aside class="discord-channel-panel">
             <header><div><b>FALLEN HEAVEN</b><small>COMMUNITY SERVER</small></div><span>⌄</span></header>

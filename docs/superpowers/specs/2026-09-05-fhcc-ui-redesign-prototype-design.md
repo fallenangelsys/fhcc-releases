@@ -113,3 +113,15 @@ Eine duenne, unterbrochene Lichtlinie verbindet aktive Navigation, aktuelle Ausw
 - Es gibt keine verschachtelten Kartenwaende, quadratischen Buchstabenbuttons oder unerklaerten Statuslichter.
 - Der Prototyp funktioniert lokal per `file:///` und ist auf Desktop sowie Mobile ohne Ueberlappungen bedienbar.
 - Screenshots und Interaktionen werden vor der Uebergabe im Browser geprueft.
+
+## Freigegebene Revision: Gothic Luxury
+
+Der erste technisch funktionierende Command-Deck-Entwurf wurde vom Nutzer optisch abgelehnt, weil er trotz neuer Informationsarchitektur noch zu nah an der bisherigen App wirkte. Die anschliessend explizit gewaehlte und freigegebene Stilrichtung ist **Gothic Luxury**.
+
+- Material: schwarzer Lack, dunkles Glas, gebuerstetes Silber und sehr sparsames Oxblood.
+- Typografie: `Bodoni MT`/Didot/Serif fuer Marke, Kapitel und bedeutende Titel; `Segoe UI` fuer Bedienung; Monospace ausschliesslich fuer Zeiten, IDs und Messwerte.
+- Komposition: kathedralartige vertikale Linien, gravierte Navigationsflaechen und scharfkantige Arbeitsebenen statt Dashboard-Karten.
+- Signatur: ein schmaler `stained-slit` aus Amethyst, Oxblood und kaltem Blau ersetzt breite Neonflaechen. Die Farben markieren Fokus, Gefahr und Systemzustand, sie dekorieren nicht beliebig.
+- Bildsprache: Das Fallen-Heaven-Motiv bleibt sichtbar und traegt die Startansicht. Schwarze Ueberlagerungen sichern Lesbarkeit, ohne das Motiv zu verstecken.
+- Zustaende: Silber strukturiert, Amethyst markiert Auswahl, Oxblood markiert kritische Eingriffe und Smaragd markiert gesunde Live-Zustaende.
+- Verboten bleiben: weiche Pillen-Navigation, Buchstaben-Kacheln, schwebende Statistik-Karten, Farb-Orbs, Bokeh und austauschbare AI-SaaS-Verlaeufe.

@@ -312,8 +312,8 @@ const requestSteamDetails = async (ids) => {
     if (!Array.isArray(rows)) throw new Error('Steam hat keine gültige Workshop-Antwort geliefert.');
     return rows;
   } catch (error) {
-    if (error?.name === 'AbortError') throw new Error('Steam hat nicht innerhalb von 20 Sekunden geantwortet.');
-    throw error;
+    if (error?.name === 'AbortError') throw new Error('Steam hat nicht innerhalb von 20 Sekunden geantwortet.', { cause: error });
+    throw new Error(error?.message || 'Steam-Anfrage fehlgeschlagen.', { cause: error });
   } finally {
     clearTimeout(timer);
   }

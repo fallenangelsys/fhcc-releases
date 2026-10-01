@@ -1,4 +1,12 @@
 const api = window.fallenHeaven;
+const STARTUP_STAGE_TIMEOUT_MS = 12_000;
+function withStartupStageTimeout(promise, stage) {
+  let timer;
+  const timeout = new Promise(function (_, reject) {
+    timer = setTimeout(function () { reject(new Error(stage + ' hat das Startzeitlimit überschritten.')); }, STARTUP_STAGE_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(function () { clearTimeout(timer); });
+}
 function readLocalJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -60,6 +68,9 @@ const state = {
   messageEmojiLoading: false,
   messageEmojiFetchedAt: 0
 };
+// Renderer-Module werden als einzelne Skripte geladen und beziehen ihren
+// gemeinsamen Zustand über globalThis. Die Referenz bleibt identisch.
+globalThis.state = state;
 window.FallenHeavenRuntime?.bindState(state);
 
 const moduleIdAliases = {
@@ -194,7 +205,6 @@ let timelineRenderSignature = '';
 const WORKSPACE_RECOVERABLE_STATUSES = [0, 429, 502, 503, 504];
 const WORKSPACE_RESTORE_TIMEOUT_MS = 18000;
 const WORKSPACE_NORMAL_TIMEOUT_MS = 30000;
-const STARTUP_STAGE_TIMEOUT_MS = 12_000;
 let workspaceRetryTimer = null;
 let workspaceRetryStartedAt = 0;
 let workspaceRetryCount = 0;
@@ -219,18 +229,6 @@ function isRecoverableWorkspaceStatus(status) {
 function setPrebootStatus(message) {
   const node = document.querySelector('.fh-preboot-state span');
   if (node) node.textContent = message;
-}
-
-function withStartupStageTimeout(promise, stage) {
-  let timer = null;
-  const timeout = new Promise(function (_resolve, reject) {
-    timer = setTimeout(function () {
-      reject(new Error(`${stage} hat zu lange gedauert.`));
-    }, STARTUP_STAGE_TIMEOUT_MS);
-  });
-  return Promise.race([Promise.resolve(promise), timeout]).finally(function () {
-    clearTimeout(timer);
-  });
 }
 
 function resetWorkspaceRetryState() {
@@ -795,7 +793,9 @@ async function refreshStatus(silent) {
   statusPollInFlight = true;
   try {
     const result = await api.controlBot('status');
-    const active = Boolean(result.active || (result.degraded && state.botOnline));
+    // `degraded` beschreibt nur einen fehlerhaften/alten Status, niemals einen
+    // laufenden Bot. Nach einem Stop muss OFFLINE deshalb sofort maßgeblich sein.
+    const active = result?.active === true && result?.ready !== false;
     setStatus(active, result.output);
     if (!silent) toast(result.output || 'Status aktualisiert.');
   } catch (error) {
@@ -1042,11 +1042,17 @@ async function loadWorkspaceData(options = {}) {
   const restoreUser = options.user || state.user;
   if (!workspaceRetryStartedAt) workspaceRetryStartedAt = Date.now();
   const results = await Promise.all([
-    apiRequestWithRetry({ path: '/api/guilds', timeoutMs: 10000 }, 6),
-    api.apiRequest({ path: '/api/dashboard/schema', timeoutMs: 8000 })
+    apiRequestWithRetry({ path: '/api/guilds', timeoutMs: 10000 }, 6).catch(function (error) {
+      console.warn('Serverliste konnte nicht geladen werden:', error);
+      return { ok: false, status: 0, data: {} };
+    }),
+    api.apiRequest({ path: '/api/dashboard/schema', timeoutMs: 8000 }).catch(function (error) {
+      console.warn('Dashboard-Schema konnte nicht geladen werden:', error);
+      return { ok: false, status: 0, data: {} };
+    })
   ]);
-  const guildResult = results[0];
-  const schemaResult = results[1];
+  const guildResult = results[0] || { ok: false, status: 0, data: {} };
+  const schemaResult = results[1] || { ok: false, status: 0, data: {} };
   if (handleExpiredSession(schemaResult)) return false;
   if (!guildResult.ok) {
     if (handleExpiredSession(guildResult)) return false;
@@ -1103,7 +1109,7 @@ async function loadWorkspaceData(options = {}) {
     return false;
   }
   resetWorkspaceRetryState();
-  state.guilds = Array.isArray(guildResult.data.guilds) ? guildResult.data.guilds : [];
+  state.guilds = Array.isArray(guildResult.data?.guilds) ? guildResult.data.guilds : [];
   const remoteFeatureCards = schemaResult.ok ? normalizeFeatureCatalog(schemaResult.data?.featureCards) : [];
   state.featureCards = remoteFeatureCards.length ? remoteFeatureCards : [];
   renderGuildPicker();
@@ -3374,6 +3380,7 @@ async function saveBotUpdatesStudioTemplate() {
 
 function renderModuleConfig(options) {
   const settings = options || {};
+  const config = state.config && typeof state.config === 'object' ? state.config : {};
   const host = document.getElementById('module-config');
   if (!host) return;
   if (state.moduleDirty && !settings.force) return;
@@ -3414,25 +3421,25 @@ function renderModuleConfig(options) {
   const fields = (feature.fields || []).filter(function (field) { return field.key !== feature.id + '.enabled'; });
   const enabled = moduleEnabled(feature.id);
   host.innerHTML = '<div class="module-config-head"><div><div class="module-config-meta"><span class="module-state ' + (enabled ? 'enabled' : '') + '"><i></i>' + (enabled ? 'AKTIV' : 'INAKTIV') + '</span><span>' + fields.length + ' Einstellungen</span></div><div class="module-config-title-row"><i class="module-config-icon">' + escapeHtml(feature.icon || 'FH') + '</i><h3>' + escapeHtml(feature.title || feature.id) + '</h3></div><p>' + escapeHtml(feature.detail || feature.description || '') + '</p></div><div class="module-config-actions"><span id="module-save-state" data-state="saved">Alle Änderungen gespeichert</span><div><button id="discard-module-fields" class="button secondary" type="button" hidden>Verwerfen</button><button id="save-module-fields" class="button primary" type="button" disabled>Änderungen speichern</button></div></div></div>' +
-    (feature.id === 'serverBackup' ? serverBackupOverview(state.config[feature.id]) : '') +
-    (feature.id === 'serverTagTracker' ? serverTagTrackerOverview(state.config[feature.id]) : '') +
-    (feature.id === 'voiceChatCleaner' ? voiceChatCleanerOverview(state.config[feature.id]) : '') +
-    (feature.id === 'voiceLogImport' ? voiceLogImportOverview(state.config[feature.id]) : '') +
-    (feature.id === 'publicCallVote' ? publicCallVoteOverview(state.config[feature.id]) : '') +
-    (feature.id === 'tempVoice' ? tempVoiceUi.overview(state.config[feature.id]) : '') +
-    (feature.id === 'forumCleaner' ? forumCleanerOverview(state.config[feature.id]) : '') +
-    (feature.id === 'steamWorkshop' ? steamWorkshopOverview(state.config[feature.id]) : '') +
-    (feature.id === 'emojiManager' ? emojiManagerOverview(state.config[feature.id]) : '') +
-    (feature.id === 'welcomeFarewell' ? welcomeFarewellOverview(state.config[feature.id]) : '') +
-    (feature.id === 'activityRace' ? activityRaceOverview(state.config[feature.id]) : '') +
-    (feature.id === 'boostRoles' ? boostAutomationOverview(state.config[feature.id]) : '') +
-    (feature.id === 'heavenEconomy' ? vipPanelsOverview(state.config[feature.id]) : '') +
-    (feature.id === 'memberVerify' ? memberVerifyOverview(state.config[feature.id]) : '') +
-    (feature.id === 'levels' ? FHCCLevelsPanel.overview(state.config[feature.id]) : '') +
-    (feature.id === 'counting' ? FHCCCountingPanel.overview(state.config[feature.id]) : '') +
-    (feature.id === 'botUpdates' ? botUpdatesOverview(state.config[feature.id]) : '') +
-    (feature.id === 'roleSaver' ? roleSaverOverview(state.config[feature.id]) : '') +
-    (feature.id === 'inactiveReminder' ? FHCCInactiveReminderPanel.overview(state.config[feature.id]) : '') +
+    (feature.id === 'serverBackup' ? serverBackupOverview(config[feature.id]) : '') +
+    (feature.id === 'serverTagTracker' ? serverTagTrackerOverview(config[feature.id]) : '') +
+    (feature.id === 'voiceChatCleaner' ? voiceChatCleanerOverview(config[feature.id]) : '') +
+    (feature.id === 'voiceLogImport' ? voiceLogImportOverview(config[feature.id]) : '') +
+    (feature.id === 'publicCallVote' ? publicCallVoteOverview(config[feature.id]) : '') +
+    (feature.id === 'tempVoice' ? tempVoiceUi.overview(config[feature.id]) : '') +
+    (feature.id === 'forumCleaner' ? forumCleanerOverview(config[feature.id]) : '') +
+    (feature.id === 'steamWorkshop' ? steamWorkshopOverview(config[feature.id]) : '') +
+    (feature.id === 'emojiManager' ? emojiManagerOverview(config[feature.id]) : '') +
+    (feature.id === 'welcomeFarewell' ? welcomeFarewellOverview(config[feature.id]) : '') +
+    (feature.id === 'activityRace' ? activityRaceOverview(config[feature.id]) : '') +
+    (feature.id === 'boostRoles' ? boostAutomationOverview(config[feature.id]) : '') +
+    (feature.id === 'heavenEconomy' ? vipPanelsOverview(config[feature.id]) : '') +
+    (feature.id === 'memberVerify' ? memberVerifyOverview(config[feature.id]) : '') +
+    (feature.id === 'levels' ? FHCCLevelsPanel.overview(config[feature.id]) : '') +
+    (feature.id === 'counting' ? FHCCCountingPanel.overview(config[feature.id]) : '') +
+    (feature.id === 'botUpdates' ? botUpdatesOverview(config[feature.id]) : '') +
+    (feature.id === 'roleSaver' ? roleSaverOverview(config[feature.id]) : '') +
+    (feature.id === 'inactiveReminder' ? FHCCInactiveReminderPanel.overview(config[feature.id]) : '') +
     (feature.id === 'customRichPresence' ? '<div id="rp-health-card" class="module-overview-card" data-rp-state="disabled"><div class="rp-health-row"><span class="rp-health-label">Bot</span><span class="rp-health-value" data-rp-bot-status>offline</span></div><div class="rp-health-row"><span class="rp-health-label">Rich Presence</span><span class="rp-health-value" data-rp-status>deaktiviert</span></div><div class="rp-health-row" data-rp-retry-row hidden><span class="rp-health-label">Nächster Versuch</span><span class="rp-health-value" data-rp-retry>–</span></div><div class="rp-health-actions"><button id="rp-reconnect-btn" class="button secondary" type="button" hidden>Neu verbinden</button></div></div>' : '') +
     (fields.length ? '<div class="module-field-grid">' + fields.map(function (field) {
       const current = getByPath(state.config, field.key);
@@ -6800,27 +6807,56 @@ async function loadUpdateCenter() {
   const state = document.getElementById('system-update-state');
   const status = document.getElementById('update-status');
   const installButton = document.getElementById('update-install');
+  const tokenHint = document.getElementById('update-token-hint');
   try {
+    // GitHub-Kanal zuerst, Update-Ordner als Rückfall.
+    const source = typeof api.getUpdateSource === 'function' ? await api.getUpdateSource() : null;
+    if (source && typeof api.testUpdateChannel === 'function' && source.repo) {
+      if (tokenHint) {
+        tokenHint.textContent = source.hasToken
+          ? 'Token hinterlegt: ' + source.tokenHint
+          : (source.encryptionAvailable
+            ? 'Kein Token hinterlegt – private Repositories sind ohne Token nicht lesbar.'
+            : 'Achtung: System kann den Token nicht verschlüsseln – dann nur der Ordner-Kanal.');
+      }
+    }
     const settings = await api.getUpdateSettings();
     updateFolderState = String(settings?.updateFolder || '');
     const folderInput = document.getElementById('update-folder');
     if (folderInput && folderInput.value !== updateFolderState) folderInput.value = updateFolderState;
-    if (!updateFolderState) {
+
+    const hasRepo = Boolean(source && source.repo);
+    if (!hasRepo && !updateFolderState) {
       if (state) { state.textContent = 'Nicht konfiguriert'; state.dataset.state = 'neutral'; }
-      if (status) status.textContent = 'Kein Update-Ordner gesetzt. Trage den Ordner ein (z. B. C:\\FHCC-Updates oder eine Netzwerkfreigabe) und speichere ihn – dort muss FHCC-Setup-<version>-x64.exe + latest.yml liegen.';
+      if (status) status.textContent = 'Kein Update-Kanal gesetzt. Trage oben ein privates Release-Repository (owner/name) ein – oder unten einen Update-Ordner als Rückfall.';
       if (installButton) installButton.disabled = true;
       return;
     }
-    const result = await api.checkUpdate();
+
+    let result = null;
+    if (hasRepo && typeof api.testUpdateChannel === 'function') {
+      result = await api.testUpdateChannel();
+    } else {
+      result = await api.checkUpdate();
+    }
+    if (result && result.ok === false && result.reason) {
+      // Kanal nicht erreichbar: klar benennen, statt "aktuell" zu melden.
+      if (state) { state.textContent = 'Kanal prüfen'; state.dataset.state = 'neutral'; }
+      if (status) status.textContent = String(result.error || 'Der Release-Kanal ist gerade nicht erreichbar.');
+      if (installButton) installButton.disabled = true;
+      return;
+    }
     if (state) {
       state.textContent = result.available ? 'Update verfügbar' : 'Aktuell';
       state.dataset.state = result.available ? 'good' : 'neutral';
     }
     if (status) {
       if (result.available) {
-        status.textContent = 'Version ' + result.version + ' ist verfügbar (' + formatUpdateSize(result.size) + (result.releaseDate ? ' · ' + new Date(result.releaseDate).toLocaleDateString('de-DE') : '') + '). Installiert ist v' + result.current + '.';
+        status.textContent = 'Version ' + result.version + ' ist verfügbar (' + formatUpdateSize(result.size) + (hasRepo ? ' · Release-Repository' : '') + '). Installiert ist v' + result.current + '.';
+      } else if (result.reason === 'no-artifact') {
+        status.textContent = 'Im Update-Ordner wurde kein FHCC-Setup-Paket gefunden. Lege das neue Paket dort ab und suche erneut.';
       } else {
-        status.textContent = result.reason === 'no-artifact' ? 'Im Update-Ordner wurde kein FHCC-Setup-Paket gefunden. Lege das neue Paket dort ab und suche erneut.' : 'Du bist auf dem neuesten Stand (v' + result.current + ').';
+        status.textContent = 'Du bist auf dem neuesten Stand (v' + result.current + ').';
       }
     }
     if (installButton) installButton.disabled = !result.available;
@@ -6829,6 +6865,72 @@ async function loadUpdateCenter() {
     if (status) status.textContent = 'Update-Prüfung fehlgeschlagen: ' + String(error?.message || error);
     if (installButton) installButton.disabled = true;
   }
+}
+
+// ---- Update-Kanal: privates GitHub-Release-Repository ----
+const updateRepoSave = document.getElementById('update-repo-save');
+if (updateRepoSave) {
+  updateRepoSave.addEventListener('click', async function () {
+    const input = document.getElementById('update-repo');
+    if (!api || typeof api.setUpdateSource !== 'function') return toast('Release-Kanal steht in dieser Version nicht zur Verfügung.', 'error');
+    const result = await api.setUpdateSource(String(input?.value || '').trim());
+    if (result && result.ok) {
+      toast('Release-Repository gespeichert: ' + result.repo, 'success');
+      void loadUpdateCenter();
+    } else {
+      toast(String(result?.error || 'Repository konnte nicht gespeichert werden.'), 'error');
+    }
+  });
+}
+const updateTokenSave = document.getElementById('update-token-save');
+if (updateTokenSave) {
+  updateTokenSave.addEventListener('click', async function () {
+    const input = document.getElementById('update-token');
+    if (!api || typeof api.setUpdateToken !== 'function') return toast('Token-Verwaltung steht in dieser Version nicht zur Verfügung.', 'error');
+    const token = String(input?.value || '').trim();
+    if (!token) return toast('Bitte zuerst ein Token eingeben.', 'error');
+    const result = await api.setUpdateToken(token);
+    if (result && result.ok) {
+      if (input) input.value = '';
+      toast('Token verschlüsselt gespeichert (' + result.hint + ').', 'success');
+      void loadUpdateCenter();
+    } else {
+      toast(String(result?.error || 'Token konnte nicht gespeichert werden.'), 'error');
+    }
+  });
+}
+const updateChannelTest = document.getElementById('update-channel-test');
+if (updateChannelTest) {
+  updateChannelTest.addEventListener('click', async function () {
+    if (!api || typeof api.testUpdateChannel !== 'function') return;
+    updateChannelTest.disabled = true;
+    updateChannelTest.textContent = 'Prüfe …';
+    try {
+      const result = await api.testUpdateChannel();
+      toast(String(result?.message || result?.error || 'Kanalprüfung ohne Ergebnis.'), result?.ok ? 'success' : 'error');
+    } catch (error) {
+      toast('Kanalprüfung fehlgeschlagen: ' + String(error?.message || error), 'error');
+    } finally {
+      updateChannelTest.disabled = false;
+      updateChannelTest.textContent = 'Verbindung testen';
+    }
+  });
+}
+// Der Token kommt nie aus dem Hauptprozess zurück – nur eine Form.
+// Fortschritt des 566-MB-Downloads sichtbar machen, sonst wirkt die App
+// während des Ladens wie abgestürzt.
+if (api && typeof api.onUpdateProgress === 'function') {
+  api.onUpdateProgress(function (payload) {
+    const status = document.getElementById('update-status');
+    if (!status || !payload) return;
+    const total = payload.total ? formatUpdateSize(payload.total) : '…';
+    status.textContent = 'Update ' + payload.version + ' wird geladen … ' + formatUpdateSize(payload.written) + ' von ' + total;
+  });
+}
+if (api && typeof api.onUpdateAvailable === 'function') {
+  api.onUpdateAvailable(function (payload) {
+    if (payload?.auto) toast('Update ' + payload.version + ' verfügbar – Installation startet.', 'info');
+  });
 }
 
 function toggleTheme() {
@@ -7530,6 +7632,7 @@ bindId('maximize', 'click', function () { api?.maximize?.(); });
 bindId('close', 'click', function () { api?.close?.(); });
 
 (async function () {
+  document.body.classList.add('auth-restoring');
   try {
     if (!api && new URLSearchParams(location.search).has('preview')) {
       document.body.classList.remove('auth-restoring');
@@ -7544,8 +7647,8 @@ bindId('close', 'click', function () { api?.close?.(); });
     setText('modern-login-version', 'v' + (info?.version || ''));
     loadStudioTemplate(studioTemplates.welcome);
     renderModules();
-    const restoredSession = await withStartupStageTimeout(refreshAuth({ startup: true }), 'Sitzungsprüfung');
     await refreshStatus(true);
+    const restoredSession = await withStartupStageTimeout(refreshAuth({ startup: true }), 'Sitzungsprüfung');
     if (restoredSession === true) setView('center');
     else if (restoredSession === 'pending') setPrebootStatus('Discord-Daten werden nach dem Neustart geprüft …');
     else document.body.classList.add('access-open');

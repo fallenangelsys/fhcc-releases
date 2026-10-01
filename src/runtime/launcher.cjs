@@ -1,4 +1,5 @@
-const { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } = require('node:fs');
+const { appendFileSync, existsSync, mkdirSync } = require('node:fs');
+const { promises: fsp } = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { installDiscordEventBridge } = require('./discord-event-bridge.cjs');
@@ -84,74 +85,136 @@ const metricsTimer = setInterval(() => {
 }, 2500);
 metricsTimer.unref();
 
-function collectFiles(root, output = []) {
-  if (!existsSync(root)) return output;
-  for (const name of readdirSync(root)) {
-    const target = path.join(root, name);
-    let stat;
-    try { stat = statSync(target); } catch { continue; }
-    if (stat.isDirectory()) collectFiles(target, output);
-    else output.push({ target, size: stat.size, modified: stat.mtimeMs });
+// Start-Hausarbeit LÄUFT ASYNCHRON: Ein synchroner Baum-Scan (z.B. über die
+// tausende JSONL-Dateien des Server-Index) würde den Event-Loop direkt nach
+// dem Start blockieren – genau dann, wenn die ersten Interaktionen eintreffen
+// und die 3-Sekunden-Bestätigung zählt („Fallen-Heaven hat nicht rechtzeitig
+// reagiert“). Alle drei Aufgaben laufen nacheinander und nie blockierend.
+const CONCURRENT_WALK_LIMIT = 16;
+
+const pathExists = async (target) => {
+  try { await fsp.access(target); return true; } catch { return false; }
+};
+
+// Sammelt Dateien eines Baums asynchron (mit begrenzter Nebenläufigkeit). Nur
+// Dateien, deren Name dem Filter entspricht, bekommen einen stat – so bleibt
+// der Scan über den großen Server-Index günstig.
+const collectFilesAsync = async (root, filter = null, output = []) => {
+  let entries;
+  try { entries = await fsp.readdir(root, { withFileTypes: true }); } catch { return output; }
+  for (let index = 0; index < entries.length; index += CONCURRENT_WALK_LIMIT) {
+    const batch = entries.slice(index, index + CONCURRENT_WALK_LIMIT);
+    const results = await Promise.all(batch.map(async (entry) => {
+      const target = path.join(root, entry.name);
+      if (entry.isDirectory()) {
+        return { dirs: [target], files: [] };
+      }
+      if (filter && !filter.test(entry.name)) return { dirs: [], files: [] };
+      try {
+        const stat = await fsp.stat(target);
+        return { dirs: [], files: [{ target, size: stat.size, modified: stat.mtimeMs }] };
+      } catch {
+        return { dirs: [], files: [] };
+      }
+    }));
+    for (const result of results) {
+      output.push(...result.files);
+      for (const dir of result.dirs) await collectFilesAsync(dir, filter, output);
+    }
   }
   return output;
-}
+};
 
-function pruneContext() {
+// Integritätsprüfung aus dem Serverindex (gleicher Prozess, gleiche
+// Modulinstanz wie der Bot): JSONL-Dateien werden nur gelöscht, wenn jede
+// Zeile nachweislich im SQLite-Index liegt und keine Zeile unlesbar ist.
+let indexIntegrityCheckPromise = null;
+const ensureIndexIntegrityCheck = () => {
+  if (!indexIntegrityCheckPromise) {
+    indexIntegrityCheckPromise = import(pathToFileURL(path.join(__dirname, '../serverIndexStore.js')).href)
+      .then((mod) => mod.verifyServerIndexJsonlMigrated)
+      .catch((error) => {
+        indexIntegrityCheckPromise = null;
+        logCrash('Integritätsprüfung', error);
+        return null;
+      });
+  }
+  return indexIntegrityCheckPromise;
+};
+
+const canDeleteFile = async (file) => {
+  if (!/\.jsonl$/i.test(file.target)) return true; // log/tmp sind regenerierbar
+  const verify = await ensureIndexIntegrityCheck();
+  if (typeof verify !== 'function') return false; // Prüfung nicht verfügbar -> NICHT löschen
+  const outcome = await verify(file.target).catch(() => null);
+  if (!outcome) return false;
+  return Number(outcome.missing || 0) === 0 && Number(outcome.unparsed || 0) === 0;
+};
+
+// Alte Kontext-Dateien (älter als 30 Tage) entfernen.
+const pruneContext = async () => {
   const retentionMs = 30 * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - retentionMs;
   const contextRoot = path.join(dataRoot, 'server-context');
-  for (const file of collectFiles(contextRoot)) {
-    if (file.modified >= cutoff || !/\.(?:jsonl|log|tmp)$/i.test(file.target)) continue;
-    try { rmSync(file.target, { force: true }); } catch {}
+  const files = await collectFilesAsync(contextRoot, /\.(?:jsonl|log|tmp)$/i);
+  for (const file of files) {
+    if (file.modified >= cutoff) continue;
+    if (!(await canDeleteFile(file))) continue;
+    try { await fsp.rm(file.target, { force: true }); } catch {}
   }
-}
+};
 
-function enforceIndexBudget() {
+// Index-Speicherlimit durchsetzen (älteste JSONL/Log-Dateien zuerst löschen).
+const enforceIndexBudget = async () => {
   const maximumBytes = 50 * 1024 * 1024 * 1024;
   const indexRoot = path.join(dataRoot, 'server-index');
-  const files = collectFiles(indexRoot)
-    .filter((file) => /\.(?:jsonl|log)$/i.test(file.target))
+  const files = (await collectFilesAsync(indexRoot, /\.(?:jsonl|log)$/i))
     .sort((left, right) => left.modified - right.modified);
   let total = files.reduce((sum, file) => sum + file.size, 0);
   for (const file of files) {
     if (total <= maximumBytes) break;
+    if (!(await canDeleteFile(file))) continue;
     try {
-      rmSync(file.target, { force: true });
+      await fsp.rm(file.target, { force: true });
       total -= file.size;
     } catch {}
   }
-}
+};
 
-function backupCriticalData() {
+// Tägliches Backup der kritischen JSON-Dateien (ohne Index/Kontext/AI-Speicher).
+const backupCriticalData = async () => {
   const backupRoot = path.join(runtimeRoot, 'backups');
   const day = new Date().toISOString().slice(0, 10);
   const targetRoot = path.join(backupRoot, day);
-  if (existsSync(targetRoot)) return;
-  mkdirSync(targetRoot, { recursive: true });
+  if (await pathExists(targetRoot)) return;
+  await fsp.mkdir(targetRoot, { recursive: true });
   const excluded = /[\\/](?:server-index|server-context|ai-memory|backups)[\\/]/i;
-  for (const file of collectFiles(dataRoot)) {
-    if (excluded.test(file.target) || !/\.json$/i.test(file.target) || file.size > 20 * 1024 * 1024) continue;
+  const files = await collectFilesAsync(dataRoot, /\.json$/i);
+  for (const file of files) {
+    if (excluded.test(file.target) || file.size > 20 * 1024 * 1024) continue;
     const relative = path.relative(dataRoot, file.target);
     const destination = path.join(targetRoot, relative);
     try {
-      mkdirSync(path.dirname(destination), { recursive: true });
-      copyFileSync(file.target, destination);
+      await fsp.mkdir(path.dirname(destination), { recursive: true });
+      await fsp.copyFile(file.target, destination);
     } catch {}
   }
-  const backups = readdirSync(backupRoot, { withFileTypes: true })
+  const backups = (await fsp.readdir(backupRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name))
     .map((entry) => entry.name)
     .sort();
   while (backups.length > 14) {
     const oldest = backups.shift();
-    try { rmSync(path.join(backupRoot, oldest), { recursive: true, force: true }); } catch {}
+    try { await fsp.rm(path.join(backupRoot, oldest), { recursive: true, force: true }); } catch {}
   }
-}
+};
 
 setTimeout(() => {
-  try { pruneContext(); } catch (error) { logCrash('Context-Bereinigung', error); }
-  try { enforceIndexBudget(); } catch (error) { logCrash('Index-Speicherlimit', error); }
-  try { backupCriticalData(); } catch (error) { logCrash('Datensicherung', error); }
+  void (async () => {
+    try { await pruneContext(); } catch (error) { logCrash('Context-Bereinigung', error); }
+    try { await enforceIndexBudget(); } catch (error) { logCrash('Index-Speicherlimit', error); }
+    try { await backupCriticalData(); } catch (error) { logCrash('Datensicherung', error); }
+  })();
 }, 1500).unref();
 
 const entry = process.env.FALLEN_HEAVEN_BOT_ENTRY;

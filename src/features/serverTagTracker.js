@@ -52,8 +52,8 @@ export const normalizeServerTagTrackerConfig = (conf = {}) => {
     roleIds,
     roleId: roleIds[0] || '',
     scanIntervalMinutes: Math.trunc(clampNumber(conf?.scanIntervalMinutes, 30, 5, 1440)),
-    assignmentConfirmations: Math.trunc(clampNumber(conf?.assignmentConfirmations, 2, 2, 5)),
-    removalConfirmations: Math.trunc(clampNumber(conf?.removalConfirmations, 2, 2, 5)),
+    assignmentConfirmations: Math.trunc(clampNumber(conf?.assignmentConfirmations, 1, 1, 5)),
+    removalConfirmations: Math.trunc(clampNumber(conf?.removalConfirmations, 1, 1, 5)),
     maxAssignmentsPerScan: Math.trunc(clampNumber(conf?.maxAssignmentsPerScan, 10, 1, 100)),
     startupScan: conf?.startupScan !== false,
     excludeBots: conf?.excludeBots !== false,
@@ -64,26 +64,29 @@ export const normalizeServerTagTrackerConfig = (conf = {}) => {
 
 export const evaluateServerTagState = (user, guildId) => {
   if (!user || !Object.prototype.hasOwnProperty.call(user, 'primaryGuild')) {
-    return { state: 'unknown', reason: 'primary-guild-unavailable', tag: '', identityGuildId: '' };
+    return { state: 'unknown', reason: 'primary-guild-unavailable', tag: '', badge: '', identityGuildId: '' };
   }
 
   const primaryGuild = user.primaryGuild;
   if (!primaryGuild) {
-    return { state: 'not-wearing', reason: 'no-primary-guild', tag: '', identityGuildId: '' };
+    return { state: 'not-wearing', reason: 'no-primary-guild', tag: '', badge: '', identityGuildId: '' };
   }
 
   const identityGuildId = String(primaryGuild.identityGuildId || '').trim();
   const tag = String(primaryGuild.tag || '').trim();
-  if (primaryGuild.identityEnabled === true && identityGuildId === String(guildId || '') && tag) {
-    return { state: 'wearing', reason: 'matching-primary-guild', tag, identityGuildId };
-  }
-  if (primaryGuild.identityEnabled === true && identityGuildId === String(guildId || '') && !tag) {
-    return { state: 'unknown', reason: 'matching-primary-guild-incomplete', tag: '', identityGuildId };
+  const badge = String(primaryGuild.badge || '').trim();
+  if (primaryGuild.identityEnabled === true && identityGuildId === String(guildId || '')) {
+    // Discord meldet „Identität aktiv + Primärserver ist dieser Server“ – damit
+    // ist der Tag nachweislich getragen, auch wenn das tag-Feld in dieser
+    // Antwort leer geblieben ist (unvollständige API-Antworten sind häufig).
+    return { state: 'wearing', reason: tag ? 'matching-primary-guild' : 'matching-primary-guild-tag-unreported', tag, badge, identityGuildId };
   }
   if (primaryGuild.identityEnabled === false || primaryGuild.identityEnabled === null || identityGuildId) {
-    return { state: 'not-wearing', reason: identityGuildId ? 'different-or-disabled-primary-guild' : 'primary-guild-disabled', tag, identityGuildId };
+    return { state: 'not-wearing', reason: identityGuildId ? 'different-or-disabled-primary-guild' : 'primary-guild-disabled', tag, badge, identityGuildId };
   }
-  return { state: 'unknown', reason: 'primary-guild-incomplete', tag, identityGuildId };
+  // Ein vorhandenes, aber leeres Primärserver-Profil (keine Identitäts-Server-ID,
+  // kein Tag) ist eindeutig „trägt nicht“ – kein Grund, das Mitglied als unklar zu führen.
+  return { state: 'not-wearing', reason: 'empty-primary-guild', tag, badge, identityGuildId };
 };
 
 const selectInitialObservation = ({ authoritativeUser = null, memberUser = null, guildId = '' } = {}) => {
@@ -98,14 +101,14 @@ export const calculateServerTagDecision = ({
   previousPositiveConfirmations = 0,
   previousMisses = 0,
   hasRole = false,
-  assignmentConfirmations = 2,
-  removalConfirmations = 2,
+  assignmentConfirmations = 1,
+  removalConfirmations = 1,
   authoritativeEvent = false,
   allowPositiveIncrement = true,
   allowMissIncrement = true
 }) => {
-  const requiredPositives = authoritativeEvent ? 1 : Math.trunc(clampNumber(assignmentConfirmations, 2, 2, 5));
-  const requiredMisses = authoritativeEvent ? 1 : Math.trunc(clampNumber(removalConfirmations, 2, 2, 5));
+  const requiredPositives = authoritativeEvent ? 1 : Math.trunc(clampNumber(assignmentConfirmations, 1, 1, 5));
+  const requiredMisses = authoritativeEvent ? 1 : Math.trunc(clampNumber(removalConfirmations, 1, 1, 5));
   if (state === 'wearing') {
     const currentPositives = Math.max(0, Number(previousPositiveConfirmations || 0));
     const nextPositiveConfirmations = Math.min(requiredPositives, currentPositives + (allowPositiveIncrement ? 1 : 0));
@@ -231,7 +234,29 @@ const memberIsExcluded = (member, conf) => Boolean(
 const fetchFreshUser = async (member) => {
   const userId = String(member?.id || member?.user?.id || '');
   if (!userId || !member?.client?.users?.fetch) throw new Error('Discord-Benutzerprofil kann nicht frisch geladen werden.');
-  return member.client.users.fetch(userId, { cache: true, force: true });
+  const user = await member.client.users.fetch(userId, { cache: true, force: true });
+  if (!user) throw new Error('Discord-Benutzerprofil konnte nicht geladen werden.');
+  // Der normale Benutzer-Endpoint liefert für fremde Nutzer kein primary_guild.
+  // Der Profil-Endpoint (GET /users/{id}/profile) enthält user_profile.primary_guild
+  // mit dem echten Server-Tag – best effort, mit sauberem Fallback auf die
+  // Gateway-/Cache-Daten, falls der Endpoint nicht erreichbar ist.
+  try {
+    const profile = await member.client.rest.get(`/users/${userId}/profile`);
+    const primary = profile?.user_profile?.primary_guild;
+    if (primary && typeof primary === 'object') {
+      return Object.assign(user, {
+        primaryGuild: {
+          identityGuildId: String(primary.identity_guild_id || ''),
+          identityEnabled: primary.identity_enabled === true,
+          tag: String(primary.tag || '').trim(),
+          badge: String(primary.badge || '').trim()
+        }
+      });
+    }
+  } catch (_profileError) {
+    // Profil-Endpoint nicht verfügbar (fehlender Scope/Rechte) – Fallback unten.
+  }
+  return user;
 };
 
 const resolveServerTagAvatar = (member, options = { size: 64 }) => {
@@ -255,12 +280,21 @@ const resolveServerTagAvatar = (member, options = { size: 64 }) => {
   return user.defaultAvatarURL || '';
 };
 
+const resolveServerTagBadgeUrl = (identityGuildId, badge) => {
+  const guildId = String(identityGuildId || '').trim();
+  const hash = String(badge || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!guildId || !hash) return '';
+  return `https://cdn.discordapp.com/guild-tag-badges/${guildId}/${hash}.png?size=64`;
+};
+
 const describeMember = (member, observation) => ({
   userId: String(member?.id || member?.user?.id || ''),
   username: String(member?.user?.username || ''),
   displayName: String(member?.displayName || member?.user?.globalName || member?.user?.username || member?.id || 'Mitglied'),
   avatarUrl: resolveServerTagAvatar(member, { size: 64 }),
   tag: String(observation?.tag || ''),
+  badge: String(observation?.badge || ''),
+  badgeUrl: resolveServerTagBadgeUrl(observation?.identityGuildId, observation?.badge),
   identityGuildId: String(observation?.identityGuildId || '')
 });
 
@@ -273,7 +307,7 @@ const sendTrackerLog = async (guild, conf, event) => {
   const updated = event.action === 'roles-updated';
   const embed = new EmbedBuilder()
     .setColor(added || updated ? 0x57f287 : event.action === 'role-removed' ? 0xed4245 : 0xffbd59)
-    .setTitle(added ? 'Server-Tag-Rollen vergeben' : updated ? 'Server-Tag-Rollen aktualisiert' : event.action === 'role-removed' ? 'Server-Tag-Rollen entfernt' : 'Server-Tag-Prüfung benötigt Aufmerksamkeit')
+    .setTitle(added ? 'Server-Tag-Rollen vergeben' : updated ? 'Server-Tag-Rollen aktualisiert' : event.action === 'role-removed' ? 'Server-Tag-Rollen entfernt' : 'Server-Tag-Rollenfehler')
     .setDescription(`**${event.displayName || event.userId}** (${event.userId})`)
     .addFields(
       { name: 'Ergebnis', value: event.detail || event.action, inline: false },
@@ -365,6 +399,7 @@ const reconcileMember = async ({
   let profileFresh = false;
   let profileFetchError = '';
   const needsFreshProfile = observation.state === 'wearing'
+    || observation.state === 'unknown'
     || hasAnyManagedRole
     || previous.state === 'wearing'
     || Number(previous.positiveConfirmations || 0) > 0
@@ -378,7 +413,7 @@ const reconcileMember = async ({
       profileFresh = true;
     } catch (caught) {
       profileFetchError = String(caught?.message || caught || 'Discord-Profil konnte nicht geladen werden.').slice(0, 300);
-      observation = { state: 'unknown', reason: 'fresh-profile-fetch-failed', tag: '', identityGuildId: '' };
+      observation = { state: 'unknown', reason: 'fresh-profile-fetch-failed', tag: '', badge: '', identityGuildId: '' };
     }
   }
 
@@ -448,7 +483,7 @@ const reconcileMember = async ({
           deferred = true;
           if (mutationBudget) mutationBudget.deferredAssignments += 1;
         } else {
-          if (missingConfiguredRoles.length) member = await applyRoleChangesSequentially({ member, toAdd: missingConfiguredRoles, reason: 'Server-Tag-Tracker: mehrfach bestätigter Server-Tag aktiv' });
+          if (missingConfiguredRoles.length) member = await applyRoleChangesSequentially({ member, toAdd: missingConfiguredRoles, reason: 'Server-Tag-Tracker: Server-Tag aktiv' });
           if (mutationBudget) mutationBudget.remainingAssignments -= 1;
           action = 'role-added';
         }
@@ -529,7 +564,7 @@ const reconcileMember = async ({
         : action === 'roles-updated'
           ? 'Der verwaltete Server-Tag-Rollensatz wurde aktualisiert.'
         : action === 'role-removed'
-          ? `Server-Tag war in ${conf.removalConfirmations} Prüfungen nicht aktiv; verwaltete Rollen wurden entfernt.`
+          ? 'Server-Tag ist nicht aktiv; verwaltete Rollen wurden entfernt.'
           : 'Keine Rollenänderung.')
     };
     rememberHistory(guildEntry, historyEvent);
@@ -552,7 +587,7 @@ const performGuildReconcile = async ({ guild, conf, source = 'manual', actorId =
     running: true,
     phase: 'fetching',
     source,
-    detail: 'Discord-Mitglieder und Server-Tags werden aktualisiert.'
+    detail: 'Discord-Mitglieder und Server-Tags werden abgeglichen.'
   };
   runtimeStatus.set(guild.id, status);
   const guildEntry = ensureGuildLedger(guild.id);
@@ -576,7 +611,7 @@ const performGuildReconcile = async ({ guild, conf, source = 'manual', actorId =
   };
   status.total = members.length;
   status.phase = 'checking';
-  status.detail = `${members.length.toLocaleString('de-DE')} Mitglieder werden geprüft.`;
+  status.detail = `${members.length.toLocaleString('de-DE')} Mitglieder werden abgeglichen.`;
 
   const currentIds = new Set(members.map((member) => String(member.id)));
   for (const [userId, memberEntry] of Object.entries(guildEntry.members)) {
@@ -606,7 +641,7 @@ const performGuildReconcile = async ({ guild, conf, source = 'manual', actorId =
     if (result.deferred) status.deferredAssignments += 1;
     if (result.error) status.errors += 1;
     status.progress = status.total ? Math.round(((index + 1) / status.total) * 100) : 100;
-    status.detail = `${index + 1} von ${status.total} Mitgliedern geprüft.`;
+    status.detail = `${index + 1} von ${status.total} Mitgliedern abgeglichen.`;
     if ((index + 1) % 25 === 0) await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
@@ -635,10 +670,10 @@ const performGuildReconcile = async ({ guild, conf, source = 'manual', actorId =
   status.detail = status.errors
     ? `Abgleich beendet: ${status.errors} Rollenfehler benötigen Aufmerksamkeit.`
     : conf.monitorOnly
-      ? `Prüfmodus beendet: ${status.wearing} bestätigt, ${status.candidates} offen, ${status.previewAdds} Vergaben und ${status.previewRemovals} Entzüge vorgemerkt.`
+      ? `Vorschau beendet: ${status.wearing} tragen den Tag, ${status.notWearing} tragen ihn nicht, ${status.unknown} ohne Discord-Daten.`
     : status.deferredAssignments
-      ? `Abgleich beendet: ${status.wearing} bestätigte Träger, ${status.deferredAssignments} Vergaben durch das Sicherheitslimit zurückgestellt.`
-      : `Abgleich beendet: ${status.wearing} bestätigt, ${status.candidates} warten auf eine zweite frische Prüfung.`;
+      ? `Abgleich beendet: ${status.wearing} tragen den Tag, ${status.deferredAssignments} Vergaben durch das Massenlimit zurückgestellt.`
+      : `Abgleich beendet: ${status.wearing} tragen den Tag, ${status.notWearing} tragen ihn nicht, ${status.unknown} ohne Discord-Daten.`;
   await persistLedger();
   return { ...status, queued: false };
 };
@@ -715,19 +750,22 @@ const scheduleTracker = (guild, cfg, { immediate = false } = {}) => {
     timeoutMs: 15 * 60_000
   }).catch((error) => console.warn(`[serverTagTracker] Abgleich für ${guild.name} fehlgeschlagen: ${error?.message || error}`));
 
-  const intervalMs = conf.scanIntervalMinutes * 60_000;
-  status.nextScanAt = new Date(Date.now() + intervalMs).toISOString();
-  if (immediate || conf.startupScan) {
-    const timer = setTimeout(() => void run(immediate ? 'configUpdate' : 'startupScan'), immediate ? 1_500 : 20_000);
+  // KEIN periodischer Scan (vorher alle scanIntervalMinutes, Standard 30 Min):
+  // Der Tracker arbeitet jetzt rein EVENT-basiert (Mitglied macht Tag dran/ab
+  // → onGuildMemberUpdate/onGuildMemberAdd/onUserUpdate) und per MANUELLEM
+  // Abgleich über den Dashboard-Button. So wird der vollständige
+  // Mitglieder-Fetch (Gateway-Opcode 8, Rate-Limit-Kandidat) nur noch dann
+  // ausgelöst, wenn der Nutzer es wirklich will – keine automatischen
+  // Voll-Scans mehr, die mit anderen Hintergrund-Scans kollidieren.
+  status.nextScanAt = null;
+  if (immediate) {
+    // Einziger automatischer Nachzug: eine direkte Konfig-Änderung des Moduls
+    // (Nutzeraktion) wird einmalig angewendet, damit neue Rollen-Einstellungen
+    // sofort greifen. Start-Scans und Periodik gibt es nicht mehr.
+    const timer = setTimeout(() => void run('configUpdate'), 1_500);
     timer.unref?.();
     startupTimers.set(guild.id, timer);
   }
-  const periodic = setInterval(() => {
-    status.nextScanAt = new Date(Date.now() + intervalMs).toISOString();
-    void run('periodicScan');
-  }, intervalMs);
-  periodic.unref?.();
-  periodicTimers.set(guild.id, periodic);
 };
 
 const updateSingleMember = async ({ guild, member, cfg, source, authoritativeEvent = false, authoritativeUser = null }) => {
@@ -769,9 +807,8 @@ export const getServerTagTrackerSnapshot = async (guildId) => {
     .filter((entry) => !entry.departed)
     .map((entry) => ({
       ...entry,
-      confirmed: entry.state === 'wearing'
-        ? Boolean(entry.profileFresh === true && Number(entry.positiveConfirmations || 0) >= 2 && entry.confirmed)
-        : Boolean(entry.confirmed)
+      badgeUrl: String(entry.badgeUrl || resolveServerTagBadgeUrl(entry.identityGuildId, entry.badge) || ''),
+      confirmed: Boolean(entry.confirmed)
     }))
     .sort((left, right) => {
       const order = { wearing: 0, unknown: 1, 'not-wearing': 2 };

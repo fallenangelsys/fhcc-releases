@@ -1,5 +1,4 @@
 import path from 'node:path';
-import process from 'node:process';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -14,8 +13,9 @@ import {
 } from 'discord.js';
 
 import { atomicWriteJson, readJsonWithRecovery } from '../runtime/atomicJsonStore.js';
+import { DATA_DIR } from '../shared/paths.js';
 
-const DATA_ROOT = process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_ROOT = DATA_DIR;
 const TICKET_FILE = path.join(DATA_ROOT, 'tickets.json');
 const panelLocks = new Map();
 let mutationQueue = Promise.resolve();
@@ -77,6 +77,7 @@ const settings = (cfg) => {
     oneOpenPerUser: conf.oneOpenPerUser !== false,
     closeArchive: conf.closeArchive !== false,
     closeMessage: String(conf.closeMessage || 'Das Ticket wurde geschlossen.').slice(0, 1000),
+    closeButtonLabel: String(conf.closeButtonLabel || 'Ticket schließen').trim().slice(0, 80),
     logChannelId: String(conf.logChannelId || '').trim()
   };
 };
@@ -136,8 +137,8 @@ const findOpenTicket = async (guildId, userId, guild) => {
   return null;
 };
 
-const ticketCloseComponents = () => [new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('fh_ticket:close').setLabel('Ticket schließen').setEmoji('🔒').setStyle(ButtonStyle.Danger)
+const ticketCloseComponents = (conf = {}) => [new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('fh_ticket:close').setLabel(String(conf?.closeButtonLabel || 'Ticket schließen').trim().slice(0, 80)).setEmoji('🔒').setStyle(ButtonStyle.Danger)
 )];
 const supportRole = (guild, conf) => conf.supportRoleId ? guild.roles.cache.get(conf.supportRoleId) || null : null;
 
@@ -234,7 +235,7 @@ const createTicket = async (interaction, cfg) => {
       { name: 'Erstellt von', value: `${interaction.user}`, inline: true },
       { name: 'Status', value: 'Offen', inline: true }
     ).setFooter({ text: 'Nutze die Schaltfläche zum sicheren Schließen.' }).setTimestamp();
-    await channel.send({ content: `${interaction.user}${conf.supportRoleId ? ` · <@&${conf.supportRoleId}>` : ''}`, embeds: [embed], components: ticketCloseComponents(), allowedMentions: { users: [interaction.user.id], roles: conf.supportRoleId ? [conf.supportRoleId] : [] } });
+    await channel.send({ content: `${interaction.user}${conf.supportRoleId ? ` · <@&${conf.supportRoleId}>` : ''}`, embeds: [embed], components: ticketCloseComponents(conf), allowedMentions: { users: [interaction.user.id], roles: conf.supportRoleId ? [conf.supportRoleId] : [] } });
     await logTicket(interaction.guild, conf, 'Ticket geöffnet', record);
     await interaction.editReply({ content: `Dein Ticket wurde erstellt: ${channel}` });
   } catch (error) {

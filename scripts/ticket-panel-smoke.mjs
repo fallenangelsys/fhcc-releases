@@ -13,10 +13,11 @@ assert.equal(_ticketInternals.safeChannelName(''), 'ticket');
 const defaults = defaultGuildConfig('guild-ticket', 'Ticket-Test');
 assert.equal(defaults.tickets.useThreadMode, false, 'Private Ticket-Kanäle müssen der zuverlässige Standard sein.');
 assert.equal(defaults.tickets.oneOpenPerUser, true);
-const cfg = normalizeConfig({ guildId: 'guild-ticket', tickets: { panelTitle: ' '.repeat(2), panelButtonLabel: 'Öffnen', oneOpenPerUser: false } });
+const cfg = normalizeConfig({ guildId: 'guild-ticket', tickets: { panelTitle: ' '.repeat(2), panelButtonLabel: 'Öffnen', oneOpenPerUser: false, closeButtonLabel: 'Schließen' } });
 assert.equal(cfg.tickets.panelTitle, defaults.tickets.panelTitle);
 assert.equal(cfg.tickets.panelButtonLabel, 'Öffnen');
 assert.equal(cfg.tickets.oneOpenPerUser, false);
+assert.equal(cfg.tickets.closeButtonLabel, 'Schließen', 'Schließen-Button-Label editierbar');
 
 const card = featureCards.find((entry) => entry.id === 'tickets');
 for (const [key, type] of [

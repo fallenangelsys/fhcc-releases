@@ -21,7 +21,7 @@ const roleIdsFromValue = (value) => {
       continue;
     }
     const text = String(entry || '').trim();
-    const mapped = text.match(/(?:^|[:|=,;\s])(\d{15,22})(?:$|[:|=,;\s])/u)?.[1] || (/^\d{15,22}$/u.test(text) ? text : '');
+    const mapped = text.match(/(?:^|[:|=,;>\s])(\d{15,22})(?:$|[:|=,;>\s])/u)?.[1] || (/^\d{15,22}$/u.test(text) ? text : '');
     if (mapped) ids.push(mapped);
   }
   return [...new Set(ids)];
@@ -43,16 +43,13 @@ const inspectConfiguredRequirements = (featureId, section, issues) => {
     case 'welcomeFarewell':
       requireSetting(issues, section, 'welcomeChannelId', 'Für aktive Begrüßungen fehlt der Welcome-Kanal.', section.welcomeEnabled === true);
       requireSetting(issues, section, 'verificationRoleId', 'Für die Begrüßung nach Verifizierung fehlt die Unverified-Rolle.', section.welcomeEnabled === true && section.welcomeAfterVerification === true);
+      requireSetting(issues, section, 'verificationRoleId', 'Für Rollen nach Verifizierung fehlt die Unverified-Rolle.', section.postVerificationRolesEnabled === true);
+      requireSetting(issues, section, 'postVerificationRoleIds', 'Wähle mindestens eine Rolle für verifizierte Mitglieder aus.', section.postVerificationRolesEnabled === true);
       requireSetting(issues, section, 'farewellChannelId', 'Für aktive Verabschiedungen fehlt der Farewell-Kanal.', section.farewellEnabled === true);
       requireSetting(issues, section, 'autoRoleName', 'Für die aktive Beitrittsrolle wurde keine Rolle ausgewählt.', section.autoRoleEnabled === true);
       break;
     case 'autoresponder':
       requireSetting(issues, section, 'rules', 'Mindestens eine Antwortregel ist erforderlich.');
-      break;
-    case 'aiChat':
-      requireSetting(issues, section, 'channelId', 'Der AI-Chat-Kanal fehlt.');
-      requireSetting(issues, section, 'model', 'Das Ollama-Modell fehlt.');
-      requireSetting(issues, section, 'ollamaUrl', 'Die lokale Ollama-Adresse fehlt.');
       break;
     case 'tickets':
       requireSetting(issues, section, 'panelChannelId', 'Der Kanal für das Ticket-Panel fehlt.');
@@ -81,6 +78,13 @@ const inspectConfiguredRequirements = (featureId, section, issues) => {
     case 'voiceChatCleaner':
       requireSetting(issues, section, 'voiceChannelIds', 'Wähle mindestens einen Voice- oder Stage-Kanal aus.');
       if (section.dryRun === true) issues.push(issue('info', 'safe-mode', 'Der Prüfmodus ist aktiv: Chatnachrichten werden nur gezählt.', 'dryRun'));
+      break;
+    case 'publicCallVote':
+      if (!hasValue(section.callChannelIds) && !hasValue(section.callChannelIds2) && !hasValue(section.callChannelIds3)) {
+        issues.push(issue('error', 'missing-setting', 'Wähle mindestens einen öffentlichen Voice-Call aus (2er, 3er oder weitere).', 'callChannelIds2'));
+      }
+      if (!hasValue(section.teamChannelId)) issues.push(issue('warning', 'recommended-setting', 'Ohne Team-Kanal werden Rauswürfe nicht an das Team gemeldet.', 'teamChannelId'));
+      if (!hasValue(section.teamRoleIds)) issues.push(issue('warning', 'recommended-setting', 'Ohne Team-Rollen wird das Team bei Rauswürfen nicht per Ping informiert.', 'teamRoleIds'));
       break;
     case 'autoRole':
       requireSetting(issues, section, 'roleIds', 'Wähle mindestens eine Beitrittsrolle aus.');
@@ -136,6 +140,11 @@ const permissionRequirements = (featureId, section) => {
     if (section.pinPosts === true) requirements.push(['manageThreads', 'Dem Bot fehlt „Threads verwalten“ zum Anpinnen der Workshop-Posts.']);
   }
   if (featureId === 'voiceChatCleaner' && section.dryRun !== true) requirements.push(['manageMessages', 'Dem Bot fehlt „Nachrichten verwalten“ für die Voice-Chat-Bereinigung.']);
+  if (featureId === 'publicCallVote') {
+    requirements.push(['sendMessages', 'Dem Bot fehlt „Nachrichten senden“ für die Moderations-Panels.']);
+    requirements.push(['moveMembers', 'Dem Bot fehlt „Mitglieder verschieben“ für Rauswürfe aus Calls.']);
+    requirements.push(['manageChannels', 'Dem Bot fehlt „Kanäle verwalten“ für Call-Sperren.']);
+  }
   if (featureId === 'emojiManager') requirements.push(['manageExpressions', 'Dem Bot fehlt „Ausdrücke verwalten“ für Emoji-Änderungen.']);
   if (featureId === 'tickets') {
     requirements.push(section.useThreadMode === true
@@ -172,7 +181,7 @@ export const createModuleReadinessSnapshot = ({
       const type = String(field.type || '').toLocaleLowerCase('de-DE');
       const localKey = String(field.key || '').startsWith(`${featureId}.`) ? String(field.key).slice(featureId.length + 1) : field.key;
       const value = getByPath(section, localKey);
-      if (type === 'roleselect' || type === 'multiroleselect' || type === 'rolemappingselect') {
+      if (type === 'roleselect' || type === 'multiroleselect' || type === 'rolemappingselect' || type === 'roleswapselect') {
         roleIdsFromValue(value).forEach((id) => configuredRoleIds.add(id));
       }
       if (type === 'channelselect' || type === 'multichannelselect') {

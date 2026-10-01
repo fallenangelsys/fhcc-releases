@@ -7,10 +7,40 @@ import { Collection } from 'discord.js';
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'fh-heaven-economy-'));
 process.env.FALLEN_HEAVEN_DATA_DIR = temporaryRoot;
 
+const { defaultGuildConfig, normalizeConfig } = await import(`../src/defaultConfig.js?smoke=${Date.now()}`);
+
 const {
   getHeavenEconomyAdminSnapshot,
-  updateHeavenEconomyAccount
+  updateHeavenEconomyAccount,
+  buildHeavenEconomyComponents
 } = await import(`../src/features/heavenEconomy.js?smoke=${Date.now()}`);
+
+// Panel-Buttons editierbar (3.9.222-Prinzip).
+{
+  const custom = buildHeavenEconomyComponents({ heavenEconomy: {
+    accountButtonLabel: 'Mein Konto', shopButtonLabel: 'Shop', giftButtonLabel: 'Schenken',
+    coinGiftButtonLabel: 'Coins schenken',
+    buyButtonLabel: 'Coins holen', progressButtonLabel: 'Boost', adminButtonLabel: 'Admin'
+  } }).map((row) => row.components.map((b) => b.data.label));
+  assert.deepEqual(custom, [['Mein Konto', 'Shop', 'Schenken', 'Coins schenken'], ['Coins holen', 'Boost', 'Admin']], 'VIP-Panel-Buttons editierbar');
+  const defaults = buildHeavenEconomyComponents({ heavenEconomy: {} }).map((row) => row.components.map((b) => b.data.label));
+  assert.deepEqual(defaults, [['Mein Konto', 'VIP-Shop', 'VIP verschenken', 'Coins verschenken'], ['Coins kaufen', 'Boost-Fortschritt', 'Coin-Verwaltung']], 'VIP-Panel-Buttons Defaults stabil');
+  const disabled = buildHeavenEconomyComponents({ heavenEconomy: { coinGiftsEnabled: false } })
+    .flatMap((row) => row.components.map((button) => button.data.custom_id));
+  assert.equal(disabled.includes('fh_coin:coin-gift'), false, 'deaktivierte Coin-Geschenke verschwinden vollstaendig');
+  assert.equal(disabled.includes('fh_coin:perks'), false, 'VIP-Vorteile ist kein separater Button mehr');
+  console.log('  ✅ VIP-Panel: sieben Buttons, kein Vorteile-Button, deaktivierte Funktionen verschwinden');
+}
+
+const defaultEconomy = defaultGuildConfig('111111111111111111', 'FALLEN HEAVEN').heavenEconomy;
+assert.equal(defaultEconomy.panelTemplate.embeds.length, 1, 'Economy besitzt eine editierbare Panelvorlage');
+assert.ok(defaultEconomy.panelTemplate.embeds[0].title.includes('VIP'), 'Standardvorlage ist das VIP-Vorteile-Embed');
+const normalizedPanelEmbeds = normalizeConfig({ heavenEconomy: { panelTemplate: { embeds: Array.from({ length: 12 }, (_, index) => ({ title: `Embed ${index + 1}` })) } } }).heavenEconomy.panelTemplate.embeds;
+assert.equal(normalizedPanelEmbeds.length, 10, 'Guild-Config bewahrt bis zu zehn Economy-Embeds');
+assert.equal(normalizedPanelEmbeds[9].title, 'Embed 10');
+const normalizedGiftLimits = normalizeConfig({ heavenEconomy: { coinGiftMinAmount: 500, coinGiftMaxAmount: 100 } }).heavenEconomy;
+assert.equal(normalizedGiftLimits.coinGiftMinAmount, 500);
+assert.equal(normalizedGiftLimits.coinGiftMaxAmount, 500, 'Hoechstbetrag kann nie kleiner als der Mindestbetrag sein');
 
 const userId = '123456789012345678';
 const departedUserId = '333333333333333333';
@@ -79,7 +109,7 @@ const cfg = {
 const initial = await getHeavenEconomyAdminSnapshot({ guild, cfg });
 assert(requestedAvatarOptions.some((options) => options.size === 128), 'VIP-Kontoliste muss ein scharfes 128-px-Avatar anfordern.');
 assert(requestedAvatarOptions.every((options) => [16, 32, 64, 128, 256, 512, 1024, 2048, 4096].includes(options.size)), 'VIP-Panel darf nur von Discord.js unterstützte Avatargrößen anfordern.');
-assert.equal(initial.schemaVersion, 2);
+assert.equal(initial.schemaVersion, 3);
 assert.equal(initial.rows.length, 1);
 assert.equal(initial.rows[0].account.balance, 0);
 assert.equal(initial.rows[0].vip, null);
@@ -170,10 +200,9 @@ assert.equal(finalSnapshot.rows[0].account.revision, 2);
 assert.equal(finalSnapshot.rows[0].vip, null);
 
 const stored = JSON.parse(await fs.readFile(path.join(temporaryRoot, 'heaven-economy.json'), 'utf8'));
-assert.equal(stored.version, 2);
+assert.equal(stored.version, 3);
 assert.equal(stored.guilds[guild.id].accounts[userId].balance, 500);
 assert.equal(stored.guilds[guild.id].accounts[departedUserId].balance, 100, 'Historische Kontodaten bleiben für einen Wiedereintritt erhalten.');
-await fs.access(path.join(temporaryRoot, 'heaven-economy.json.bak'));
 
 await fs.rm(temporaryRoot, { recursive: true, force: true });
 console.log('Heaven-Economy-Smoke-Test bestanden: VIP, Coins, Boost-Meilensteine, Audit und Revisionsschutz sind konsistent.');

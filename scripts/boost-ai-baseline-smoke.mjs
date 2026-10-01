@@ -72,7 +72,7 @@ assert.equal(result.active, true);
 assert.equal(result.count, 2, 'Die persönliche AI-Antwort muss den in der App bestätigten Wert verwenden.');
 assert.equal(result.confirmedInApp, true);
 assert.equal(result.confirmedBaselineCount, 2);
-assert.equal(result.globalConsistencyState, 'mismatch', 'Der Test muss absichtlich eine globale Abweichung enthalten.');
+assert.equal(result.globalConsistencyState, 'discord-pending', 'Absichtliche globale Abweichung (assigned < discord) gilt als erwartbarer Restboost, nicht als Mismatch.');
 
 await fs.rm(dataDir, { recursive: true, force: true });
 console.log('Boost-AI-Baseline-Smoke: App-Basisstand bleibt trotz globaler Discord-Abweichung persönlich abrufbar.');

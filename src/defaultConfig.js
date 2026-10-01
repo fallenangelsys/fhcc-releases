@@ -1,4 +1,4 @@
-﻿export const featureCards = [
+export const featureCards = [
   {
     id: 'botProfile',
     title: 'Bot Profil & Branding',
@@ -42,6 +42,26 @@
       { key: 'customRichPresence.button2Label', label: 'Knopf 2 Text', type: 'text', placeholder: 'guns.lol', info: 'Text für den zweiten Rich-Presence-Button.' },
       { key: 'customRichPresence.button2Url', label: 'Knopf 2 URL', type: 'text', placeholder: 'https://guns.lol/0xvoidsoul', info: 'URL für Knopf 2.' },
       { key: 'customRichPresence.updateIntervalSeconds', label: 'Update Intervall Sekunden', type: 'number', min: 15, max: 300, info: 'Wie oft die Presence maximal aktualisiert wird. Zusätzlich wird nur bei Änderung gesendet.' }
+    ]
+  },
+  {
+    id: 'instantBanWords',
+    title: 'Instant Wort-Ban',
+    description: 'Sofort-Bann bei verbotenen Begriffen',
+    detail: 'Wenn ein Mitglied einen konfigurierten Begriff schreibt, wird es sofort vom Server gebannt. Ideal zum Schutz persönlicher Daten wie echter Namen.',
+    icon: '🚫',
+    fields: [
+      { key: 'instantBanWords.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Schaltet die automatische Überwachung auf verbotene Begriffe ein.' },
+      { key: 'instantBanWords.words', label: 'Verbotene Begriffe', type: 'arrayLines', placeholder: 'Begriff pro Zeile\n(z.B. echte Namen)', info: 'Liste der Wörter, die ein sofortiger Bann auslösen. Ein Treffer reicht – keine Warnung, kein Timeout, direkter Bann.' },
+      { key: 'instantBanWords.caseInsensitive', label: 'Groß-/Kleinschreibung ignorieren', type: 'checkbox', info: 'Wenn aktiv, wird unabhängig von Groß- und Kleinschreibung geprüft. Standard: aktiv.' },
+      { key: 'instantBanWords.logChannelId', label: 'Log-Kanal', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Hier erscheint ein Embed mit Details zum Bann (User, Begriff, Nachricht).' },
+      { key: 'instantBanWords.autoModLogChannelId', label: 'AutoMod-Log-Kanal', type: 'channelSelect', placeholder: 'AutoMod-Log-Kanal auswählen ...', info: 'Der Kanal in dem Discord AutoMod seine Warnungs-/Block-Nachrichten postet. Der Bot liest diese Nachrichten als zusätzliche Erkennungsquelle – falls das AutoMod-Event nicht oder zu spät kommt.' },
+      { key: 'instantBanWords.deleteMessage', label: 'Nachricht nach Bann löschen', type: 'checkbox', info: 'Löscht die auslösende Nachricht nach dem Bann. Standard: aktiv.' },
+      { key: 'instantBanWords.banReason', label: 'Bann-Grund', type: 'text', placeholder: 'Verbotener Begriff verwendet: {word}', info: 'Text für den Discord-Bann-Grund. Platzhalter: {user}, {word}, {server}.' },
+      { key: 'instantBanWords.logEmbed.title', label: 'Log · Titel', type: 'text', placeholder: 'Instant Bann', info: 'Titel des Embeds im Log-Kanal.' },
+      { key: 'instantBanWords.logEmbed.description', label: 'Log · Beschreibung', type: 'textarea', rows: 3, placeholder: '', info: 'Platzhalter: {user}, {word}, {server}, {reason}, {deletedMessages}. {deletedMessages} zeigt die Anzahl gelöschter Nachrichten der letzten 7 Tage.' },
+      { key: 'instantBanWords.logEmbed.color', label: 'Log · Farbe', type: 'text', placeholder: '#ff4444', info: 'Hex-Farbe für das Log-Embed.' },
+      { key: 'instantBanWords.logEmbed.footer', label: 'Log · Footer', type: 'text', placeholder: '', info: 'Footer-Text des Log-Embeds.' }
     ]
   },
   {
@@ -121,6 +141,8 @@
       { key: 'welcomeFarewell.welcomeEnabled', label: 'Welcome aktiv', type: 'checkbox', info: 'Sendet eine Begrüßung, wenn ein neues Mitglied beitritt.' },
       { key: 'welcomeFarewell.welcomeAfterVerification', label: 'Erst nach Verifizierung begrüßen', type: 'checkbox', info: 'Wartet mit der Begrüßung, bis die ausgewählte Unverified-Rolle tatsächlich entfernt wurde. Ideal für externe Verify-Bots wie GalaxyBot.' },
       { key: 'welcomeFarewell.verificationRoleId', label: 'Unverified-Rolle', type: 'roleSelect', placeholder: 'Unverified-Rolle auswählen ...', info: 'Die Begrüßung wird exakt beim Entfernen dieser Rolle gesendet. Die Rolle kann direkt aus der aktuellen Discord-Rollenliste gewählt werden.' },
+      { key: 'welcomeFarewell.postVerificationRolesEnabled', label: 'Rollen nach Verifizierung aktiv', type: 'checkbox', info: 'Vergibt die ausgewählten Basisrollen, sobald die Unverified-Rolle entfernt wurde. Funktioniert unabhängig von der Welcome-Nachricht.' },
+      { key: 'welcomeFarewell.postVerificationRoleIds', label: 'Rollen nach Verifizierung', type: 'multiRoleSelect', info: 'Wähle alle Rollen, die ein verifiziertes Mitglied gleichzeitig erhalten soll. Beim Bot-Start werden während Offline-Zeiten verpasste Vergaben effizient nachgetragen.' },
       { key: 'welcomeFarewell.welcomeChannelId', label: 'Welcome-Kanal', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Wähle den Kanal aus, in den Begrüßungen gesendet werden.' },
       { key: 'welcomeFarewell.welcomeMessage', label: 'Welcome Text', type: 'text', placeholder: 'Willkommen {user} auf {guild}!', info: 'Text der Begrüßung. {user} und {username} pingen den User, {guild} schreibt den Servernamen.' },
       { key: 'welcomeFarewell.farewellEnabled', label: 'Farewell aktiv', type: 'checkbox', info: 'Sendet eine Nachricht, wenn ein Mitglied den Server verlässt.' },
@@ -149,131 +171,40 @@
     ]
   },
   {
-    id: 'aiChat',
-    title: 'AI Chat',
-    description: 'Lokaler Ollama-Chat mit Memory',
-    detail: 'Verbindet Discord mit deinem lokalen Ollama-Modell. Der Bot antwortet nur im gewählten Kanal, startet per /start ai-chat und speichert lokale Erinnerungen pro Person mit einem 50-GB-Softlimit.',
-    icon: '🧠',
-    fields: [
-      { key: 'aiChat.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Schaltet den lokalen AI Chat ein oder aus. Ohne aktives Modul reagiert der Bot nie auf AI-Nachrichten.' },
-      { key: 'aiChat.channelId', label: 'AI Chat Kanal', type: 'channelSelect', placeholder: 'Kanal auswählen...', info: 'Nur in diesem Kanal darf die AI schreiben. Danach dort /start ai-chat ausführen.' },
-      { key: 'aiChat.model', label: 'Ollama Modell', type: 'text', placeholder: 'qwen2.5:7b', info: 'Name des lokal installierten Ollama-Modells. Für dich ist qwen2.5:7b als Standard optimiert.' },
-      { key: 'aiChat.ollamaUrl', label: 'Ollama URL', type: 'text', placeholder: 'http://127.0.0.1:11434', info: 'Lokale Ollama-API. Standard ist http://127.0.0.1:11434.' },
-      { key: 'aiChat.requireStart', label: '/start ai-chat erforderlich', type: 'checkbox', info: 'Wenn aktiv, startet der Bot erst nach /start ai-chat im eingestellten Kanal. Das verhindert versehentliches Antworten.' },
-      { key: 'aiChat.memoryEnabled', label: 'Lokale Erinnerung aktiv', type: 'checkbox', info: 'Speichert Gesprächsnotizen, Fakten und Verlauf lokal auf deinem PC, damit der Bot Personen wiedererkennt.' },
-      { key: 'aiChat.rememberUserFacts', label: 'Einzelne User merken', type: 'checkbox', info: 'Speichert Fakten getrennt pro Discord-User. Jeder User bekommt eine eigene Datei, keine große Mischdatei.' },
-      { key: 'aiChat.autoCleanChannel', label: 'AI-Kanal automatisch leeren', type: 'checkbox', info: 'Entfernt nach längerer Inaktivität nur die sichtbaren Discord-Nachrichten. Lokale AI-Erinnerungen und der Serverindex bleiben erhalten.' },
-      { key: 'aiChat.channelIdleMinutes', label: 'Leeren nach Inaktivität (Minuten)', type: 'number', min: 15, max: 10080, step: 15, info: 'Standard sind 60 Minuten. Der Bot wartet immer bis die Unterhaltung wirklich inaktiv ist und löscht niemals mitten im Gespräch.' },
-      { key: 'aiChat.keepPinnedMessages', label: 'Angepinnte Nachrichten behalten', type: 'checkbox', info: 'Angepinnte Regeln, Hinweise oder Startinformationen werden beim automatischen Aufräumen nicht gelöscht.' },
-      { key: 'aiChat.welcomeEmbedEnabled', label: 'Info-Embed im Kanal', type: 'checkbox', info: 'Zeigt im AI-Chat-Kanal eine erste Nachricht, die erklärt, was man die AI fragen kann. Design, Text und Farbe bearbeitest du wie bei anderen Vorlagen im Embed Studio. Dieses Embed wird beim automatischen Aufräumen niemals gelöscht und bei Bedarf neu erstellt.' },
-      { key: 'aiChat.memoryScope', label: 'Memory Modus', type: 'select', options: [
-        { value: 'user-channel', label: 'User + Kanal' },
-        { value: 'user', label: 'Nur User' },
-        { value: 'channel', label: 'Nur Kanal' },
-        { value: 'none', label: 'Kein Verlauf' }
-      ], info: 'User + Kanal ist am intelligentesten: Persönliche Erinnerung bleibt pro Person getrennt, der aktuelle Kanal-Kontext bleibt trotzdem verständlich.' },
-      { key: 'aiChat.replyMode', label: 'Antwortmodus', type: 'select', options: [
-        { value: 'channel', label: 'Alle Nachrichten im AI-Kanal' },
-        { value: 'mention', label: 'Nur bei Ping' },
-        { value: 'reply', label: 'Nur bei Antwort auf Bot' },
-        { value: 'mention-reply', label: 'Ping oder Antwort' }
-      ], info: 'Alle Nachrichten braucht in Discord das Message Content Intent. Wenn das nicht aktiv ist, nutze Ping oder Antwort auf Bot.' },
-      { key: 'aiChat.memoryLimitGb', label: 'Speicherlimit GB', type: 'number', min: 1, step: 1, info: 'Softlimit für lokale AI-Daten. Bei 50 GB darf der Bot bis zu 50 GB nutzen und räumt danach alte Archive auf.' },
-      { key: 'aiChat.maxHistoryMessages', label: 'Kontext Nachrichten', type: 'number', min: 6, step: 1, info: 'Wie viele letzte Nachrichten an Ollama mitgegeben werden. Mehr Kontext ist klüger, aber langsamer.' },
-      { key: 'aiChat.maxUserFacts', label: 'Fakten pro User', type: 'number', min: 10, step: 5, info: 'Wie viele feste Erinnerungen pro Person maximal gespeichert werden.' },
-      { key: 'aiChat.temperature', label: 'Kreativität', type: 'number', min: 0, step: 0.1, info: '0 ist sehr nüchtern, 0.7 ist natürlich, 1.2+ ist kreativer und chaotischer.' },
-      { key: 'aiChat.contextTokens', label: 'Kontext-Tokens', type: 'number', min: 8192, max: 32768, step: 1024, info: 'Mindestens 8.192 Tokens reservieren genug Platz für App-Daten, Gesprächskontext und eine vollständige Antwort. Größere Werte benötigen mehr RAM/VRAM.' },
-      { key: 'aiChat.maxResponseChars', label: 'Maximale Antwortzeichen', type: 'number', min: 400, max: 2000, step: 100, info: 'Discord erlaubt 2.000 Zeichen pro Nachricht. Die AI darf diesen Rahmen nutzen, plant ihre Antwort aber so, dass sie vollständig und nicht mitten im Satz endet.' },
-      { key: 'aiChat.strictSafetyEnabled', label: 'Strikte Sicherheitsgrenzen', type: 'checkbox', info: 'AI darf keine Rollen, Rechte, Bans, Kicks, Mutes oder Admin-Aktionen ausführen oder versprechen.' },
-      { key: 'aiChat.promptInjectionProtection', label: 'Jailbreak-Schutz', type: 'checkbox', info: 'Blockiert Versuche, Systemregeln zu ignorieren, Prompts offenzulegen oder die AI in einen ungeschützten Modus zu zwingen.' },
-      { key: 'aiChat.protectPrivateData', label: 'Private Daten schützen', type: 'checkbox', info: 'Verhindert die Ausgabe von Tokens, API-Schlüsseln, Konfigurationen, internen Pfaden und Erinnerungen anderer Nutzer.' },
-      { key: 'aiChat.blockInsults', label: 'Beleidigungen blocken', type: 'checkbox', info: 'AI spielt bei Beleidigungen nicht mit und setzt kurz Grenzen.' },
-      { key: 'aiChat.blockPrivilegedActions', label: 'Admin-Aktionen blocken', type: 'checkbox', info: 'Fragen nach Rollen, Rechten, Bans, Kicks oder Mutes werden direkt abgelehnt.' },
-      { key: 'aiChat.onlyMeaningfulQuestions', label: 'Nur sinnvolle Fragen beantworten', type: 'checkbox', info: 'AI reagiert nur auf echte Fragen, Bitten, Ping oder Antworten auf den Bot. Normales Chat-Rauschen wird ignoriert.' },
-      { key: 'aiChat.floodProtectionEnabled', label: 'Anti-Flood Schutz', type: 'checkbox', info: 'Schützt die lokale AI vor Spam, Massenanfragen und mehrfachen gleichen Nachrichten.' },
-      { key: 'aiChat.userCooldownSeconds', label: 'User Cooldown Sekunden', type: 'number', min: 0, max: 120, info: 'Wie lange ein einzelner User warten muss, bevor er erneut eine AI-Antwort auslösen kann.' },
-      { key: 'aiChat.channelCooldownSeconds', label: 'Kanal Cooldown Sekunden', type: 'number', min: 0, max: 60, info: 'Mindestabstand zwischen zwei AI-Antworten im selben Kanal.' },
-      { key: 'aiChat.maxUserMessagesPerMinute', label: 'Max User-Anfragen pro Minute', type: 'number', min: 1, max: 60, info: 'Harte Grenze gegen einzelne User, die die AI überfluten.' },
-      { key: 'aiChat.maxChannelMessagesPerMinute', label: 'Max Kanal-Anfragen pro Minute', type: 'number', min: 1, max: 180, info: 'Harte Grenze gegen Kanal-Spam und Raid-artige AI-Anfragen.' },
-      { key: 'aiChat.duplicateWindowSeconds', label: 'Duplicate Schutz Sekunden', type: 'number', min: 5, max: 300, info: 'Gleiche Nachricht vom selben User wird in diesem Zeitraum ignoriert.' },
-      { key: 'aiChat.webSearchEnabled', label: 'Websuche aktiv', type: 'checkbox', info: 'Erlaubt der AI Web-Kurzsuche nur bei klarer Anfrage nach aktuellen Infos, Quellen oder Internet-Suche.' },
-      { key: 'aiChat.webSearchMode', label: 'Websuche-Intelligenz', type: 'select', options: [
-          { value: 'smart', label: 'Smart: Faktenfragen' },
-          { value: 'all-facts', label: 'Alle Faktenfragen' },
-          { value: 'off', label: 'Nur lokal' }
-        ], info: 'Smart sucht bei Faktenfragen und zwingend bei aktuellen Themen. Begrüßungen, Smalltalk, Witze, Rechnen und kreative Aufgaben bleiben lokal und schnell.' },
-      { key: 'aiChat.webSearchCooldownSeconds', label: 'Websuche Cooldown Sekunden', type: 'number', min: 5, max: 300, info: 'Schützt vor zu vielen Websuchen pro User.' },
-      { key: 'aiChat.webSearchMaxResults', label: 'Web-Treffer', type: 'number', min: 3, max: 10, info: 'Wie viele echte Suchtreffer als Belege geprüft werden. Fünf ist schnell und zuverlässig.' },
-      { key: 'aiChat.webFetchPages', label: 'Quellen vollständig lesen', type: 'number', min: 0, max: 3, info: 'Liest parallel bis zu drei Treffer genauer. Zwei bietet einen guten Mix aus Qualität und Geschwindigkeit.' },
-      { key: 'aiChat.webSearchTimeoutSeconds', label: 'Websuche Timeout', type: 'number', min: 5, max: 30, info: 'Bricht eine hängende Recherche kontrolliert ab, statt den gesamten AI-Chat zu blockieren.' },
-      { key: 'aiChat.showWebSources', label: 'Quellen unter Antwort', type: 'checkbox', info: 'Hängt nur tatsächlich verwendete Links unter recherchierte Antworten. Smalltalk bleibt ohne Quellenzeile.' },
-      { key: 'aiChat.serverKnowledgeEnabled', label: 'Live-Serverwissen', type: 'checkbox', info: 'Beantwortet Fragen zu Mitgliedern, Beitritten, Boosts, Rollen, Events und Orientierung direkt aus Discord statt aus Modellwissen oder Websuche.' },
-      { key: 'aiChat.serverKnowledgeCacheSeconds', label: 'Serverdaten Cache Sekunden', type: 'number', min: 15, max: 300, info: 'Hält Live-Serverdaten kurz im schnellen Cache. 45 Sekunden sind aktuell genug und schützen Discord vor unnötigen Vollabfragen.' },
-      { key: 'aiChat.useServerEmojis', label: 'Server-Emojis nutzen', type: 'checkbox', info: 'Erlaubt der AI, passende Custom-Emojis vom Server sparsam in Antworten zu benutzen.' },
-      { key: 'aiChat.emojiUsage', label: 'Emoji-Stil', type: 'select', options: [
-        { value: 'off', label: 'Aus' },
-        { value: 'subtle', label: 'Sparsam' },
-        { value: 'rich', label: 'Mehr Atmosphäre' }
-      ], info: 'Sparsam nutzt höchstens ein passendes Server-Emoji. Mehr Atmosphäre erlaubt häufiger animierte Server-Emojis.' },
-      { key: 'aiChat.useGifReplies', label: 'GIF-Reaktionen nutzen', type: 'checkbox', info: 'Erlaubt passende GIF-Reaktionen aus deiner geprüften Bibliothek, optional über einen offiziellen Tenor-Zugang aus der Bot-Umgebung und über den gepflegten sicheren Fallback.' },
-      { key: 'aiChat.gifUsage', label: 'GIF-Modus', type: 'select', options: [
-        { value: 'off', label: 'Aus' },
-        { value: 'on-request', label: 'Nur auf Wunsch' },
-        { value: 'mood', label: 'Wenn es passt' }
-      ], info: 'Nur auf Wunsch sendet GIFs nur, wenn User nach GIF/Meme/Reaktion fragen. Wenn es passt reagiert auch auf klare Stimmung.' },
-      { key: 'aiChat.gifProvider', label: 'GIF-Anbieter', type: 'select', options: [
-        { value: 'hybrid', label: 'Bibliothek zuerst (empfohlen)' },
-        { value: 'tenor', label: 'Tenor über Umgebungsvariable + Fallback' },
-        { value: 'library', label: 'Nur eigene Bibliothek' }
-      ], info: 'Empfohlen ist die eigene geprüfte Bibliothek als erste Quelle. Ein bestehender offizieller Tenor-Key wird ausschließlich sicher über TENOR_API_KEY aus der Bot-Umgebung gelesen, niemals aus der Serverkonfiguration. Danach greift der gepflegte, jugendfreie nekos.best-Fallback. HTML-Scraping ist vollständig deaktiviert.' },
-      { key: 'aiChat.tenorContentFilter', label: 'Tenor Inhaltsfilter', type: 'select', options: [
-        { value: 'high', label: 'Sehr sicher' },
-        { value: 'medium', label: 'Moderat' },
-        { value: 'low', label: 'Locker' }
-      ], info: 'Steuert den Inhaltsfilter für unterstützte externe GIF-Quellen. Sehr sicher ist für einen Community-Server empfohlen und wählt beim Fallback besonders zurückhaltende Reaktionskategorien.' },
-      { key: 'aiChat.tenorLocale', label: 'Tenor Sprache', type: 'select', options: [
-        { value: 'de_DE', label: 'Deutsch' },
-        { value: 'en_US', label: 'Englisch' }
-      ], info: 'Bestimmt Sprache und regionale Sortierung bei unterstützten externen GIF-Quellen.' },
-      { key: 'aiChat.gifChancePercent', label: 'GIF-Chance in Prozent', type: 'number', min: 0, max: 100, info: 'Wie oft die AI bei passender Stimmung wirklich ein GIF ergänzt. Auf ausdrücklichen Wunsch wird immer gesucht.' },
-      { key: 'aiChat.gifLibrary', label: 'Freigegebene GIF-Bibliothek', type: 'arrayLines', placeholder: 'https://cdn.example.org/reaction.gif', info: 'Bevorzugte, von dir geprüfte direkte HTTPS-GIF-URLs. Unsichere, lokale, doppelte oder nicht direkt auf .gif/.gifv endende Adressen werden verworfen.' },
-      { key: 'aiChat.sendTyping', label: 'Typing anzeigen', type: 'checkbox', info: 'Zeigt im Discord-Kanal an, dass die AI gerade schreibt.' },
-      { key: 'aiChat.personaName', label: 'AI Name', type: 'text', placeholder: 'Fallen Heaven AI', info: 'Name/Identität, in der die AI denkt und antwortet.' },
-      { key: 'aiChat.personality', label: 'Persönlichkeit', type: 'textarea', rows: 4, info: 'Charakter der AI: z. B. ruhig, loyal, witzig, düster, professionell, mentorhaft.' },
-      { key: 'aiChat.speakingStyle', label: 'Sprachstil', type: 'textarea', rows: 4, info: 'Wie die AI schreibt: kurz, episch, locker, sachlich, Gamer-Slang, High-Class-Support usw.' },
-      { key: 'aiChat.responseLength', label: 'Antwortlänge', type: 'select', options: [
-        { value: 'kurz', label: 'Kurz' },
-        { value: 'normal', label: 'Normal' },
-        { value: 'detail', label: 'Detailliert' },
-        { value: 'story', label: 'Story-Modus' }
-      ], info: 'Legt fest, ob Antworten knapp, normal, detailliert oder atmosphärisch/storylastig sind.' },
-      { key: 'aiChat.lore', label: 'AI Story / Lore', type: 'textarea', rows: 5, info: 'Hintergrundgeschichte der AI. Gut für Server-Atmosphäre und Wiedererkennung.' },
-      { key: 'aiChat.relationshipMode', label: 'Beziehungsmodus', type: 'textarea', rows: 4, info: 'Wie die AI mit Stammusern umgehen soll: erinnern, respektvoll, nicht creepy, hilfreich, persönlicher Ton.' },
-      { key: 'aiChat.safetyRules', label: 'Sicherheitsregeln', type: 'textarea', rows: 5, info: 'Grenzen der AI: keine gefährlichen Anleitungen, keine Doxxing-Hilfe, keine Massenmentions, keine erfundenen privaten Daten.' },
-      { key: 'aiChat.forbiddenTopics', label: 'Verbotene Themen / Grenzen', type: 'textarea', rows: 4, info: 'Server-spezifische Tabus oder Themen, bei denen die AI höflich umlenken soll.' },
-      { key: 'aiChat.systemPrompt', label: 'AI Persönlichkeit / Regeln', type: 'textarea', rows: 8, info: 'Grundregeln für die AI. Hier kannst du Ton, Grenzen, Sprache und Server-Stil festlegen.' }
-    ]
-  },
-  {
     id: 'levels',
     title: 'Leveling',
-    description: 'Faire XP und Rollen für echte Chat-Aktivität',
-    detail: 'Vergibt XP mit Cooldown, Tageslimit und Duplikatschutz, synchronisiert Level-Rollen und kann professionelle Level-Up-Embeds senden.',
+    description: 'Feste XP und Rollen für echte Chat- und Voice-Aktivität',
+    detail: 'Jede legitime Nachricht und jede gültige Voice-Minute zählt ohne Aktivitätslimit. Die letzte konfigurierte Rolle bestimmt das Max-Level.',
     icon: '📈',
     fields: [
       { key: 'levels.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Schaltet XP-Vergabe und Level-Berechnung ein oder aus.' },
-      { key: 'levels.xpPerMessageMin', label: 'Min XP', type: 'number', min: 1, step: 1, info: 'Kleinste XP-Menge pro gültiger Nachricht.' },
-      { key: 'levels.xpPerMessageMax', label: 'Max XP', type: 'number', min: 1, step: 1, info: 'Größte XP-Menge pro gültiger Nachricht. Der Bot wählt zufällig zwischen Min und Max.' },
-      { key: 'levels.cooldownSeconds', label: 'XP-Cooldown in Sekunden', type: 'number', min: 5, max: 3600, step: 1, info: 'Wie lange ein Mitglied warten muss, bevor eine weitere Nachricht XP gibt.' },
-      { key: 'levels.minMessageLength', label: 'Mindestlänge einer Nachricht', type: 'number', min: 1, max: 500, step: 1, info: 'Kurze Zeichenfolgen und Emoji-Spam unter dieser Buchstaben-/Zahlenlänge geben keine XP.' },
-      { key: 'levels.maxXpPerDay', label: 'Tägliches XP-Limit pro Mitglied', type: 'number', min: 50, max: 100000, step: 10, info: 'Begrenzt Farmen. Das Limit wird anhand der eingestellten Server-Zeitzone täglich zurückgesetzt.' },
+      { key: 'levels.xpPerMessage', label: 'XP pro gültiger Nachricht', type: 'number', min: 1, max: 1000, step: 1, info: 'Fester Wert für jede legitime Nachricht. Standard: 5 XP. Es gibt keinen Cooldown und kein Aktivitätslimit.' },
+      { key: 'levels.minMessageLength', label: 'Mindestinhalt einer Nachricht', type: 'number', min: 1, max: 500, step: 1, info: 'So viele Buchstaben oder Zahlen sind nötig. Anhänge und Sticker zählen auch ohne Text.' },
       { key: 'levels.ignoredChannelIds', label: 'Kanäle ohne XP', type: 'multiChannelSelect', placeholder: 'Kanäle auswählen ...', info: 'In diesen Kanälen und ausgewählten Kategorien werden niemals XP vergeben.' },
       { key: 'levels.excludedRoleIds', label: 'Rollen ohne XP', type: 'multiRoleSelect', placeholder: 'Rollen auswählen ...', info: 'Mitglieder mit einer dieser Rollen erhalten keine XP, zum Beispiel Bots oder Quarantäne-Mitglieder.' },
-      { key: 'levels.levelRoleMappings', label: 'Level-Belohnungen', type: 'roleMappingSelect', info: 'Wähle direkt aus, welche Discord-Rolle ab welchem Level gelten soll.' },
+      { key: 'levels.levelRoleMappings', label: 'Level-Rollen und Maximum', type: 'roleMappingSelect', info: 'Wähle die Rolle pro Meilenstein. Das höchste eingetragene Level ist automatisch das Max-Level.' },
       { key: 'levels.cumulativeRoleRewards', label: 'Erreichte Level-Rollen behalten', type: 'checkbox', info: 'Aktiv: alle erreichten Rollen bleiben. Inaktiv: nur die höchste passende Level-Rolle bleibt aktiv.' },
       { key: 'levels.announce', label: 'Level Up ankündigen', type: 'checkbox', info: 'Sendet eine Nachricht, wenn jemand ein neues Level erreicht. Nutzt bevorzugt das Level-Up-Embed aus dem Embed Studio.' },
       { key: 'levels.announceChannelId', label: 'Level-Up-Kanal', type: 'channelSelect', placeholder: 'Optional auswählen ...', info: 'Optionaler Kanal für Level-Up-Meldungen. Leer bedeutet: Antwort im aktuellen Chat.' },
-      { key: 'levels.levelUpMessage', label: 'Level Up Nachricht', type: 'text', placeholder: '{user} ist Level {level}', info: 'Fallback-Text, falls kein Level-Up-Embed aktiv ist. Platzhalter: {user}, {level}.' }
+      { key: 'levels.levelUpMessage', label: 'Level Up Nachricht', type: 'text', placeholder: '{user} ist Level {level}', info: 'Fallback-Text, falls kein Level-Up-Embed aktiv ist. Platzhalter: {user}, {level}.' },
+      { key: 'levels.voiceXpPerMinute', label: 'XP pro gültiger Voice-Minute', type: 'number', min: 0, max: 60, step: 1, info: 'Fester Wert pro gültiger Minute. Standard: 1 XP. Ungültige und Offline-Zeit wird nie nachgetragen.' },
+      { key: 'levels.voiceMinimumParticipants', label: 'Menschen für gültige Sprachchat-XP', type: 'number', min: 1, max: 20, step: 1, info: 'Sprachchat-XP zählt erst, wenn mindestens so viele echte, wertbare Menschen gemeinsam im Kanal sind.' },
+      { key: 'levels.levelRolesPanelChannelId', label: 'Level-Rollen-Panel Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Optionaler Kanal für das Level-Rollen-Panel. Leer = kein Panel.' },
+      { key: 'levels.rulesTitle', label: 'Regeln-Ansicht · Titel', type: 'text', placeholder: 'Regeln und Wertung', info: 'Titel der privaten Regeln-Ansicht (REGELN-Button am Level-Rollen-Panel).' },
+      { key: 'levels.rulesDescription', label: 'Regeln-Ansicht · Beschreibung', type: 'textarea', rows: 3, placeholder: 'Diese private Übersicht erklärt, wie XP und Level-Rollen funktionieren.', info: 'Einleitungstext der Regeln-Ansicht.' },
+      { key: 'levels.rulesFooter', label: 'Regeln-Ansicht · Footer', type: 'text', placeholder: 'Diese Ansicht ist nur für dich sichtbar.', info: 'Fußzeile der Regeln-Ansicht.' },
+      { key: 'levels.rulesChatFieldName', label: 'Regeln · Feldname Chat', type: 'text', placeholder: 'CHAT', info: 'Überschrift des Chat-Regeln-Felds.' },
+      { key: 'levels.rulesVoiceFieldName', label: 'Regeln · Feldname Sprachchat', type: 'text', placeholder: 'SPRACHCHAT', info: 'Überschrift des Sprachchat-Regeln-Felds.' },
+      { key: 'levels.rulesCurveFieldName', label: 'Regeln · Feldname Level-Kurve', type: 'text', placeholder: 'LEVEL-KURVE', info: 'Überschrift des Level-Kurven-Felds.' },
+      { key: 'levels.rulesNoXpFieldName', label: 'Regeln · Feldname No-XP-Rolle', type: 'text', placeholder: 'NO-XP-ROLLE', info: 'Überschrift des No-XP-Rollen-Felds (erscheint nur, wenn solche Rollen existieren).' },
+      { key: 'levels.rulesExcludedFieldName', label: 'Regeln · Feldname Ausgeschlossen', type: 'text', placeholder: 'AUSGESCHLOSSEN', info: 'Überschrift des Ausgeschlossen-Felds (erscheint nur, wenn Kanäle/Rollen ausgenommen sind).' },
+      { key: 'levels.rulesChatFieldText', label: 'Regeln · Chat-Text', type: 'textarea', rows: 6, placeholder: '• Jede gültige Nachricht gibt **{xpPerMessage} XP** …', info: 'Vorlage mit Platzhaltern: {xpPerMessage}, {minLength}.' },
+      { key: 'levels.rulesVoiceFieldText', label: 'Regeln · Sprachchat-Text', type: 'textarea', rows: 5, placeholder: '• **{voiceXp} XP pro Minute** …', info: 'Vorlage mit Platzhaltern: {voiceXp}, {voiceMin}, {deafened}.' },
+      { key: 'levels.rulesCurveFieldText', label: 'Regeln · Level-Kurven-Text', type: 'textarea', rows: 4, placeholder: '• Level 1: **300 XP** …', info: 'Editierbarer Erklärungstext zur festen Balance-V1-Kurve.' },
+      { key: 'levels.rulesNoXpFieldText', label: 'Regeln · No-XP-Rollen-Text', type: 'textarea', rows: 2, placeholder: '• **{noXpRoleNames}** – Mitglieder mit diesen Rollen erhalten **keine XP** mehr: weder im Chat noch im Sprachchat, weder Level noch Aktivitäts-Bonus.', info: 'Ausgeschriebener Text mit einzelnen Platzhaltern: {noXpRoleNames} (Namen der No-XP-Rollen), {server}.' },
+      { key: 'levels.rulesExcludedFieldText', label: 'Regeln · Ausgeschlossen-Text', type: 'textarea', rows: 2, placeholder: '• Ausgeschlossene Kanäle: **{excludedChannels}**\n• Ausgeschlossene Rollen: **{excludedRoles}**', info: 'Ausgeschriebener Text mit einzelnen Platzhaltern: {excludedChannels} (Kanalnamen), {excludedRoles} (Rollennamen), {server}.' },
+      { key: 'levels.rulesButtonLabel', label: 'Panel · Button „Regeln“', type: 'text', placeholder: 'REGELN', info: 'Label des Regeln-Buttons am Level-Rollen-Panel.' },
+      { key: 'levels.noXpButtonLabel', label: 'Panel · Button „NO-XP“', type: 'text', placeholder: 'NO-XP (an/aus)', info: 'Label des NO-XP-Umschalt-Buttons (erscheint nur, wenn NO-XP-Rollen existieren).' }
     ]
   },
   {
@@ -290,13 +221,26 @@
       { key: 'activityRace.messageCooldownSeconds', label: 'Chat-Cooldown in Sekunden', type: 'number', min: 0, max: 300, step: 1, info: 'Mindestabstand zwischen zwei gewerteten Nachrichten derselben Person. 10 Sekunden verhindert Farmen, ohne echte Gespräche auszubremsen.' },
       { key: 'activityRace.duplicateWindowMinutes', label: 'Duplikatschutz in Minuten', type: 'number', min: 0, max: 1440, step: 1, info: 'Identische Nachrichten zählen in diesem Zeitraum nur einmal.' },
       { key: 'activityRace.minimumMessageLength', label: 'Mindestlänge für Chat-Wertung', type: 'number', min: 1, max: 500, step: 1, info: 'Mindestens so viele Buchstaben oder Zahlen muss eine Nachricht enthalten. Anhänge und Sticker gelten als Inhalt.' },
-      { key: 'activityRace.voiceMinimumParticipants', label: 'Menschen für gültige Sprachchat-Zeit', type: 'number', min: 2, max: 20, step: 1, info: 'Sprachchat-Zeit zählt erst, wenn mindestens so viele echte, wertbare Menschen gemeinsam im Kanal sind.' },
+      { key: 'activityRace.voiceMinimumParticipants', label: 'Menschen für gültige Sprachchat-Zeit', type: 'number', min: 1, max: 20, step: 1, info: 'Sprachchat-Zeit zählt erst, wenn mindestens so viele echte, wertbare Menschen gemeinsam im Kanal sind.' },
       { key: 'activityRace.excludeDeafened', label: 'Vollständig taube Sprachchat-Zeit ausschließen', type: 'checkbox', info: 'Server- oder selbsttaube Mitglieder sammeln keine Sprachchat-Zeit. Normales Stummschalten bleibt erlaubt.' },
       { key: 'activityRace.placementPings', label: 'Platzierungs-Pings senden', type: 'checkbox', info: 'Der Bot erwähnt die betroffenen Mitglieder, sobald sie neu auf Platz 1–3 stehen, auf Platz 1 vorrücken oder aus den Top 3 verdrängt werden. Genutzt werden die hochgeladenen Trophy-Emojis.' },
       { key: 'activityRace.placementPingChannelId', label: 'Kanal für Platzierungs-Pings', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'Automatisch: Ranglisten-Kanal (aktivität-liga)', info: 'Leer lassen: Die Pings erscheinen im Ranglisten-Kanal der Liga. Alternativ kann ein eigener Kanal für die Platzierungs-Pings ausgewählt werden.' },
       { key: 'activityRace.placementPingLifetimeMinutes', label: 'Ping-Anzeigedauer in Minuten', type: 'number', min: 1, max: 60, step: 1, info: 'Nach dieser Zeit löschen sich die Platzierungs-Pings selbst, damit der Kanal nicht vollläuft. Standard: 5 Minuten.' },
       { key: 'activityRace.announceCompletedPeriods', label: 'Abschluss-Ankündigungen senden', type: 'checkbox', info: 'Sobald eine Kalenderwoche oder ein Kalendermonat vollständig abgeschlossen ist, verkündet der Bot die Sieger der Wertung mit Trophys und @Mentions – genau einmal pro Zeitraum.' },
       { key: 'activityRace.announcementChannelId', label: 'Kanal für Abschluss-Ankündigungen', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'Automatisch: Ranglisten-Kanal (aktivität-liga)', info: 'Leer lassen: Die Ankündigungen erscheinen im Ranglisten-Kanal der Liga. Alternativ kann ein eigener Kanal gewählt werden.' },
+      { key: 'activityRace.completionDaily', label: 'Vollständigkeits-Text · Tageswertung', type: 'textarea', rows: 3, placeholder: 'Die Tagesrollen zeigen den aktuellen Stand und wechseln automatisch, sobald sich Platz 1 bis 3 verändern.', info: 'Ersetzt {completion} im Heute-Embed. Einzelne Platzhalter erlaubt: {server}, {period}, {status}, {range}, {nextEvaluation}, {chat1}, {chat2}, {chat3}, {chatValue1}, {chatValue2}, {chatValue3}, {chatMarker1}, {chatMarker2}, {chatMarker3}, {voice1}, {voice2}, {voice3}, {voiceValue1}, {voiceValue2}, {voiceValue3}, {voiceMarker1}, {voiceMarker2}, {voiceMarker3}.' },
+      { key: 'activityRace.completionWeekly', label: 'Vollständigkeits-Text · Wochenwertung', type: 'textarea', rows: 3, placeholder: 'Die Rollen werden erst am Wochenabschluss für die vollständige Kalenderwoche vergeben.', info: 'Ersetzt {completion} im Wochen-Embed. Einzelne Platzhalter erlaubt: {server}, {period}, {status}, {range}, {nextEvaluation}, {chat1}, {chat2}, {chat3}, {chatValue1}, {chatValue2}, {chatValue3}, {chatMarker1}, {chatMarker2}, {chatMarker3}, {voice1}, {voice2}, {voice3}, {voiceValue1}, {voiceValue2}, {voiceValue3}, {voiceMarker1}, {voiceMarker2}, {voiceMarker3}.' },
+      { key: 'activityRace.completionMonthly', label: 'Vollständigkeits-Text · Monatswertung', type: 'textarea', rows: 3, placeholder: 'Die Rollen werden erst am Monatsabschluss für den vollständigen Kalendermonat vergeben.', info: 'Ersetzt {completion} im Monats-Embed. Einzelne Platzhalter erlaubt: {server}, {period}, {status}, {range}, {nextEvaluation}, {chat1}, {chat2}, {chat3}, {chatValue1}, {chatValue2}, {chatValue3}, {chatMarker1}, {chatMarker2}, {chatMarker3}, {voice1}, {voice2}, {voice3}, {voiceValue1}, {voiceValue2}, {voiceValue3}, {voiceMarker1}, {voiceMarker2}, {voiceMarker3}.' },
+      { key: 'activityRace.chatFieldName', label: 'Feldname · Chat-Rangliste', type: 'text', placeholder: 'CHAT', info: 'Standard-Überschrift des ersten Ranglisten-Felds. Die Felder (CHAT, SPRACHCHAT, NÄCHSTE AUSWERTUNG, ZEITRAUM) sind seit 3.9.231 direkt im Embed Studio unter „Embed-Felder“ pro Zeitraum bearbeitbar – dieser Wert gilt nur, solange das Feld nicht dort angepasst wurde.' },
+      { key: 'activityRace.voiceFieldName', label: 'Feldname · Sprachchat-Rangliste', type: 'text', placeholder: 'SPRACHCHAT', info: 'Standard-Überschrift des zweiten Ranglisten-Felds. Im Embed Studio unter „Embed-Felder“ pro Zeitraum überschreibbar.' },
+      { key: 'activityRace.nextEvaluationFieldName', label: 'Feldname · Nächste Auswertung', type: 'text', placeholder: 'NÄCHSTE AUSWERTUNG', info: 'Standard-Überschrift des Felds mit dem Zeitpunkt der nächsten Auswertung. Im Embed Studio unter „Embed-Felder“ pro Zeitraum überschreibbar.' },
+      { key: 'activityRace.rangeFieldName', label: 'Feldname · Zeitraum', type: 'text', placeholder: 'ZEITRAUM', info: 'Standard-Überschrift des Felds mit dem gewerteten Zeitraum. Im Embed Studio unter „Embed-Felder“ pro Zeitraum überschreibbar.' },
+      { key: 'activityRace.rankingLineTemplate', label: 'Vorlage · Ranglisten-Zeile', type: 'text', placeholder: '{marker} {mention}\n> **{value}**', info: 'Format jeder Ranglisten-Zeile. Platzhalter: {marker} (Trophäe/Platz), {mention} (Ping), {value} (Leistung), {rank} (Platznummer).' },
+      { key: 'activityRace.rankingEmptyText', label: 'Text · keine Aktivität', type: 'text', placeholder: 'Noch keine Aktivität erfasst.', info: 'Erscheint in einem Ranglisten-Feld, solange noch nichts gewertet wurde.' },
+      { key: 'activityRace.rulesButtonLabel', label: 'Button · Regeln', type: 'text', placeholder: 'REGELN', info: 'Label des Regeln-Buttons unter dem Liga-Panel.' },
+      { key: 'activityRace.personalButtonLabel', label: 'Button · Mein Rang', type: 'text', placeholder: 'MEIN RANG', info: 'Label des persönlichen Rang-Buttons unter dem Liga-Panel.' },
+      { key: 'activityRace.pingToggleButtonLabel', label: 'Button · persönliche Liga-Pings', type: 'text', placeholder: 'LIGA-PINGS EIN/AUS', info: 'Label des echten Schalters unter dem separat editierbaren Ping-Info-Panel.' },
+      { key: 'activityRace.panelDescription', label: 'Beschreibung des Liga-Embeds', type: 'textarea', rows: 3, placeholder: 'Leer lassen = Vollständigkeits-Text der Periode', info: 'Optionaler eigener Text unter dem Titel des Liga-Embeds. Leer lassen: Der Bot zeigt den ausgeschriebenen Vollständigkeits-Text der Periode (Tages-/Wochen-/Monatswertung). Einzelne Platzhalter: {completion} (Vollständigkeits-Text), {period}, {server}, {chat1}, {chat2}, {chat3}, {chatValue1}, {chatValue2}, {chatValue3}, {chatMarker1}, {chatMarker2}, {chatMarker3}, {voice1}, {voice2}, {voice3}, {voiceValue1}, {voiceValue2}, {voiceValue3}, {voiceMarker1}, {voiceMarker2}, {voiceMarker3}.' },
       { key: 'activityRace.separatorRoleName', label: 'Name der Trennerrolle', type: 'text', placeholder: '━━ AKTIVITÄTS-LIGA ━━', info: 'Diese Begleitrolle erhält jedes Mitglied mit mindestens einer aktiven Liga-Auszeichnung automatisch.' },
       ...[
         ['daily', 'Tageswertung'], ['weekly', 'Wochenwertung'], ['monthly', 'Monatswertung']
@@ -330,6 +274,7 @@
       { key: 'tickets.panelDescription', label: 'Panel-Beschreibung', type: 'textarea', rows: 4, info: 'Erklärt kurz, wann Mitglieder ein Ticket öffnen sollen.' },
       { key: 'tickets.panelButtonLabel', label: 'Text der Schaltfläche', type: 'text', placeholder: 'Ticket öffnen', info: 'Beschriftung der Schaltfläche unter dem Panel.' },
       { key: 'tickets.panelButtonEmoji', label: 'Emoji der Schaltfläche', type: 'emoji', placeholder: 'Emoji auswählen ...', info: 'Wähle ein Standard-, Server- oder Bot-Emoji direkt aus der Emoji-Bibliothek.' },
+      { key: 'tickets.closeButtonLabel', label: 'Ticket-Button „Schließen“', type: 'text', placeholder: 'Ticket schließen', info: 'Beschriftung des Schließen-Buttons im geöffneten Ticket.' },
       { key: 'tickets.supportRoleId', label: 'Support-Rolle', type: 'roleSelect', placeholder: 'Optional auswählen ...', info: 'Wähle die Rolle, die Support-Tickets sehen oder bearbeiten darf.' },
       { key: 'tickets.categoryId', label: 'Ticket-Kategorie', type: 'channelSelect', channelTypes: [4], placeholder: 'Kategorie auswählen ...', info: 'Für den empfohlenen Kanalmodus: Neue Tickets werden geordnet in dieser Discord-Kategorie angelegt.' },
       { key: 'tickets.useThreadMode', label: 'Private Threads verwenden', type: 'checkbox', info: 'Erstellt Tickets als private Threads. Aus ist für große Support-Teams zuverlässiger, weil Rollenrechte bei privaten Kanälen vollständig greifen.' },
@@ -439,6 +384,72 @@
     ]
   },
   {
+    id: 'tempVoice',
+    title: 'TempVoice',
+    description: 'Temporäre Sprachkanäle – eigener Kanal beim Joinen',
+    detail: 'Wer den Setup-Kanal joint, bekommt automatisch einen eigenen temporären Sprachkanal. Der Besitzer verwaltet ihn über das Interface: umbenennen, Limit, sperren/öffnen, Zugänge verwalten, Besitz übernehmen/übertragen und Region. Verlassen alle den Kanal, wird er automatisch gelöscht.',
+    icon: 'TV',
+    fields: [
+      { key: 'tempVoice.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Aktiviert die automatische Erstellung temporärer Sprachkanäle.' },
+      { key: 'tempVoice.creatorChannelIds', label: 'Setup-Kanäle', type: 'multiChannelSelect', channelTypes: [2], info: 'Wer einen dieser Sprachkanäle joint, bekommt automatisch einen eigenen temporären Kanal. Mehrere Setup-Kanäle möglich.' },
+      { key: 'tempVoice.categoryId', label: 'Kategorie für neue Kanäle', type: 'channelSelect', channelTypes: [4], placeholder: 'optional', info: 'Neue TempVoice-Kanäle werden in dieser Kategorie erstellt und erben automatisch deren Berechtigungen. Ohne Auswahl werden sie auf Server-Ebene erstellt (alle dürfen sehen und joinen).' },
+      { key: 'tempVoice.channelNameTemplate', label: 'Kanal-Namensschema', type: 'text', placeholder: '🎧 {user}', info: 'Platzhalter: {user} = Anzeigename, {username} = Discord-Name.' },
+      { key: 'tempVoice.rememberUserProfiles', label: 'Persönliche Einstellungen merken', type: 'checkbox', info: 'Merkt pro Mitglied und Server den letzten Kanalnamen, das Limit und die Region. Sperren und Mitgliederrechte werden nie übernommen.' },
+      { key: 'tempVoice.defaultUserLimit', label: 'Standard-Benutzerlimit', type: 'number', min: 0, max: 99, step: 1, info: '0 = unbegrenzt. Der Besitzer kann das Limit jederzeit im Interface ändern.' },
+      { key: 'tempVoice.defaultBitrate', label: 'Standard-Bitrate (kbps)', type: 'number', min: 0, max: 384, step: 8, info: 'Bitrate neuer TempVoice-Kanäle in kbps. 0 = automatisch die beste vom Server erlaubte Bitrate (bis 384 kbps).' },
+      { key: 'tempVoice.defaultRegion', label: 'Standard-Region', type: 'select', placeholder: 'automatic', info: 'RTC-Region neuer TempVoice-Kanäle (z. B. europe, us-east). Leer = automatisch.', options: [
+        { value: 'automatic', label: 'Automatisch' },
+        { value: 'europe', label: 'Europa' },
+        { value: 'us-west', label: 'US West' },
+        { value: 'us-east', label: 'US East' },
+        { value: 'us-central', label: 'US Central' },
+        { value: 'us-south', label: 'US South' },
+        { value: 'singapore', label: 'Singapur' },
+        { value: 'southafrica', label: 'Südafrika' },
+        { value: 'sydney', label: 'Sydney' },
+        { value: 'india', label: 'Indien' },
+        { value: 'japan', label: 'Japan' },
+        { value: 'brazil', label: 'Brasilien' },
+        { value: 'hongkong', label: 'Hongkong' },
+        { value: 'russia', label: 'Russland' }
+      ] },
+      { key: 'tempVoice.emptyGraceSeconds', label: 'Löschfrist nach Verlassen (Sekunden)', type: 'number', min: 0, max: 3600, step: 5, info: '0 = sofort löschen, sobald der Kanal leer ist. Größere Werte halten den leeren Kanal kurz offen (z. B. für einen Re-Join).' },
+      { key: 'tempVoice.blacklistRoleIds', label: 'Blacklist-Rollen (dürfen nie joinen)', type: 'multiRoleSelect', info: 'Mitglieder mit einer dieser Rollen können den Setup-Kanal nicht nutzen und bekommen keinen TempVoice-Kanal.' },
+      { key: 'tempVoice.requiredRoleIds', label: 'Pflicht-Rollen (mindestens eine nötig)', type: 'multiRoleSelect', info: 'Ohne mindestens eine dieser Rollen ist der Beitritt zum Setup-Kanal nicht möglich. Leer = alle dürfen joinen.' },
+      { key: 'tempVoice.allowRename', label: 'Umbenennen erlauben', type: 'checkbox', info: 'Besitzer dürfen ihren Kanal umbenennen.' },
+      { key: 'tempVoice.allowLimit', label: 'Limit ändern erlauben', type: 'checkbox', info: 'Besitzer dürfen das Benutzerlimit ändern.' },
+      { key: 'tempVoice.allowLock', label: 'Sperren/Öffnen erlauben', type: 'checkbox', info: 'Besitzer dürfen ihren Kanal sperren und öffnen.' },
+      { key: 'tempVoice.allowRegion', label: 'Region ändern erlauben', type: 'checkbox', info: 'Besitzer dürfen die Server-Region des Kanals ändern.' },
+      { key: 'tempVoice.allowTransfer', label: 'Besitz übertragen erlauben', type: 'checkbox', info: 'Besitzer dürfen die Besitzerschaft an ein anderes Mitglied abgeben.' },
+    ]
+  },
+  {
+    id: 'publicCallVote',
+    title: 'Public-Call-Moderation',
+    description: 'Rauswurf-Abstimmungen in ausgewählten öffentlichen Calls',
+    detail: 'Postet in jedem ausgewählten öffentlichen Voice-Call ein dauerhaftes Moderations-Panel. 2er-, 3er- und 4er-Calls werden getrennt ausgewählt: Im 2er-Call genügt eine Dafür-Stimme für den Rauswurf, im 3er-Call sind es zwei, im 4er-Call drei. Bei wiederholten Verstößen greift automatisch ein Server-Timeout. Das Panel ist eine feste Embed und wird vom Voice-Chat-Cleaner nicht gelöscht.',
+    icon: '🗳️',
+    fields: [
+      { key: 'publicCallVote.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Aktiviert die Moderations-Panels und Rauswurf-Abstimmungen in den ausgewählten öffentlichen Calls.' },
+      { key: 'publicCallVote.callChannelIds2', label: '2er Calls', type: 'multiChannelSelect', channelTypes: [2], info: 'Öffentliche Voice-Kanäle für 2 Personen (Duo): Hier genügt bereits eine „Dafür“-Stimme für den Rauswurf. Das Moderations-Panel hängt dauerhaft im Textchat des Calls.' },
+      { key: 'publicCallVote.callChannelIds3', label: '3er Calls', type: 'multiChannelSelect', channelTypes: [2], info: 'Öffentliche Voice-Kanäle für 3 Personen (Trio): Hier genügen zwei „Dafür“-Stimmen für den Rauswurf. Das Moderations-Panel hängt dauerhaft im Textchat des Calls.' },
+      { key: 'publicCallVote.callChannelIds4', label: '4er Calls', type: 'multiChannelSelect', channelTypes: [2], info: 'Öffentliche Voice-Kanäle für 4 Personen (Quartett): Hier genügen drei „Dafür“-Stimmen für den Rauswurf. Das Moderations-Panel hängt dauerhaft im Textchat des Calls.' },
+      { key: 'publicCallVote.callChannelIds', label: 'Weitere öffentliche Calls', type: 'multiChannelSelect', channelTypes: [2], info: 'Übrige öffentliche Calls (gemischte Größen): Die Schwelle richtet sich nach den anwesenden Mitgliedern – Mindeststimmen plus Zustimmung in Prozent. Bestehende Auswahlen aus früheren Versionen liegen hier.' },
+      { key: 'publicCallVote.minVotes', label: 'Mindeststimmen für Rauswurf (5+ Calls)', type: 'number', min: 1, max: 50, step: 1, info: 'So viele „Dafür“-Stimmen müssen in Calls ab 5 Personen mindestens zusammenkommen (2er-, 3er- und 4er-Calls haben feste Schwellen).' },
+      { key: 'publicCallVote.passPercent', label: 'Zustimmung in Prozent (5+ Calls)', type: 'number', min: 10, max: 100, step: 1, info: 'Anteil der Anwesenden, die zustimmen müssen – zusätzlich zur Mindeststimmenzahl. Gilt für Calls ab 5 Personen.' },
+      { key: 'publicCallVote.timeoutSeconds', label: 'Abstimmungsdauer (Sekunden)', type: 'number', min: 15, max: 600, step: 5, info: 'Wie lange eine Abstimmung läuft, bevor sie ausgewertet wird.' },
+      { key: 'publicCallVote.resultAutoDeleteSeconds', label: 'Ergebnis automatisch löschen nach (Sekunden)', type: 'number', min: 5, max: 600, step: 5, info: '„Rauswurf beschlossen“- und „Rauswurf abgelehnt“-Nachrichten verschwinden nach dieser Zeit automatisch.' },
+      { key: 'publicCallVote.requestButtonLabel', label: 'Panel · Button „Rauswurf beantragen“', type: 'text', placeholder: 'Rauswurf beantragen', info: 'Label des Buttons am Call-Moderations-Panel.' },
+      { key: 'publicCallVote.yesButtonLabel', label: 'Abstimmung · Button „Dafür“', type: 'text', placeholder: 'Dafür', info: 'Label des Ja-Buttons in der laufenden Abstimmung.' },
+      { key: 'publicCallVote.noButtonLabel', label: 'Abstimmung · Button „Dagegen“', type: 'text', placeholder: 'Dagegen', info: 'Label des Nein-Buttons in der laufenden Abstimmung.' },
+      { key: 'publicCallVote.passedOutcomeText', label: 'Ergebnis · Text bei Rauswurf beschlossen', type: 'text', placeholder: 'wird entfernt', info: 'Satzfragment im Ergebnis-Embed ({outcomeText}) bei erfolgreichem Rauswurf – z. B. „wird entfernt“, „muss den Call verlassen“. Platzhalter: {targetMention}, {targetName}, {channel}, {server}.' },
+      { key: 'publicCallVote.failedOutcomeText', label: 'Ergebnis · Text bei Rauswurf abgelehnt', type: 'text', placeholder: 'bleibt im Call', info: 'Satzfragment im Ergebnis-Embed ({outcomeText}) bei abgelehnter Abstimmung – z. B. „bleibt im Call“, „darf bleiben“. Platzhalter: {targetMention}, {targetName}, {channel}, {server}.' },
+      { key: 'publicCallVote.voteReasons', label: 'Vote-Gründe', type: 'json', placeholder: '[{ "id": "spam", "label": "Spam", "kickMinutes": 10, "timeoutAfter": 3, "timeoutMinutes": 60 }]', info: 'Vorgefertigte Gründe: kickMinutes = Call-Sperre nach Rauswurf, timeoutAfter = Verstöße bis zum Server-Timeout, timeoutMinutes = Dauer des Timeouts, needsText = true fragt beim Rauswurf einen Freitext-Grund ab (z. B. bei „Sonstiges“).' },
+      { key: 'publicCallVote.teamChannelId', label: 'Team-Kanal', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'optional', info: 'Privater Team-Kanal: Bei jedem erfolgreichen Rauswurf wird dort eine Nachricht mit Team-Rollen-Ping gesendet, was vorgefallen ist.' },
+      { key: 'publicCallVote.teamRoleIds', label: 'Team-Rollen (werden gepingt)', type: 'multiRoleSelect', info: 'Diese Rollen werden in der Team-Benachrichtigung bei einem Rauswurf erwähnt.' }
+    ]
+  },
+  {
     id: 'serverBackup',
     title: 'Server-Backup',
     description: 'Tägliche Server-Struktur sichern und wiederherstellen',
@@ -480,22 +491,6 @@
     ]
   },
   {
-    id: 'serverContext',
-    title: 'Serverwissen & Vollindex',
-    description: 'Vollständiger Index mit schnellem 30-Tage-Kontext',
-    detail: 'Die AI durchsucht den vollständigen, persistenten Serverindex und erhält nur passende Belege aus Kanälen, die der anfragende Nutzer sehen darf. Zusätzlich hält dieses Modul einen kompakten 30-Tage-Kontext für sehr aktuelle Ereignisse bereit. Der vollständige Index wird nicht ungefiltert in Ollama geladen.',
-    icon: '🧠',
-    fields: [
-      { key: 'serverContext.enabled', label: 'Aktuellen Kontext aktivieren', type: 'checkbox', info: 'Erfasst neue Nachrichten zusätzlich im schnellen 30-Tage-Kontext. Der persistente Vollindex der Serververwaltung bleibt die langfristige Wissensquelle.' },
-      { key: 'serverContext.retentionDays', label: 'Schnellkontext (Tage)', type: 'number', min: 1, max: 30, step: 1, info: 'Nur die kompakte Aktualitätsschicht wird nach dieser Zeit bereinigt. Die AI-Suche nutzt weiterhin den vollständigen Serverindex.' },
-      { key: 'serverContext.maxStorageGb', label: 'Schnellkontext-Limit (GB)', type: 'number', min: 1, max: 50, step: 1, info: 'Harte Obergrenze ausschließlich für die aktuelle Kontextschicht. Der persistente Serverindex wird getrennt verwaltet.' },
-      { key: 'serverContext.maxContextEntries', label: 'Aktuelle Belege pro Anfrage', type: 'number', min: 10, max: 200, step: 10, info: 'Begrenzt die aktuellen Zusatzbelege. Aus dem Vollindex werden separat nur die relevantesten Treffer abgerufen.' },
-      { key: 'serverContext.channelIds', label: 'Schnellkontext-Kanäle', type: 'multiChannelSelect', info: 'Optional nur neue Nachrichten ausgewählter Kanäle in die schnelle Aktualitätsschicht übernehmen.' },
-      { key: 'serverContext.excludedChannelIds', label: 'Vom Schnellkontext ausschließen', type: 'multiChannelSelect', info: 'Sensible oder private Kanäle aus der schnellen Aktualitätsschicht ausschließen. Die AI beachtet bei jeder Indexsuche zusätzlich die aktuellen Discord-Berechtigungen.' },
-      { key: 'serverContext.storeAttachmentLinks', label: 'Anhang-Links merken', type: 'checkbox', info: 'Speichert nur Metadaten und Discord-Link. Dateien werden nicht heruntergeladen.' }
-    ]
-  },
-  {
     id: 'autoRole',
     title: 'Automatische Beitrittsrollen',
     description: 'Mehrere Rollen zuverlässig und geprüft vergeben',
@@ -513,6 +508,53 @@
     ]
   },
   {
+    id: 'roleSwap',
+    title: 'Rollen-Tausch',
+    description: 'Rolle automatisch tauschen (z. B. Mute)',
+    detail: 'Bekommt ein Mitglied eine Auslöser-Rolle (z. B. eine Mute-Rolle), wird automatisch eine konfigurierte andere Rolle entfernt. Verschwindet die Auslöser-Rolle wieder, bekommt das Mitglied die andere Rolle zurück – und zwar nur dann, wenn sie vorher wirklich von diesem Modul entfernt wurde. Ein Startabgleich holt verpasste Ereignisse nach (z. B. wenn der Bot beim Vergeben der Rolle offline war).',
+    icon: '🔁',
+    fields: [
+      { key: 'roleSwap.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Schaltet den automatischen Rollen-Tausch ein oder aus.' },
+      { key: 'roleSwap.pairs', label: 'Tausch-Paare', type: 'roleSwapSelect', info: 'Je Zeile ein Paar: Auslöser-Rolle (wird vergeben, z. B. Mute) → Rolle, die dann entfernt und später automatisch zurückgegeben wird. Beim Speichern werden nur vollständige Paare übernommen.' },
+      { key: 'roleSwap.logChannelId', label: 'Rollen-Tausch-Protokoll', type: 'channelSelect', placeholder: 'optional', info: 'Optionaler Kanal für Benachrichtigungen über entfernte und wiederhergestellte Rollen.' }
+    ]
+  },
+  {
+    id: 'counting',
+    title: 'Zähl-Kanal',
+    description: 'Professionelles Zählspiel mit Anti-Cheat und Best-Serien',
+    detail: 'Verwandelt einen Kanal in ein Zählspiel: Die nächste Nachricht muss exakt die nächste Zahl sein. Richtige Züge werden mit ✅ bestätigt, falsche setzen den Zähler zurück (❌). Bots, Webhooks und bearbeitete Nachrichten zählen nie; niemand kann zweimal hintereinander zählen. Meilensteine werden gefeiert, pro Nutzer werden richtige/falsche Züge sowie die Best-Serie gespeichert, und ein optionales Live-Panel zeigt den aktuellen Stand.',
+    icon: '🔢',
+    fields: [
+      { key: 'counting.enabled', label: 'Zähl-Kanal aktiv', type: 'checkbox', info: 'Schaltet das Zählspiel im konfigurierten Kanal ein oder aus.' },
+      { key: 'counting.channelId', label: 'Zähl-Kanal', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'Kanal auswählen ...', info: 'Nur Nachrichten in diesem Kanal werden als Züge gewertet. Andere Kanäle bleiben unberührt.' },
+      { key: 'counting.resetValue', label: 'Stand nach Fehlversuch', type: 'number', min: 0, max: 100000, step: 1, info: 'Auf diesen Wert fällt der Zähler zurück, wenn jemand die falsche Zahl sendet oder zweimal hintereinander zählt. Standard: 0.' },
+      { key: 'counting.deleteWrongMessages', label: 'Falsche Nachrichten löschen', type: 'checkbox', info: 'Falsche Züge werden nach dem ❌ automatisch gelöscht, damit der Kanal sauber bleibt.' },
+      { key: 'counting.preventSelfCount', label: 'Keine zwei Züge in Folge', type: 'checkbox', info: 'Dieselbe Person darf nicht zweimal hintereinander zählen – erst muss jemand anderes dran sein.' },
+      { key: 'counting.selfCountIsFail', label: 'Doppelzug zählt als Fehlversuch', type: 'checkbox', info: 'Wenn dieselbe Person erneut dran ist, gilt das als Fehlversuch und setzt den Zähler zurück. Aus: Der Doppelzug wird nur ignoriert.' },
+      { key: 'counting.excludedRoleIds', label: 'Ausgeschlossene Rollen', type: 'multiRoleSelect', info: 'Mitglieder mit einer dieser Rollen können nicht zählen – ihre Nachrichten werden ignoriert (z. B. Bots, Quarantäne).' },
+      { key: 'counting.maxCount', label: 'Maximal zulässiger Wert', type: 'number', min: 10, max: 1000000000000, step: 1, info: 'Sicherheits-Cap. Wer eine Zahl darüber sendet, bekommt einen Fehlversuch statt eines kaputten Zählers.' },
+      { key: 'counting.milestones', label: 'Meilensteine', type: 'arrayLines', placeholder: '100\n250\n500\n1000', info: 'Bei diesen Werten feiert der Bot mit einer Nachricht und @Erwähnung. Ein Wert je Zeile.' },
+      { key: 'counting.milestoneMessage', label: 'Meilenstein-Nachricht', type: 'textarea', rows: 3, placeholder: '🎉 **Meilenstein erreicht!** {user} hat bis **{count}** gezählt!', info: 'Platzhalter: {user} oder {mention} für die @Erwähnung, {count} für die erreichte Zahl.' },
+      { key: 'counting.successReaction', label: 'Reaktion bei richtig', type: 'text', placeholder: '✅', info: 'Reaktion auf korrekte Züge. Unicode- oder Custom-Emoji-Code möglich.' },
+      { key: 'counting.failReaction', label: 'Reaktion bei falsch', type: 'text', placeholder: '❌', info: 'Reaktion auf Fehlversuche. Unicode- oder Custom-Emoji-Code möglich.' },
+      { key: 'counting.statusChannelId', label: 'Status-Panel Kanal', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'Kein Status-Panel', info: 'Optionaler Kanal für ein Live-Panel mit aktuellem Stand, letztem Zähler, Fehlversuchen und den besten Serien. Nicht den Zähl-Kanal selbst verwenden.' },
+      { key: 'counting.statusPanelEnabled', label: 'Status-Panel aktiv', type: 'checkbox', info: 'Zeigt das Live-Panel im konfigurierten Status-Kanal. Das Panel aktualisiert sich automatisch und repariert sich nach einem Neustart.' },
+      { key: 'counting.rulesButtonLabel', label: 'Panel · Button „Regeln“', type: 'text', placeholder: '📖 Regeln', info: 'Label des Regeln-Buttons am Counting-Panel.' },
+      { key: 'counting.rankButtonLabel', label: 'Panel · Button „Mein Rang“', type: 'text', placeholder: '🏅 Mein Rang', info: 'Label des Rang-Buttons am Counting-Panel.' },
+      { key: 'counting.lossMessagesEnabled', label: 'Verlierer-Nachrichten aktiv', type: 'checkbox', info: 'Bei jedem Fehlversuch erscheint eine zufällige Verlierer-Nachricht aus über 100 eingebauten Sätzen (oder deinen eigenen).' },
+      { key: 'counting.lossMessages', label: 'Eigene Verlierer-Nachrichten', type: 'arrayLines', placeholder: '💥 Verloren! {user} hat die Serie beendet.\n🔄 Neustart! Wir zählen wieder bei 0.', info: 'Ein Satz je Zeile – leere Liste = die eingebaute Pool mit über 100 Sätzen. Platzhalter: {user} / {mention} für die @Erwähnung, {count} für die falsche Zahl, {next} für die nächste erwartete Zahl. Enthält ein Satz kein {next}, hängt der Bot „Nächste Zahl: X“ automatisch an.' },
+      { key: 'counting.clearChannelOnFail', label: 'Chat nach Fehlversuch aufräumen', type: 'checkbox', info: 'Nach einem Fehlversuch wird die falsche Nachricht und alles davor bis zum Panel-Embed gelöscht – so beginnt die neue Runde sauber. Die Verlierer-Nachricht bleibt für die eingestellte Zeit sichtbar und wird danach ebenfalls entfernt. Neue richtige Züge werden dabei nie gelöscht.' },
+      { key: 'counting.clearChannelDelaySeconds', label: 'Verlierer-Nachricht anzeigen (Sekunden)', type: 'number', min: 0, max: 300, step: 1, placeholder: '10', info: 'So lange bleibt die Verlierer-Nachricht nach einem Fehlversuch sichtbar, bevor sie entfernt wird. Standard: 10 Sekunden. 0 = sofort entfernen.' },
+      { key: 'counting.clearChannelKeepMessages', label: 'Nachrichten behalten (während des Zählens)', type: 'number', min: 0, max: 100, step: 1, placeholder: '5', info: 'Während des Zählens bleiben immer nur die neuesten X Nachrichten im Kanal (wie beim Level-Up-Kanal): Kommt eine neue dazu, wird die älteste gelöscht. Standard: 5. Nur das Panel-Embed und angepinnte Nachrichten bleiben immer stehen. 0 = nur das Panel bleibt.' },
+      { key: 'counting.strikesEnabled', label: 'Verwarnungen aktiv', type: 'checkbox', info: 'Wer wirklich unpassende Zahlen schreibt (Fehlversuch), bekommt 1 Verwarnung. Nach der eingestellten Anzahl folgt eine Chat-Sperre. Die Sperren werden lokal gespeichert und überleben Neustarts/Offline-Zeiten.' },
+      { key: 'counting.strikesToLock', label: 'Verwarnungen bis zur Sperre', type: 'number', min: 1, max: 20, step: 1, placeholder: '3', info: 'Nach so vielen Verwarnungen wird der User für die eingestellte Zeit vom Zähl-Kanal gesperrt.' },
+      { key: 'counting.strikeLockHours', label: 'Sperrdauer in Stunden', type: 'number', min: 1, max: 720, step: 1, placeholder: '24', info: 'Wie lange die Chat-Sperre nach Erreichen der Verwarnungs-Grenze dauert.' },
+      { key: 'counting.strikeLockMessage', label: 'Sperr-Nachricht', type: 'textarea', rows: 2, placeholder: '🚫 Chat-Sperre im Zähl-Kanal! Du hast {limit} Verwarnungen gesammelt…', info: 'Wird per DM + im Kanal gesendet. Platzhalter: {user}, {hours}. Leer = Standardtext.' },
+      { key: 'counting.strikeTolerance', label: 'Fehler-Toleranz', type: 'number', min: 0, max: 1000000, step: 1, placeholder: '1', info: 'Ein knapp daneben liegender Zug ist ein normaler Fehler und gibt KEINE Verwarnung – z. B. erwartet 4 und gesendet 5 (Abweichung 1, Standard-Toleranz). Erst größere Abweichungen gelten als „wirklich unpassende Zahl“. 0 = jede falsche Zahl verwarnt.' }
+    ]
+  },
+  {
     id: 'serverTagTracker',
     title: 'Server-Tag-Tracker',
     description: 'Server-Tag erkennen und Rollen automatisch synchronisieren',
@@ -520,11 +562,11 @@
     icon: 'TAG',
     fields: [
       { key: 'serverTagTracker.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Aktiviert die automatische Server-Tag-Erkennung und Rollensynchronisierung.' },
-      { key: 'serverTagTracker.monitorOnly', label: 'Nur prüfen – keine Rollen ändern', type: 'checkbox', info: 'Empfohlener Sicherheitsmodus für die erste Prüfung. Der Bot zeigt bestätigte Träger und geplante Änderungen, verändert aber keine Discord-Rollen.' },
+      { key: 'serverTagTracker.monitorOnly', label: 'Nur anzeigen – keine Rollen ändern', type: 'checkbox', info: 'Sicherer Vorschau-Modus. Der Bot zeigt: trägt unseren Server-Tag, trägt ihn nicht, oder Discord liefert gerade keine Tag-Daten. Rollen bleiben unverändert.' },
       { key: 'serverTagTracker.roleIds', label: 'Server-Tag-Rollen', type: 'multiRoleSelect', info: 'Wähle alle Rollen, die Server-Tag-Träger gleichzeitig erhalten sollen. Der Bot muss in der Rollenliste über jeder ausgewählten Rolle stehen.' },
-      { key: 'serverTagTracker.scanIntervalMinutes', label: 'Vollständiger Abgleich (Minuten)', type: 'number', min: 5, max: 1440, step: 5, info: 'Zusätzlicher Sicherheitsabgleich für verpasste Profiländerungen. Ereignisse werden unabhängig davon zeitnah verarbeitet.' },
-      { key: 'serverTagTracker.maxAssignmentsPerScan', label: 'Maximale neue Träger pro Abgleich', type: 'number', min: 1, max: 100, step: 1, info: 'Sicherheitslimit gegen Massenvergaben. Weitere bestätigte Kandidaten bleiben vorgemerkt und werden beim nächsten Abgleich erneut geprüft.' },
-      { key: 'serverTagTracker.startupScan', label: 'Beim Botstart vollständig prüfen', type: 'checkbox', info: 'Gleicht nach jedem Botstart alle aktuellen Mitglieder kontrolliert mit Discord ab.' },
+      { key: 'serverTagTracker.scanIntervalMinutes', label: 'Sicherheitsabgleich (Minuten)', type: 'number', min: 5, max: 1440, step: 5, info: 'Fallback für verpasste Discord-Profilereignisse. Normale Tag-Wechsel werden eventbasiert verarbeitet.' },
+      { key: 'serverTagTracker.maxAssignmentsPerScan', label: 'Massenlimit pro Abgleich', type: 'number', min: 1, max: 100, step: 1, info: 'Schützt vor ungewöhnlich vielen neuen Rollenvergaben in kurzer Zeit. Events sind davon nicht betroffen.' },
+      { key: 'serverTagTracker.startupScan', label: 'Beim Botstart abgleichen', type: 'checkbox', info: 'Korrigiert den Stand nach Offline-Zeit oder Neustart.' },
       { key: 'serverTagTracker.excludeBots', label: 'Bots ausschließen', type: 'checkbox', info: 'Bot-Accounts werden nicht geprüft und erhalten keine Server-Tag-Rolle.' },
       { key: 'serverTagTracker.excludedRoleIds', label: 'Ausgeschlossene Rollen', type: 'multiRoleSelect', info: 'Mitglieder mit einer dieser Rollen werden vollständig ignoriert. Praktisch für Bots, Integrationen oder besondere Teamkonten.' },
       { key: 'serverTagTracker.logChannelId', label: 'Server-Tag Log-Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Optionaler Team-Kanal für Rollenvergabe, Rollenentzug und echte Rollenfehler. Es werden keine DMs gesendet.' }
@@ -544,7 +586,23 @@
       { key: 'boostRoles.removableColorRoleIds', label: 'Booster-Farbrollen', type: 'multiRoleSelect', info: 'Wähle alle Farbrollen aus, die beim vollständigen Boost-Ende entfernt werden sollen.' },
       { key: 'boostRoles.boostInfoChannelId', label: 'Boost-Info-Kanal', type: 'channelSelect', placeholder: 'automatisch erkennen', info: 'Zusätzliche Bestätigung für Boosts. Ohne Auswahl erkennt der Bot einen Kanal mit „boost-info“ im Namen automatisch. Boost-Info ergänzt fehlende Belege, zählt aber niemals doppelt zu Discord-Systemnachrichten.' },
       { key: 'boostRoles.boostEndLogChannelId', label: 'Boost-Ende-Kanal', type: 'channelSelect', placeholder: 'automatisch erkennen', info: 'Vertrauenswürdige Quelle für tatsächlich beendete Boosts. Hinweise wie „Boost läuft am … ab“ werden ausdrücklich nicht als beendeter Boost gezählt.' },
-      { key: 'boostRoles.logChannelId', label: 'Booster Log Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Optionaler Kanal für nachvollziehbare Vergabe- und Entfernungsprotokolle ohne Rollen- oder Everyone-Pings.' }
+      { key: 'boostRoles.logChannelId', label: 'Booster Log Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Optionaler Kanal für nachvollziehbare Vergabe- und Entfernungsprotokolle ohne Rollen- oder Everyone-Pings.' },
+      { key: 'boostRoles.boostAnnounceEnabled', label: 'Boost-Benachrichtigung aktiv', type: 'checkbox', info: 'Sendet bei jedem neuen Boost automatisch das gestaltete Boost-Embed in den gewählten Kanal. Ein 1×-Booster erhält „1× geboostet“, ein 2×-Booster „2× geboostet“.' },
+      { key: 'boostRoles.boostAnnounceChannelId', label: 'Boost-Benachrichtigungs-Kanal', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Kanal für die Boost-Embeds. Das Design wird über den Button „Boost-Benachrichtigung bearbeiten“ im Embed Studio gestaltet.' },
+      { key: 'boostRoles.boostTopEnabled', label: 'Top-Booster-Liga aktiv', type: 'checkbox', info: 'Sendet genau eine Live-Nachricht mit den Top 1–3 Boostern in den gewählten Kanal und bearbeitet sie bei jeder Änderung. Leer gelassen erkennt der Bot automatisch einen Kanal mit „top-booster“ im Namen.' },
+      { key: 'boostRoles.boostTopChannelId', label: 'Kanal der Top-Booster-Liga', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'Automatisch: top-booster', info: 'Leer lassen: Der Bot erkennt den Textkanal „top-booster“ automatisch. Er sendet dort genau ein Embed und aktualisiert anschließend immer diese Nachricht.' },
+      { key: 'boostRoles.boostTopPingsEnabled', label: 'Top-Booster-Platzierungs-Pings senden', type: 'checkbox', info: 'Der Bot erwähnt die betroffenen Mitglieder, sobald sie neu in den Top 3 stehen, aufrücken, überholt werden oder aus den Top 3 verdrängt werden.' },
+      { key: 'boostRoles.boostTopPingChannelId', label: 'Kanal für Top-Booster-Pings', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'Automatisch: Top-Booster-Kanal', info: 'Leer lassen: Die Pings erscheinen im Kanal der Top-Booster-Liga. Alternativ kann ein eigener Kanal gewählt werden.' },
+      { key: 'boostRoles.boostTopPingLifetimeMinutes', label: 'Ping-Anzeigedauer in Minuten', type: 'number', min: 1, max: 60, step: 1, info: 'Nach dieser Zeit löschen sich die Platzierungs-Pings selbst. Standard: 5 Minuten.' },
+      { key: 'boostRoles.boostTopPlaceFieldName', label: 'Top-Booster · Feldname Platz', type: 'text', placeholder: 'PLATZ {place}', info: 'Überschrift jedes Podiums-Felds. {place} wird durch 1, 2 oder 3 ersetzt.' },
+      { key: 'boostRoles.boostTopPlaceLineTemplate', label: 'Top-Booster · Zeilen-Vorlage', type: 'text', placeholder: '{marker} {mention}\n> **{boostCount}×** geboostet', info: 'Format jeder Podiums-Zeile. Platzhalter: {marker} (Trophäe), {mention} (Ping), {boostCount} (Boost-Zahl), {place} (Platz).' },
+      { key: 'boostRoles.boostTopStatusFieldName', label: 'Top-Booster · Feldname Status', type: 'text', placeholder: 'STATUS', info: 'Überschrift des Status-Felds im Top-Booster-Embed.' },
+      { key: 'boostRoles.boostTopNextEvaluationFieldName', label: 'Top-Booster · Feldname nächste Auswertung', type: 'text', placeholder: 'NÄCHSTE AUSWERTUNG', info: 'Überschrift des Felds mit dem Zeitpunkt der nächsten Auswertung.' },
+      { key: 'boostRoles.boostTopEmptyFieldName', label: 'Top-Booster · Feldname ohne Booster', type: 'text', placeholder: 'TOP BOOSTER', info: 'Überschrift des Hinweis-Felds, solange keine aktiven Booster erfasst sind.' },
+      { key: 'boostRoles.boostTopEmptyText', label: 'Top-Booster · Text ohne Booster', type: 'text', placeholder: 'Noch keine aktiven Booster erfasst.', info: 'Hinweistext, solange keine aktiven Booster erfasst sind.' },
+      { key: 'boostRoles.boostTopPlaceName1', label: 'Top-Booster · Feldname Platz 1', type: 'text', placeholder: 'PLATZ 1', info: 'Individueller Feldname für Platz 1 im Embed.' },
+      { key: 'boostRoles.boostTopPlaceName2', label: 'Top-Booster · Feldname Platz 2', type: 'text', placeholder: 'PLATZ 2', info: 'Individueller Feldname für Platz 2 im Embed.' },
+      { key: 'boostRoles.boostTopPlaceName3', label: 'Top-Booster · Feldname Platz 3', type: 'text', placeholder: 'PLATZ 3', info: 'Individueller Feldname für Platz 3 im Embed.' }
     ]
   },
   {
@@ -557,12 +615,26 @@
       { key: 'heavenEconomy.enabled', label: 'Heaven Economy aktiv', type: 'checkbox', info: 'Aktiviert Coin-Konten, Boost-Meilensteine, VIP-Käufe und das Discord-Panel.' },
       { key: 'heavenEconomy.panelChannelId', label: 'Shop-Panel Kanal', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Der Bot erstellt oder aktualisiert dort automatisch genau eine Shop-Nachricht.' },
       { key: 'heavenEconomy.coinEmoji', label: 'Coin-Emoji', type: 'emoji', placeholder: 'Emoji auswählen ...', info: 'Wähle ein Server-, Bot- oder Standard-Emoji für Guthaben und Shop.' },
+      { key: 'heavenEconomy.coinGiftsEnabled', label: 'Coin-Geschenke aktiv', type: 'checkbox', info: 'Mitglieder können Coins über einen bestätigten, protokollierten Transfer an andere Servermitglieder verschenken.' },
+      { key: 'heavenEconomy.coinGiftMinAmount', label: 'Coin-Geschenk · Mindestbetrag', type: 'number', min: 1, max: 10000000, step: 1, info: 'Kleinster erlaubter Betrag pro Geschenk. Es gibt kein Tageslimit und keine Gebühr.' },
+      { key: 'heavenEconomy.coinGiftMaxAmount', label: 'Coin-Geschenk · Höchstbetrag', type: 'number', min: 1, max: 10000000, step: 1, info: 'Größter erlaubter Betrag einer einzelnen bestätigten Übertragung.' },
       { key: 'heavenEconomy.boostMilestoneReward', label: 'Coins pro neuer Boost-Stufe', type: 'number', min: 1, max: 10000, step: 1, info: 'Einmalige Belohnung für jede erstmals erreichte persönliche Boost-Anzahl.' },
       { key: 'heavenEconomy.vipRoleMappings', label: 'VIP-Stufen und Rollen', type: 'roleMappingSelect', info: 'Ordne den fünf Preisen die passenden Discord-Rollen zu. Schwellen: 500, 1000, 2500, 4000 und 5000 Coins.' },
+      { key: 'heavenEconomy.vipPanelEnabled', label: 'VIP-Panel aktiv', type: 'checkbox', info: 'Sendet genau eine Live-Nachricht mit allen VIP-Stufen und ihren Mitgliedern in den gewählten Kanal und bearbeitet sie bei jeder Änderung. Jede Stufe wird mit ihrem Rang-Emoji als eigenes Feld geführt.' },
+      { key: 'heavenEconomy.vipPanelChannelId', label: 'Kanal des VIP-Panels', type: 'channelSelect', channelTypes: [0, 5], placeholder: 'Automatisch: vip', info: 'Leer lassen: Der Bot erkennt den Textkanal „vip“ automatisch. Er sendet dort genau ein Embed mit allen VIP-Stufen zusammen und aktualisiert anschließend immer diese Nachricht.' },
+      { key: 'heavenEconomy.separatorRoleName', label: 'Name der VIP-Trennerrolle', type: 'text', placeholder: '━━ VIP ━━', info: 'Name der Begleitrolle, die automatisch erstellt wird, sobald die VIP-Trennerrolle vergeben wird.' },
+      { key: 'heavenEconomy.separatorRoleId', label: 'VIP-Trennerrolle', type: 'roleSelect', placeholder: 'Noch nicht erstellt ...', info: 'Jedes Mitglied mit mindestens einer aktiven VIP-Stufe erhält diese Begleitrolle automatisch. Sobald keine VIP-Stufe mehr aktiv ist, wird sie wieder entzogen.' },
       { key: 'heavenEconomy.paypalUrl', label: 'PayPal Kauf-Link', type: 'text', placeholder: 'https://www.paypal.com/...', info: 'Optionaler sicherer Checkout-Link. Ohne Link verweist das Panel auf den Support.' },
       { key: 'heavenEconomy.paysafecardUrl', label: 'Paysafecard Kauf-Link', type: 'text', placeholder: 'https://...', info: 'Optionaler Checkout-Link eines freigeschalteten Paysafecard-Händlerzugangs.' },
       { key: 'heavenEconomy.supportChannelId', label: 'Support-Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Fallback für Käufe und Rückfragen, falls keine automatische Zahlungsanbindung konfiguriert ist.' },
-      { key: 'heavenEconomy.logChannelId', label: 'Economy Log-Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Protokolliert Käufe, Geschenke, Meilensteine und Rollenfehler.' }
+      { key: 'heavenEconomy.logChannelId', label: 'Economy Log-Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Protokolliert Käufe, Geschenke, Meilensteine und Rollenfehler.' },
+      { key: 'heavenEconomy.accountButtonLabel', label: 'Panel · Button „Mein Konto“', type: 'text', placeholder: 'Mein Konto', info: 'Label des Konto-Buttons im Heaven-Coins-Panel.' },
+      { key: 'heavenEconomy.shopButtonLabel', label: 'Panel · Button „VIP-Shop“', type: 'text', placeholder: 'VIP-Shop', info: 'Label des Shop-Buttons im Heaven-Coins-Panel.' },
+      { key: 'heavenEconomy.giftButtonLabel', label: 'Panel · Button „VIP verschenken“', type: 'text', placeholder: 'VIP verschenken', info: 'Label des Geschenk-Buttons im Heaven-Coins-Panel.' },
+      { key: 'heavenEconomy.coinGiftButtonLabel', label: 'Panel · Button „Coins verschenken“', type: 'text', placeholder: 'Coins verschenken', info: 'Label des sicheren Mitglied-zu-Mitglied-Transfers im Heaven-Coins-Panel.' },
+      { key: 'heavenEconomy.buyButtonLabel', label: 'Panel · Button „Coins kaufen“', type: 'text', placeholder: 'Coins kaufen', info: 'Label des Kauf-Buttons im Heaven-Coins-Panel.' },
+      { key: 'heavenEconomy.progressButtonLabel', label: 'Panel · Button „Boost-Fortschritt“', type: 'text', placeholder: 'Boost-Fortschritt', info: 'Label des Fortschritts-Buttons im Heaven-Coins-Panel.' },
+      { key: 'heavenEconomy.adminButtonLabel', label: 'Panel · Button „Coin-Verwaltung“', type: 'text', placeholder: 'Coin-Verwaltung', info: 'Label des Admin-Buttons im Heaven-Coins-Panel.' }
     ]
   },
   {
@@ -589,24 +661,142 @@
       { key: 'antiraid.trustedUserIds', label: 'Vertrauenspersonen', type: 'arrayLines', placeholder: 'Discord-Nutzer-ID je Zeile', info: 'Optionale feste Ausnahmen für bekannte Personen. Rollen sind in der App direkt auswählbar; IDs werden nur für persönliche Ausnahmen benötigt.' },
       { key: 'antiraid.logChannelId', label: 'Raid-Schutz-Protokoll', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Privater Team-Kanal für erkannte Wellen, Schutzmodus und angewendete Maßnahmen.' }
     ]
+  },
+  {
+    id: 'memberVerify',
+    title: 'Mitglieder-Verifizierung',
+    description: 'Verify-Panel, Profil-Screening und Bot-Schutz',
+    detail: 'Prüft neue Mitglieder beim Beitritt (Ziffern-Namen, Links, verdächtige Begriffe, junge Konten), bannt klare Bot-/Spam-Kandidaten automatisch und lässt echte Mitglieder per Verify-Panel mit Fragebogen und Team-Freigabe in den Server.',
+    icon: '🛡️',
+    fields: [
+      { key: 'memberVerify.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Schaltet Profil-Screening, Auto-Bann und das Verify-Panel zusammen ein. Beim Verify wird zufällig eine Aufgabe aus 10 Typen gestellt (Bild-Captcha, Emoji zählen, Rechnen, Farben, Richtung, …).' },
+      { key: 'memberVerify.panelChannelId', label: 'Verify-Panel Kanal', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Kanal, in dem das Verify-Embed mit dem „Verifizieren“-Button gepflegt wird (wird automatisch gesendet/aktualisiert).' },
+      { key: 'memberVerify.verifiedRoleId', label: 'Verifizierte Rolle', type: 'roleSelect', placeholder: 'Rolle auswählen ...', info: 'Rolle, die nach erfolgreichem Verify vergeben wird. Der Bot muss in der Rollenhierarchie darüber stehen.' },
+      { key: 'memberVerify.unverifiedRoleId', label: 'Unverified-Rolle', type: 'roleSelect', placeholder: 'optional', info: 'Optional: eingeschränkte Rolle, die neue Mitglieder bis zum Verify bekommen und danach entfernt wird.' },
+      { key: 'memberVerify.welcomeChannelId', label: 'Willkommens-Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Kanal für die „Erfolgreich verifiziert“-Nachricht. Leer lassen, wenn keine Nachricht gesendet werden soll.' },
+      { key: 'memberVerify.welcomeMessage', label: 'Willkommens-Text', type: 'text', placeholder: 'Willkommen {user} – du wurdest verifiziert!', info: 'Template für die Nachricht nach erfolgreichem Verify. {user} pingt, {guild} schreibt den Servernamen.' },
+      { key: 'memberVerify.logChannelId', label: 'Verify-Protokoll', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Privater Team-Kanal: gebannte/gekickte Kandidaten, Freigabe-Warteschlange und manuelle Entscheidungen mit Bann-/Freigabe-Buttons.' },
+      { key: 'memberVerify.ownerPingRoleId', label: 'Team-Ping-Rolle', type: 'roleSelect', placeholder: 'optional', info: 'Rolle, die bei neuen verdächtigen Accounts gepingt wird, damit das Team im Protokoll entscheiden kann.' },
+      { key: 'memberVerify.requireTeamApproval', label: 'Team-Freigabe erforderlich', type: 'checkbox', info: 'Richtige Verify-Antworten führen nicht direkt zur Rolle, sondern in die Freigabe-Warteschlange. Ein Teammitglied muss im Protokoll auf „Freigeben“ klicken.' },
+      { key: 'memberVerify.kickOnFailedVerify', label: 'Bei falscher Antwort kicken', type: 'checkbox', info: 'Nach 3 falschen Versuchen wird das Mitglied gekickt. Ohne diese Option wird es stattdessen für 15 Minuten gesperrt.' },
+      { key: 'memberVerify.customQuestions', label: 'Eigene Verify-Fragen', type: 'textarea', rows: 4, placeholder: 'Eine Frage pro Zeile, z. B.:\nWie heißt unser Server?\nWelches Spiel spielen wir hauptsächlich?', info: 'Zusätzliche Freitext-Fragen bei Text-Aufgaben im Fragebogen (max. 3). Antworten können nicht automatisch geprüft werden – sie werden dem Team bei der Freigabe angezeigt.' },
+      { key: 'memberVerify.digitRatioPercent', label: 'Ziffern-Anteil Warnung (%)', type: 'number', min: 0, max: 100, step: 1, info: 'Ab diesem Ziffern-Anteil im Nutzernamen gilt ein Konto als bot-verdächtig (typisch für Spam-User). 0 deaktiviert die Warnung.' },
+      { key: 'memberVerify.maxDigitRun', label: 'Ziffernblock-Warnung', type: 'number', min: 0, max: 32, step: 1, info: 'Ab dieser Länge einer zusammenhängenden Ziffernfolge gilt der Name als bot-verdächtig. 0 deaktiviert die Warnung.' },
+      { key: 'memberVerify.autoBanFlaggedNames', label: 'Verdächtige Namen automatisch bannen', type: 'checkbox', info: 'Konten mit Ziffern-Flut, Links oder verbotenen Begriffen im Namen werden sofort gebannt statt nur protokolliert. Ohne diese Option geht alles in die Team-Entscheidung.' },
+      { key: 'memberVerify.minAccountAgeDays', label: 'Mindest-Kontoalter (Tage)', type: 'number', min: 0, max: 3650, step: 1, info: 'Konten, die jünger als diese Tage sind, gelten als bot-verdächtig und werden im Verify-Protokoll geflaggt. 0 deaktiviert die Altersprüfung.' },
+      { key: 'memberVerify.autoBanYoungAccounts', label: 'Zu junge Konten automatisch bannen', type: 'checkbox', info: 'Konten unter dem Mindest-Kontoalter werden sofort gebannt statt nur protokolliert (Hard-Flag).' },
+      { key: 'memberVerify.flaggedTerms', label: 'Zusätzliche verbotene Begriffe', type: 'arrayLines', placeholder: 'Ein Begriff je Zeile', info: 'Diese Begriffe (auch Teilwörter) im Nutzernamen führen zum Bann bzw. in die Team-Entscheidung. NSFW-/Beleidigungs-Basics sind bereits eingebaut.' },
+      { key: 'memberVerify.reminderEnabled', label: 'Reminder bei fehlendem Verify', type: 'checkbox', info: 'Unverifizierte Mitglieder werden nach ein paar Minuten im Verify-Kanal erinnert. Nach der maximalen Anzahl Erinnerungen wird das Mitglied gekickt.' },
+      { key: 'memberVerify.reminderDelayMinutes', label: 'Erste Erinnerung nach (Minuten)', type: 'number', min: 1, max: 1440, step: 1, info: 'Wartezeit nach dem Beitritt bis zur ersten Erinnerung (Standard: 5 Minuten).' },
+      { key: 'memberVerify.maxReminders', label: 'Maximale Erinnerungen vor Kick', type: 'number', min: 1, max: 10, step: 1, info: 'Nach so vielen Erinnerungen ohne Verify wird das Mitglied gekickt (Standard: 3).' },
+      { key: 'memberVerify.reminderChannelId', label: 'Reminder-Kanal', type: 'channelSelect', placeholder: 'optional – nutzt sonst den Verify-Panel-Kanal', info: 'Kanal, in dem die Erinnerungen gepostet werden. Leer lassen, um den Verify-Panel-Kanal zu nutzen.' },
+      { key: 'memberVerify.reminderPhrases', label: 'Eigene Erinnerungs-Sätze', type: 'textarea', rows: 4, placeholder: 'Ein Satz pro Zeile – {user} wird durch den Ping ersetzt', info: 'Verschiedene Sätze, aus denen bei jeder Erinnerung zufällig gewählt wird. Ohne Angabe werden eingebaute Sätze verwendet.' },
+      { key: 'memberVerify.panelStartButton', label: 'Panel · Button „Verifizieren“', type: 'text', placeholder: 'Verifizieren', info: 'Label des Haupt-Buttons am Verify-Panel. Platzhalter: {server}, {guild}.' },
+      { key: 'memberVerify.panelStatsButton', label: 'Panel · Button „Statistik“', type: 'text', placeholder: 'Statistik', info: 'Label des Statistik-Buttons am Verify-Panel.' },
+      { key: 'memberVerify.challengeTitle', label: 'Aufgabe · Titel', type: 'text', placeholder: 'Bist du ein Mensch?', info: 'Titel des privaten Aufgaben-Embeds (erscheint im DM des Mitglieds).' },
+      { key: 'memberVerify.challengeDescription', label: 'Aufgabe · Beschreibung', type: 'textarea', rows: 2, placeholder: 'Beantworte die Aufgabe, um zu beweisen, dass du ein echtes Mitglied bist.', info: 'Einleitungstext des Aufgaben-Embeds.' },
+      { key: 'memberVerify.challengeFooterButtons', label: 'Aufgabe · Footer (Button-Aufgabe)', type: 'text', placeholder: 'Nur für dich sichtbar · Klicke die richtige Antwort', info: 'Fußzeile bei Klick-Aufgaben.' },
+      { key: 'memberVerify.challengeFooterText', label: 'Aufgabe · Footer (Text-Aufgabe)', type: 'text', placeholder: 'Nur für dich sichtbar · {validMinutes} Minuten gültig', info: 'Fußzeile bei Text-Aufgaben. Platzhalter: {validMinutes}.' },
+      { key: 'memberVerify.modalTitle', label: 'Aufgabe · Modal-Titel', type: 'text', placeholder: 'FALLEN HEAVEN · Verifizierung', info: 'Titel des Antwort-Formulars (Modal).' },
+      { key: 'memberVerify.modalLabel', label: 'Aufgabe · Eingabe-Label', type: 'text', placeholder: 'Deine Antwort', info: 'Label des Antwort-Eingabefelds.' },
+      { key: 'memberVerify.modalPlaceholder', label: 'Aufgabe · Eingabe-Platzhalter', type: 'text', placeholder: '', info: 'Grauer Platzhalter-Text im Antwortfeld. Leer = keiner.' },
+      { key: 'memberVerify.answerButtonLabel', label: 'Aufgabe · Button „Antwort eingeben“', type: 'text', placeholder: 'Antwort eingeben', info: 'Label des Buttons, der das Antwort-Formular öffnet.' },
+      { key: 'memberVerify.statsTitle', label: 'Statistik · Titel', type: 'text', placeholder: 'Verifizierungs-Statistik', info: 'Titel des privaten Statistik-Embeds.' },
+      { key: 'memberVerify.statsAuthor', label: 'Statistik · Autor', type: 'text', placeholder: 'FALLEN HEAVEN · VERIFY-STATISTIK', info: 'Autorzeile des Statistik-Embeds.' },
+      { key: 'memberVerify.statsFooter', label: 'Statistik · Footer', type: 'text', placeholder: 'Nur für dich sichtbar', info: 'Fußzeile des Statistik-Embeds.' },
+      { key: 'memberVerify.statsVerifiedTotalField', label: 'Statistik · Feld „Verifiziert gesamt“', type: 'text', placeholder: '✅ Verifiziert gesamt', info: 'Feldname der Gesamt-Verifizierungen.' },
+      { key: 'memberVerify.statsVerifiedTodayField', label: 'Statistik · Feld „Heute verifiziert“', type: 'text', placeholder: 'Heute verifiziert', info: 'Feldname der Tages-Verifizierungen.' },
+      { key: 'memberVerify.statsApprovedField', label: 'Statistik · Feld „Team-Freigaben“', type: 'text', placeholder: 'Team-Freigaben', info: 'Feldname der manuellen Team-Freigaben.' },
+      { key: 'memberVerify.statsFlaggedField', label: 'Statistik · Feld „Geprüfte Konten“', type: 'text', placeholder: '🚩 Geprüfte Konten', info: 'Feldname der geprüften/geflagten Konten.' },
+      { key: 'memberVerify.statsBannedField', label: 'Statistik · Feld „Gebannt“', type: 'text', placeholder: '⛔ Gebannt', info: 'Feldname der Banns.' },
+      { key: 'memberVerify.statsKickedField', label: 'Statistik · Feld „Gekickt“', type: 'text', placeholder: '👢 Gekickt', info: 'Feldname der Kicks.' },
+      { key: 'memberVerify.statsPendingField', label: 'Statistik · Feld „Offene Verify“', type: 'text', placeholder: '⏳ Offene Verify', info: 'Feldname der offenen Verify-Sitzungen.' },
+      { key: 'memberVerify.statsAwaitingField', label: 'Statistik · Feld „Freigabe ausstehend“', type: 'text', placeholder: 'Freigabe ausstehend', info: 'Feldname der auf Team-Freigabe wartenden Mitglieder.' },
+      { key: 'memberVerify.decisionApprovePending', label: 'Team-Entscheidung · Button „Freigeben“', type: 'text', placeholder: 'Freigeben', info: 'Label des Freigeben-Buttons bei offener Entscheidung.' },
+      { key: 'memberVerify.decisionApproveDone', label: 'Team-Entscheidung · Button „Durchlassen“', type: 'text', placeholder: 'Durchlassen', info: 'Label des Freigeben-Buttons nach erneuter Prüfung.' },
+      { key: 'memberVerify.decisionApproveResolved', label: 'Team-Entscheidung · Button „Freigegeben“ (erledigt)', type: 'text', placeholder: 'Freigegeben', info: 'Label nach erfolgter Freigabe (ausgegraut).' },
+      { key: 'memberVerify.decisionBan', label: 'Team-Entscheidung · Button „Bannen“', type: 'text', placeholder: 'Bannen', info: 'Label des Bann-Buttons.' },
+      { key: 'memberVerify.decisionBanResolved', label: 'Team-Entscheidung · Button „Gebannt“ (erledigt)', type: 'text', placeholder: 'Gebannt', info: 'Label nach erfolgtem Bann (ausgegraut).' },
+      { key: 'memberVerify.approvalAuthor', label: 'Freigabe-Embed · Autor', type: 'text', placeholder: 'VERIFY-FREIGABE ERFORDERLICH', info: 'Autorzeile des Freigabe-Embeds im Team-Protokoll.' },
+      { key: 'memberVerify.approvalDescription', label: 'Freigabe-Embed · Beschreibung', type: 'text', placeholder: 'Die Aufgabe wurde richtig gelöst – Team-Freigabe steht aus.', info: 'Beschreibung des Freigabe-Embeds. Platzhalter: {member}, {username}, {task}, {server}.' },
+      { key: 'memberVerify.approvalMemberField', label: 'Freigabe-Embed · Feld „Mitglied“', type: 'text', placeholder: 'Mitglied', info: 'Feldname des Mitglieds-Felds.' },
+      { key: 'memberVerify.approvalTaskField', label: 'Freigabe-Embed · Feld „Gelöste Aufgabe“', type: 'text', placeholder: 'Gelöste Aufgabe', info: 'Feldname der gelösten Aufgabe.' },
+      { key: 'memberVerify.approvalAnswersField', label: 'Freigabe-Embed · Feld „Antworten“', type: 'text', placeholder: 'Antworten', info: 'Feldname des Antworten-Felds.' }
+    ]
+  },
+  {
+    id: 'botUpdates',
+    title: 'Bot-Updates',
+    description: 'Automatisches Update-Embed für den Server',
+    detail: 'Postet ein professionelles, im Embed Studio gestaltbares Update-Embed in einen Kanal – damit der Server mitbekommt, was neu ist oder gerade nicht richtig funktioniert. Der Bot sendet genau eine Nachricht und bearbeitet sie bei jedem Update automatisch.',
+    icon: '📢',
+    fields: [
+      { key: 'botUpdates.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Postet/aktualisiert das Update-Embed im gewählten Kanal.' },
+      { key: 'botUpdates.channelId', label: 'Update-Kanal', type: 'channelSelect', placeholder: 'Kanal auswählen ...', info: 'Kanal für das Update-Embed. Der Bot sendet genau eine Nachricht und bearbeitet sie bei jedem Bot-Update und beim Speichern.' },
+      { key: 'botUpdates.prevButtonLabel', label: 'Blättern-Button „Älter“', type: 'text', placeholder: 'Älter', info: 'Label des Links-Blätter-Buttons unter dem Update-Embed. Platzhalter: {guild}, {server}.' },
+      { key: 'botUpdates.nextButtonLabel', label: 'Blättern-Button „Neuer“', type: 'text', placeholder: 'Neuer', info: 'Label des Rechts-Blätter-Buttons unter dem Update-Embed. Platzhalter: {guild}, {server}.' }
+    ]
+  },
+  {
+    id: 'roleSaver',
+    title: 'Rollen-Saver',
+    description: 'Rollen speichern und bei Rückkehr wiederherstellen',
+    detail: 'Speichert beim Verlassen automatisch alle Rollen eines Mitglieds (außer Blacklist, @everyone und bot-verwaltete Rollen) und stellt sie bei der Rückkehr wieder her. Team- und Sonderrollen bleiben über die Blacklist geschützt, verwaltete Rollen (Level, Booster, AutoRole …) kommen automatisch von ihren eigenen Modulen zurück.',
+    icon: '💾',
+    fields: [
+      { key: 'roleSaver.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Aktiviert das Speichern beim Verlassen und die automatische Wiederherstellung bei der Rückkehr.' },
+      { key: 'roleSaver.blacklistedRoleIds', label: 'Blacklist-Rollen', type: 'multiRoleSelect', info: 'Diese Rollen werden beim Verlassen NIEMALS gespeichert und bei der Rückkehr NIEMALS vergeben – z. B. Team-, Admin- oder Sonderrollen.' },
+      { key: 'roleSaver.excludeBots', label: 'Bots ausschließen', type: 'checkbox', info: 'Bot-Accounts werden nicht gespeichert und erhalten keine Rollen zurück.' },
+      { key: 'roleSaver.skipManagedRoles', label: 'Verwaltete Rollen überspringen', type: 'checkbox', info: 'Rollen, die andere Module automatisch vergeben (Level, Booster, AutoRole, Server-Tag, Verify …), werden nicht gespeichert – sie kommen beim Wiederkommen von ihren eigenen Modulen zurück. Empfohlen: an.' },
+      { key: 'roleSaver.restoreDelaySeconds', label: 'Wiederherstellung nach (Sekunden)', type: 'number', min: 1, max: 120, step: 1, info: 'Wartezeit nach dem Beitritt, bis die Rollen vergeben werden. Standard: 8 Sekunden.' },
+      { key: 'roleSaver.retryCount', label: 'Wiederholungsversuche', type: 'number', min: 1, max: 5, step: 1, info: 'Wie oft die Rollenvergabe bei Fehlern wiederholt wird.' },
+      { key: 'roleSaver.maxStoredRoles', label: 'Maximal gespeicherte Rollen', type: 'number', min: 5, max: 100, step: 1, info: 'Obergrenze für gespeicherte Rollen pro Mitglied (Discord erlaubt maximal 250 Rollen insgesamt).' },
+      { key: 'roleSaver.logChannelId', label: 'Rollen-Saver Log-Kanal', type: 'channelSelect', placeholder: 'optional', info: 'Optionaler Kanal für Speicher- und Wiederherstellungs-Logs sowie echte Fehler.' }
+    ]
+  },
+  {
+    id: 'inactiveReminder',
+    title: 'Inaktivitäts-Erinnerung',
+    description: 'Inaktive Mitglieder freundlich anfragen und Server sauber halten',
+    detail: 'Mitglieder, die länger als die eingestellte Zeit (Standard: 180 Tage) weder eine Nachricht gesendet noch in einem Sprachkanal waren, erhalten ein professionelles DM-Embed mit zwei Buttons: „Ja, zum Server“ (Link-Button, öffnet die Server-Einladung) oder „Nein, bitte entfernen“ (freundlicher Kick). Es gibt KEINEN Auto-Kick: Wer nicht antwortet, bleibt einfach auf dem Server und bekommt keine weitere Nachricht. Alles wird in einer Datenbank gespeichert und übersteht Neustarts und Offline-Phasen. Die Voice-Aktivität wird automatisch aus den Carl-bot-Logs im Server-Index gelesen (kein eigenes Modul, keine Einstellung nötig). Das DM-Embed ist im Embed Studio editierbar (Platzhalter {user}, {username}, {displayName}, {guild}, {server}, {thresholdDays}).',
+    icon: '🕊️',
+    fields: [
+      { key: 'inactiveReminder.enabled', label: 'Modul aktiv', type: 'checkbox', info: 'Aktiviert den automatischen Start- und Tageslauf. DMs werden nur gesendet, wenn Mitgliederliste, Nachrichtenindex und Voice-Historie vollständig geprüft wurden und alle Inaktivitätskriterien erfüllt sind.' },
+      { key: 'inactiveReminder.thresholdDays', label: 'Inaktiv ab (Tage)', type: 'number', min: 7, max: 3650, step: 1, info: 'Nach wie vielen Tagen ohne Nachricht UND ohne Sprachkanal gilt ein Mitglied als inaktiv? Standard: 180 (ein halbes Jahr). Erst der Beitritt selbst muss ebenfalls älter sein – neue Mitglieder werden nie angeschrieben. Es gibt keinen Auto-Kick – nur das DM-Embed mit den Buttons.' },
+      { key: 'inactiveReminder.excludedRoleIds', label: 'Ausgenommene Rollen', type: 'multiRoleSelect', info: 'Mitglieder mit diesen Rollen (z. B. Team, VIP, Booster) werden nie angeschrieben.' },
+      { key: 'inactiveReminder.inviteUrl', label: 'Server-Einladung (Link für „Ja, zum Server“)', type: 'text', info: 'Der „Ja, zum Server“-Button im Erinnerungs-DM ist ein Link, der diese Einladung direkt in Discord öffnet. Standard: https://discord.gg/fallen-heaven' },
+      { key: 'inactiveReminder.joinButtonLabel', label: 'DM · Button „Ja, zum Server“', type: 'text', placeholder: 'Ja, zum Server', info: 'Label des Ja-Buttons im Erinnerungs-DM. Platzhalter: {user}, {guild}, {thresholdDays}.' },
+      { key: 'inactiveReminder.leaveButtonLabel', label: 'DM · Button „Nein, bitte entfernen“', type: 'text', placeholder: 'Nein, bitte entfernen', info: 'Label des Nein-Buttons im Erinnerungs-DM.' },
+      { key: 'inactiveReminder.joinInviteButtonLabel', label: 'Feedback · Button „Zum Server beitreten“', type: 'text', placeholder: '🔗 Zum Server beitreten', info: 'Label des Einladungs-Link-Buttons in der Ja-Antwort.' },
+      { key: 'inactiveReminder.stayConfirmTitle', label: 'Entscheidung · Titel „Du bleibst“', type: 'text', placeholder: '✅ Du bleibst bei uns!', info: 'Titel des bestätigten Embeds nach „Ja“ (Haupt-Embed bleibt, Inhalt wird ersetzt).' },
+      { key: 'inactiveReminder.stayConfirmDescription', label: 'Entscheidung · Text „Du bleibst“', type: 'textarea', rows: 3, placeholder: 'Danke! Du bist als aktiv markiert …', info: 'Beschreibung nach „Ja“. Platzhalter: {thresholdDays}.' },
+      { key: 'inactiveReminder.leaveConfirmTitle', label: 'Entscheidung · Titel „Du verlässt“', type: 'text', placeholder: '❌ Du verlässt den Server', info: 'Titel des bestätigten Embeds nach „Nein“.' },
+      { key: 'inactiveReminder.leaveConfirmDescription', label: 'Entscheidung · Text „Du verlässt“', type: 'textarea', rows: 3, placeholder: 'Du wirst freundlich vom Server entfernt …', info: 'Beschreibung nach „Nein“. Platzhalter: {thresholdDays}.' },
+      { key: 'inactiveReminder.joinReplyText', label: 'Antwort-Text nach „Ja“', type: 'textarea', rows: 3, placeholder: '✅ Danke! Du bist als **aktiv** markiert …', info: 'Sofortige Antwort im Chat nach „Ja“. Platzhalter: {guild}, {server}.' },
+      { key: 'inactiveReminder.stayReplyText', label: 'Antwort-Text nach „Ja, ich bleibe“ (Legacy)', type: 'textarea', rows: 2, placeholder: '✅ Danke! Du bleibst auf dem Server …', info: 'Antwort für alte „Ja, ich bleibe“-DMs. Platzhalter: {thresholdDays}.' },
+      { key: 'inactiveReminder.leaveReplyText', label: 'Antwort-Text nach „Nein“', type: 'textarea', rows: 2, placeholder: 'Verstanden. Vielen Dank …', info: 'Sofortige Antwort im Chat nach „Nein“. Platzhalter: {thresholdDays}.' }
+    ]
   }
 ];
 
 const toList = (value, fallback = []) => {
   if (Array.isArray(value)) {
     return value
-      .map((entry) => {
+      .flatMap((entry) => {
         if (entry && typeof entry === 'object') {
-          return entry;
+          return [entry];
         }
-        return String(entry).trim();
+        return String(entry)
+          .split(/[;,\n]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
       })
       .filter(Boolean);
   }
 
   if (typeof value === 'string') {
     return value
-      .split('\n')
+      .split(/[;,\n]/)
       .map((entry) => entry.trim())
       .filter(Boolean);
   }
@@ -662,6 +852,49 @@ const toSafeGifLibrary = (value) => {
 const toNumber = (value, fallback) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+// Das Inaktivitäts-Erinnerungs-Embed darf NIE leer sein: Wenn kein Design
+// gespeichert wurde (oder das gespeicherte nur leere Felder hat), wird das
+// Standard-Design benutzt – der Benutzer-Text (content) bleibt dabei erhalten.
+// Neuer Standard-Beschreibungstext (ab 3.9.206): beweist dem Mitglied seine
+// letzte Aktivität (Chat + Voice) und klingt nicht mehr doppelt. Wird auch als
+// Migration in alte gespeicherte Designs eingesetzt (nur Beschreibung ersetzen,
+// Titel/Farbe/Autor bleiben erhalten).
+const REMINDER_PROOF_DESCRIPTION = '**{user}**, deine letzte Aktivität auf **{guild}** liegt mehr als **{thresholdDays} Tage** zurück.\n\n📩 Letzte Nachricht: **{lastMessageAt}**\n🎙️ Letzter Sprachchat: **{lastVoiceAt}**\n\nMöchtest du weiterhin auf dem Server bleiben?\n\n✅ **Ja, ich bleibe** – du wirst nicht erneut angeschrieben.\n❌ **Nein, bitte entfernen** – wir verabschieden dich freundlich vom Server.';
+
+const hasReminderProofPlaceholders = (text) => {
+  const value = String(text || '');
+  return value.includes('{lastMessageAt}') || value.includes('{lastVoiceAt}') || value.includes('{lastActiveAt}');
+};
+
+const normalizeInactiveReminderDesign = (value, fallback) => {
+  const fallbackDesign = fallback && typeof fallback === 'object' && !Array.isArray(fallback) ? fallback : null;
+  const design = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  if (!design) return fallbackDesign || { content: '', embed: {} };
+  const embed = design.embed && typeof design.embed === 'object' && !Array.isArray(design.embed) ? design.embed : {};
+  const hasContent = String(embed.title || '').trim()
+    || String(embed.description || '').trim()
+    || (Array.isArray(embed.fields) && embed.fields.length > 0)
+    || String(design.content || '').trim();
+  if (hasContent || !fallbackDesign) {
+    // Migration: alte gespeicherte Designs ohne Aktivitäts-Beweis bekommen die
+    // neue, aufgeräumte Beschreibung – Titel/Farbe/Autor/Footer bleiben.
+    if (design && hasContent && !hasReminderProofPlaceholders(embed.description)) {
+      return {
+        ...design,
+        embed: {
+          ...embed,
+          description: REMINDER_PROOF_DESCRIPTION
+        }
+      };
+    }
+    return design;
+  }
+  return {
+    content: String(design.content || fallbackDesign.content || ''),
+    embed: fallbackDesign.embed && typeof fallbackDesign.embed === 'object' ? fallbackDesign.embed : {}
+  };
 };
 
 const configModuleAliases = {
@@ -751,14 +984,52 @@ const createEmbedTemplate = (id, name, category, embed, extra = {}) => ({
 
 const defaultEmbedTemplates = () => [
   createEmbedTemplate('level-up', 'Level Up', 'Automation', {
-    title: 'Level Up!',
-    description: '{user} hat Level **{level}** erreicht.',
-    color: '#35d07f',
+    title: '🏆 Level Up!',
+    // {content} = '{user}' (Mention im Content) → echter Discord-Ping. Die
+    // Beschreibung erwähnt den User genau EINMAL: {roleText} ist rollen-fokussiert
+    // ohne {user}, die Hauptzeile trägt die einzelne Markierung – keine
+    // doppelte Erwähnung, kein doppelter „erreicht“-Satz.
+    description: '{roleText}{user} hat Level **{level}** erreicht – jetzt **Rang #{rank}** 🚀\n\n{progressBar} **{progressPercent} %** · noch **{xpNeeded}** XP bis Level **{nextLevel}**',
+    color: '#f1b84b',
+    // Profilbild doppelt: kleine Author-Zeile (Name + Avatar) als Kopfzeile und
+    // großer Avatar als Thumbnail rechts – der Standard-Look für Level-Ups.
+    authorName: '{username}',
+    authorIconUrl: '{userAvatar}',
     thumbnailUrl: '{userAvatar}',
-    footerText: '{guild} Level-System',
+    footerText: 'FALLEN HEAVEN · Leveling · Level {level}',
+    timestamp: true,
     fields: [
       { name: 'Neues Level', value: '{level}', inline: true },
-      { name: 'Server', value: '{guild}', inline: true }
+      { name: 'XP gesamt', value: '{xp}', inline: true },
+      { name: 'Rang', value: '#{rank}', inline: true },
+      { name: 'Im Level', value: '{xpInLevel} / {levelSpan} XP', inline: true },
+      { name: 'Noch bis Level {nextLevel}', value: '{xpNeeded} XP', inline: true },
+      { name: 'Heute (Chat + Voice)', value: '{dailyXp} XP', inline: true }
+    ]
+  }, { content: '{user}' }),
+  createEmbedTemplate('level-up-info', 'Level Up Info', 'Automation', {
+    title: '🕊️ Leveling – so funktioniert es',
+    description: 'Mit Aktivität im Chat und im Sprachchat sammelst du XP und steigst Level für Level auf.\n\n'
+      + '**{rulesChatFieldName}**\n{rulesChatFieldText}\n\n'
+      + '**{rulesVoiceFieldName}**\n{rulesVoiceFieldText}\n\n'
+      + '**{rulesCurveFieldName}**\n{rulesCurveFieldText}\n\n'
+      + '**LEVEL & RANG**\n• `/level` – dein Stand · `/level @user` – den Stand anderer checken',
+    color: '#f1b84b',
+    footerText: 'FALLEN HEAVEN · Leveling',
+    timestamp: true,
+    fields: []
+  }),
+  createEmbedTemplate('level-card', 'Level Karte', 'Automation', {
+    title: 'Level {level}',
+    description: '{progressBar} **{progressPercent} %** · noch **{xpNeeded}** XP bis Level **{nextLevel}**\n\n**XP gesamt:** {xp} · **Rang:** #{rank} auf dem Server',
+    color: '#f1b84b',
+    thumbnailUrl: '{userAvatar}',
+    footerText: 'FALLEN HEAVEN · Leveling',
+    timestamp: true,
+    fields: [
+      { name: 'Im Level', value: '{xpInLevel} / {levelSpan} XP', inline: true },
+      { name: 'Heute (Chat + Voice)', value: '{dailyXp} XP', inline: true },
+      { name: 'Lifetime-XP', value: '{xp} XP', inline: true }
     ]
   }),
   createEmbedTemplate('welcome', 'Welcome', 'Automation', {
@@ -767,13 +1038,6 @@ const defaultEmbedTemplates = () => [
     color: '#27c4e8',
     thumbnailUrl: '{userAvatar}',
     footerText: 'Mitglied beigetreten'
-  }),
-  createEmbedTemplate('ai-chat-welcome', 'AI Chat Willkommen', 'Automation', {
-    title: 'Willkommen im AI Chat',
-    description: 'Frag mich einfach – hier ein paar Beispiele:\n\n• „Wie viele Mitglieder hat der Server gerade?“\n• „Wer führt die Aktivitäts-Liga diese Woche an?“\n• „Was ist der aktuelle Stand vom Projekt?“\n• „Erzähl mir etwas über dich“\n• „Suche im Internet nach …“\n\nSo funktioniert der Kanal:\n• Du schreibst normal in diesen Kanal, ich antworte direkt\n• Gespräche und Erinnerungen bleiben lokal auf deinem PC\n• Der Kanal wird nach längerer Inaktivität automatisch aufgeräumt – diese Nachricht bleibt immer stehen',
-    color: '#9b59b6',
-    footerText: 'Diese Nachricht bleibt beim automatischen Aufräumen erhalten.',
-    timestamp: true
   }),
   createEmbedTemplate('farewell', 'Farewell', 'Automation', {
     title: 'Mitglied verlassen',
@@ -809,6 +1073,22 @@ const normalizeEmbedFields = (fields = []) => {
 const normalizeEmbedTemplate = (template = {}, fallback = {}) => {
   const fallbackEmbed = fallback.embed || {};
   const embed = template.embed && typeof template.embed === 'object' ? template.embed : {};
+  // Außenbild (Embed Studio) lebt auf Template-Ebene – Legacy-Designs mit
+  // embed.outsideImageUrl werden einmalig nach oben gezogen.
+  const legacyOutsideUrl = String(embed.outsideImageUrl || '').trim();
+  const outsideImageUrl = String(template.outsideImageUrl ?? legacyOutsideUrl ?? '').trim();
+  const rawAttachment = template.outsideImageAttachment && typeof template.outsideImageAttachment === 'object'
+    ? template.outsideImageAttachment
+    : (embed.outsideImageAttachment && typeof embed.outsideImageAttachment === 'object' ? embed.outsideImageAttachment : null);
+  const outsideImageAttachment = rawAttachment
+    ? {
+        id: String(rawAttachment.id || '').trim(),
+        url: String(rawAttachment.url || '').trim().slice(0, 2000),
+        name: String(rawAttachment.name || rawAttachment.filename || 'Bild-Anhang').slice(0, 120),
+        size: Math.max(0, Number(rawAttachment.size || 0)),
+        ...(rawAttachment.localAsset === true ? { localAsset: true, mime: String(rawAttachment.mime || '') } : {})
+      }
+    : null;
 
   return {
     ...fallback,
@@ -820,6 +1100,8 @@ const normalizeEmbedTemplate = (template = {}, fallback = {}) => {
     content: String(template.content || fallback.content || '').slice(0, 2000),
     messageId: String(template.messageId || fallback.messageId || '').trim(),
     enabled: template.enabled !== false,
+    outsideImageUrl,
+    outsideImageAttachment,
     embed: {
       ...fallbackEmbed,
       ...embed,
@@ -837,7 +1119,18 @@ const normalizeEmbedTemplate = (template = {}, fallback = {}) => {
       fields: normalizeEmbedFields(embed.fields || fallbackEmbed.fields)
     }
   };
-};
+};// Standard-Status-Felder des Aktivitäts-Liga-Embeds (CHAT, SPRACHCHAT,
+// NÄCHSTE AUSWERTUNG, ZEITRAUM). Seit 3.9.231 Teil der editierbaren
+// Studio-Vorlage – der Bot ersetzt nur die Platzhalter.
+const defaultActivityStatusFields = () => [
+  // Individualisierte Platzhalter pro Platz (3.9.237): Jede Zeile zeigt
+  // die einzelnen dynamischen Slots (Marker, Mention, Value), umgeben von
+  // editierbarem Text – statt des monolithischen {chatBlock1}-Pakets.
+  { name: 'CHAT', value: '{chatMarker1} {chat1} > **{chatValue1}**\n{chatMarker2} {chat2} > **{chatValue2}**\n{chatMarker3} {chat3} > **{chatValue3}**', inline: true },
+  { name: 'SPRACHCHAT', value: '{voiceMarker1} {voice1} > **{voiceValue1}**\n{voiceMarker2} {voice2} > **{voiceValue2}**\n{voiceMarker3} {voice3} > **{voiceValue3}**', inline: true },
+  { name: 'NÄCHSTE AUSWERTUNG', value: '{nextEvaluation}', inline: true },
+  { name: 'ZEITRAUM', value: '{range}', inline: true }
+];
 
 const normalizeActivityPanelDesign = (value = {}, fallback = {}) => {
   const source = value && typeof value === 'object' ? value : {};
@@ -845,6 +1138,15 @@ const normalizeActivityPanelDesign = (value = {}, fallback = {}) => {
   const embed = source.embed && typeof source.embed === 'object' ? source.embed : {};
   const fallbackFields = Array.isArray(fallbackEmbed.fields) ? fallbackEmbed.fields : [];
   const sourceFields = Array.isArray(embed.fields) ? embed.fields : fallbackFields;
+  // Backfill 3.9.229/230: Alte gespeicherte Beschreibungen mit dem festen
+  // Standardtext („Die aktivsten Mitglieder im Chat und Sprachchat.“) oder
+  // {panelDescription} werden auf {completion} umgestellt – der ausgeschriebene
+  // Vollständigkeits-Text der Periode kommt aus dem editierbaren Modul-Feld.
+  const LEGACY = 'Die aktivsten Mitglieder im Chat und Sprachchat';
+  const rawDescription = String(embed.description ?? fallbackEmbed.description ?? '');
+  const description = rawDescription.includes(LEGACY) || rawDescription.includes('{panelDescription}')
+    ? '{completion}'
+    : rawDescription;
   return {
     id: 'activity-race-panel',
     name: 'Aktivitäts-Liga',
@@ -862,7 +1164,7 @@ const normalizeActivityPanelDesign = (value = {}, fallback = {}) => {
     embed: {
       title: String(embed.title ?? fallbackEmbed.title ?? '').slice(0, 256),
       url: String(embed.url ?? fallbackEmbed.url ?? '').trim().slice(0, 2_000),
-      description: String(embed.description ?? fallbackEmbed.description ?? '').slice(0, 4_096),
+      description: description.slice(0, 4_096),
       color: String(embed.color ?? fallbackEmbed.color ?? '').trim().slice(0, 16),
       authorName: String(embed.authorName ?? fallbackEmbed.authorName ?? '').slice(0, 256),
       authorIconUrl: String(embed.authorIconUrl ?? fallbackEmbed.authorIconUrl ?? '').trim().slice(0, 2_000),
@@ -871,16 +1173,392 @@ const normalizeActivityPanelDesign = (value = {}, fallback = {}) => {
       footerText: String(embed.footerText ?? fallbackEmbed.footerText ?? '').slice(0, 2_048),
       footerIconUrl: String(embed.footerIconUrl ?? fallbackEmbed.footerIconUrl ?? '').trim().slice(0, 2_000),
       timestamp: embed.timestamp !== false,
-      fields: sourceFields.slice(0, 21).map((field) => ({
+      // Die vier Status-Felder (CHAT, SPRACHCHAT, NÄCHSTE AUSWERTUNG, ZEITRAUM)
+      // bleiben immer Teil des Designs – fehlt eines (z. B. in alten Configs),
+      // wird es automatisch ergänzt. Das komplette Embed ist damit im Studio
+      // sichtbar und bearbeitbar; der Bot ersetzt nur die Platzhalter.
+      fields: (() => {
+        // Migration 3.9.232/237: {chatRanking}/{voiceRanking}-Paket → einzelne
+        // Platz-Blöcke; 3.9.237: Alte {chatBlock}-Defaults → individuelle
+        // Platzhalter (Marker, Mention, Value) mit editierbarem Rahmen-Text.
+        const migrateFieldValue = (input) => {
+          let v = String(input ?? '')
+            .replaceAll('{chatRanking}', '{chatBlock1}\n\n{chatBlock2}\n\n{chatBlock3}')
+            .replaceAll('{voiceRanking}', '{voiceBlock1}\n\n{voiceBlock2}\n\n{voiceBlock3}');
+          // Alte Monolith-Defaults in individuelle Platzhalter umwandeln.
+          if (v === '{chatBlock1}\n\n{chatBlock2}\n\n{chatBlock3}' || v === '{chatBlock1}\n{chatBlock2}\n{chatBlock3}') {
+            v = '{chatMarker1} {chat1} > **{chatValue1}**\n{chatMarker2} {chat2} > **{chatValue2}**\n{chatMarker3} {chat3} > **{chatValue3}**';
+          }
+          if (v === '{voiceBlock1}\n\n{voiceBlock2}\n\n{voiceBlock3}' || v === '{voiceBlock1}\n{voiceBlock2}\n{voiceBlock3}') {
+            v = '{voiceMarker1} {voice1} > **{voiceValue1}**\n{voiceMarker2} {voice2} > **{voiceValue2}**\n{voiceMarker3} {voice3} > **{voiceValue3}**';
+          }
+          return v;
+        };
+        const normalizedFields = sourceFields.slice(0, 21).map((field) => ({
+          name: String(field?.name || '').slice(0, 256),
+          value: migrateFieldValue(field?.value).slice(0, 1_024),
+          inline: field?.inline === true
+        })).filter((field) => field.name || field.value);
+        // Vier oder mehr gespeicherte Felder bilden bereits die vollständige
+        // Nutzer-Vorlage. Auch wenn CHAT/SPRACHCHAT umbenannt oder deren Text
+        // geändert wurde, dürfen die alten Defaults dann nicht zusätzlich
+        // zurückkommen und das Embed verdoppeln.
+        const missing = normalizedFields.length >= defaultActivityStatusFields().length
+          ? []
+          : defaultActivityStatusFields()
+            .filter((field) => !normalizedFields.some((entry) =>
+              entry.name === field.name || String(entry.value) === field.value));
+        return [...missing, ...normalizedFields].slice(0, 25);
+      })()
+    }
+  };
+};
+
+const normalizeActivityPingInfoDesign = (value = {}, fallback = {}) => {
+  const source = value && typeof value === 'object' ? value : {};
+  const fallbackEmbeds = Array.isArray(fallback.embeds) ? fallback.embeds : [fallback.embed || {}];
+  const sourceEmbeds = (Array.isArray(source.embeds) ? source.embeds : [source.embed]).filter((entry) => entry && typeof entry === 'object');
+  const attachment = source.outsideImageAttachment && typeof source.outsideImageAttachment === 'object'
+    ? {
+        id: String(source.outsideImageAttachment.id || ''),
+        url: String(source.outsideImageAttachment.url || '').slice(0, 2048),
+        name: String(source.outsideImageAttachment.name || source.outsideImageName || 'activity-race-ping-info.png').slice(0, 120),
+        size: Math.max(0, Number(source.outsideImageAttachment.size || 0)),
+        ...(source.outsideImageAttachment.localAsset === true ? { localAsset: true, mime: String(source.outsideImageAttachment.mime || '').slice(0, 100) } : {})
+      }
+    : null;
+  return {
+    content: String(source.content ?? fallback.content ?? '').slice(0, 2000),
+    outsideImageUrl: String(source.outsideImageUrl ?? fallback.outsideImageUrl ?? '').slice(0, 2048),
+    outsideImageName: String(source.outsideImageName || attachment?.name || '').slice(0, 120),
+    outsideImageSize: Math.max(0, Number(source.outsideImageSize || attachment?.size || 0)),
+    outsideImageAttachment: attachment,
+    embeds: (sourceEmbeds.length ? sourceEmbeds : fallbackEmbeds).slice(0, 10).map((embed) => ({
+      title: String(embed?.title || '').slice(0, 256),
+      url: String(embed?.url || '').slice(0, 2048),
+      description: String(embed?.description || '').slice(0, 4096),
+      color: String(embed?.color || '#6fd8ff').slice(0, 16),
+      authorName: String(embed?.authorName || '').slice(0, 256),
+      authorIconUrl: String(embed?.authorIconUrl || '').slice(0, 2048),
+      thumbnailUrl: String(embed?.thumbnailUrl || '').slice(0, 2048),
+      imageUrl: String(embed?.imageUrl || '').slice(0, 2048),
+      footerText: String(embed?.footerText || '').slice(0, 2048),
+      footerIconUrl: String(embed?.footerIconUrl || '').slice(0, 2048),
+      timestamp: embed?.timestamp === true,
+      fields: (Array.isArray(embed?.fields) ? embed.fields : []).slice(0, 25).map((field) => ({
         name: String(field?.name || '').slice(0, 256),
-        value: String(field?.value || '').slice(0, 1_024),
+        value: String(field?.value || '').slice(0, 1024),
+        inline: field?.inline === true
+      })).filter((field) => field.name || field.value)
+    }))
+  };
+};
+
+const normalizeTempVoiceInterfaceConfigDesign = (value, fallback = {}) => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+  const fallbackEmbed = fallback?.embed && typeof fallback.embed === 'object' ? fallback.embed : {};
+  const embed = source?.embed && typeof source.embed === 'object' && !Array.isArray(source.embed) ? source.embed : fallbackEmbed;
+  const validUrl = (url) => {
+    const text = String(url || '').trim().slice(0, 2048);
+    return !text || /^https?:\/\/[^\s]+$/i.test(text) ? text : '';
+  };
+  const attachment = source?.outsideImageAttachment && typeof source.outsideImageAttachment === 'object' && !Array.isArray(source.outsideImageAttachment)
+    ? {
+        id: String(source.outsideImageAttachment.id || '').slice(0, 128),
+        url: validUrl(source.outsideImageAttachment.url),
+        name: String(source.outsideImageAttachment.name || 'tempvoice.png').slice(0, 120),
+        size: Math.max(0, Number(source.outsideImageAttachment.size || 0)),
+        ...(source.outsideImageAttachment.localAsset === true
+          ? { localAsset: true, mime: String(source.outsideImageAttachment.mime || '').slice(0, 80) }
+          : {})
+      }
+    : null;
+  return {
+    content: String(source?.content || '').slice(0, 2000),
+    outsideImageUrl: String(source?.outsideImageUrl || '').trim(),
+    outsideImageAttachment: attachment,
+    embed: {
+      title: String(embed.title ?? fallbackEmbed.title ?? '').slice(0, 256),
+      url: validUrl(embed.url),
+      description: String(embed.description ?? fallbackEmbed.description ?? '').slice(0, 4096),
+      color: /^#[0-9a-f]{6}$/i.test(String(embed.color || '')) ? String(embed.color).toLowerCase() : String(fallbackEmbed.color || '#2b2d31'),
+      authorName: String(embed.authorName ?? fallbackEmbed.authorName ?? '').slice(0, 256),
+      authorIconUrl: validUrl(embed.authorIconUrl),
+      thumbnailUrl: validUrl(embed.thumbnailUrl),
+      imageUrl: validUrl(embed.imageUrl),
+      footerText: String(embed.footerText ?? fallbackEmbed.footerText ?? '').slice(0, 2048),
+      footerIconUrl: validUrl(embed.footerIconUrl),
+      timestamp: embed.timestamp === true,
+      fields: (Array.isArray(embed.fields) ? embed.fields : (fallbackEmbed.fields || [])).slice(0, 25).map((field) => ({
+        name: String(field?.name || '').slice(0, 256),
+        value: String(field?.value || '').slice(0, 1024),
+        inline: field?.inline === true
+      })).filter((field) => field.name && field.value)
+    }
+  };
+};
+const activityPeriodDesignFallback = (value = {}) => ({
+  ...(value && typeof value === 'object' ? value : {}),
+  content: '',
+  outsideImageUrl: '',
+  outsideImageAttachment: null
+});
+// Koppelt die Feld-Überschriften an die Modul-Felder (chatFieldName usw.), solange
+// das Design exakt die Standard-Status-Felder trägt. Sobald der Nutzer ein Feld
+// im Embed Studio anpasst, übernimmt das Design die volle Kontrolle.
+const applyActivityStatusFieldNames = (design, values = {}, fallback = {}) => {
+  const defaults = defaultActivityStatusFields();
+  const fields = design?.embed?.fields || [];
+  const isDefaultSet = fields.length === defaults.length
+    && fields.every((field, index) => field?.name === defaults[index].name
+      && field?.value === defaults[index].value
+      && field?.inline === defaults[index].inline);
+  if (!isDefaultSet) return design;
+  const nameKeys = ['chatFieldName', 'voiceFieldName', 'nextEvaluationFieldName', 'rangeFieldName'];
+  return {
+    ...design,
+    embed: {
+      ...design.embed,
+      fields: defaults.map((field, index) => ({
+        ...field,
+        name: String(values?.[nameKeys[index]] ?? fallback?.[nameKeys[index]] ?? field.name).slice(0, 256)
+      }))
+    }
+  };
+};
+
+const DEFAULT_LEVEL_ROLE_BLOCK_TEMPLATE = () => Array.from({ length: 20 }, (_, index) => `{levelRoleBlock${index + 1}}`).join('\n');
+const migrateDefaultLevelRoleTemplate = (value) => String(value ?? '').replaceAll('{levelRoles}', DEFAULT_LEVEL_ROLE_BLOCK_TEMPLATE());
+const defaultLevelsPanelDesign = () => ({
+  content: '',
+  outsideImageUrl: '',
+  outsideImageAttachment: null,
+  embed: {
+    title: '💯 Leveln',
+    url: '',
+    description: `Diese Rollen kannst du durch Aktivität im Chat und in den Sprachkanälen freischalten. Je höher dein Level, desto höher dein Rang.\n\n${DEFAULT_LEVEL_ROLE_BLOCK_TEMPLATE()}`,
+    color: '#8b82ff',
+    authorName: '',
+    authorIconUrl: '',
+    thumbnailUrl: '',
+    imageUrl: '',
+    footerText: 'FALLEN HEAVEN wünscht dir einen schönen Aufenthalt.',
+    footerIconUrl: '',
+    timestamp: true,
+    fields: []
+  }
+});
+const DEFAULT_BOT_CHANGE_LINE_TEMPLATE = () => Array.from({ length: 10 }, (_, index) => `• {change${index + 1}}`).join('\n');
+const migrateDefaultBotUpdatesTemplate = (value) => {
+  let result = String(value ?? '').replaceAll('{changelog}', DEFAULT_BOT_CHANGE_LINE_TEMPLATE());
+  for (let index = 1; index <= 10; index += 1) {
+    result = result.replaceAll(`{changeBlock${index}}`, `• {change${index}}`);
+  }
+  return result;
+};
+const defaultBotUpdatesFields = () => [
+  {
+    name: 'Was ist neu',
+    value: `📢 **Bot v{version}** – die wichtigsten Neuerungen:\n${DEFAULT_BOT_CHANGE_LINE_TEMPLATE()}`,
+    inline: false
+  },
+  {
+    name: 'Bekannte Probleme',
+    value: '⚠️ Sollte etwas nicht rund laufen, wird es hier im nächsten Update kommuniziert. Bei Fragen wende dich ans Team.',
+    inline: false
+  }
+];
+const defaultBotUpdatesDesign = () => ({
+  content: '',
+  outsideImageUrl: '',
+  outsideImageAttachment: null,
+  embed: {
+    title: '🔔 Bot-Update v{version} · Update #{updateCount}',
+    url: '',
+    description: 'Hier erfährst du, was am Bot gerade neu ist – und was gerade nicht rund läuft.',
+    color: '#8b82ff',
+    authorName: 'FALLEN HEAVEN',
+    authorIconUrl: '',
+    thumbnailUrl: '',
+    imageUrl: '',
+    footerText: 'FALLEN HEAVEN · Updates',
+    footerIconUrl: '',
+    timestamp: true,
+    fields: defaultBotUpdatesFields()
+  }
+});
+const safeDesignText = (value, fallback = '', max = 4096) => String(value ?? fallback).slice(0, max);
+const normalizeBotUpdatesDesign = (value = {}) => {
+  const fallback = defaultBotUpdatesDesign();
+  const embed = value?.embed && typeof value.embed === 'object' ? value.embed : {};
+  return {
+    content: safeDesignText(migrateDefaultBotUpdatesTemplate(value?.content), fallback.content, 2000),
+    outsideImageUrl: /^https?:\/\//i.test(String(value?.outsideImageUrl || '')) ? String(value.outsideImageUrl) : '',
+    outsideImageAttachment: value?.outsideImageAttachment && typeof value.outsideImageAttachment === 'object'
+      ? {
+        id: String(value.outsideImageAttachment.id || ''),
+        url: String(value.outsideImageAttachment.url || ''),
+        name: String(value.outsideImageAttachment.name || 'fallen-heaven-update.png'),
+        size: Math.max(0, Number(value.outsideImageAttachment.size || 0))
+      }
+      : null,
+    embed: {
+      title: safeDesignText(migrateDefaultBotUpdatesTemplate(embed.title), fallback.embed.title, 256),
+      url: /^https?:\/\//i.test(String(embed.url || '')) ? String(embed.url) : '',
+      description: safeDesignText(migrateDefaultBotUpdatesTemplate(embed.description), fallback.embed.description, 4096),
+      color: String(embed.color || fallback.embed.color).slice(0, 16),
+      authorName: safeDesignText(migrateDefaultBotUpdatesTemplate(embed.authorName), fallback.embed.authorName, 256),
+      authorIconUrl: /^https?:\/\//i.test(String(embed.authorIconUrl || '')) ? String(embed.authorIconUrl) : '',
+      thumbnailUrl: /^https?:\/\//i.test(String(embed.thumbnailUrl || '')) ? String(embed.thumbnailUrl) : '',
+      imageUrl: /^https?:\/\//i.test(String(embed.imageUrl || '')) ? String(embed.imageUrl) : '',
+      footerText: safeDesignText(migrateDefaultBotUpdatesTemplate(embed.footerText), fallback.embed.footerText, 2048),
+      footerIconUrl: /^https?:\/\//i.test(String(embed.footerIconUrl || '')) ? String(embed.footerIconUrl) : '',
+      timestamp: embed.timestamp !== false,
+      fields: normalizeBotUpdatesFields(embed.fields)
+    }
+  };
+};
+const normalizeBotUpdatesFields = (rawFields) => {
+  const fields = (Array.isArray(rawFields) ? rawFields : []).slice(0, 21).map((field) => ({
+    name: safeDesignText(field?.name, '', 256),
+    value: safeDesignText(migrateDefaultBotUpdatesTemplate(field?.value), '', 1024),
+    inline: field?.inline === true
+  })).filter((field) => field.name || field.value);
+  if (!fields.length) return defaultBotUpdatesFields();
+  const defaults = defaultBotUpdatesFields();
+  const isLegacy = (value) => /fülle dieses feld|fuelle dieses feld|trage hier|bitte ausfüllen|bitte ausfuellen|verbesserte websuche/.test(String(value || '').toLowerCase());
+  const replaced = fields.map((field) => {
+    if (!isLegacy(field.value)) return field;
+    const match = defaults.find((candidate) => candidate.name === field.name) || defaults[0];
+    return { ...field, name: match.name, value: match.value };
+  });
+  return replaced;
+};
+const normalizeLevelsPanelDesign = (value = {}) => {
+  const fallback = defaultLevelsPanelDesign();
+  const source = value && typeof value === 'object' ? value : {};
+  const fallbackEmbed = fallback.embed;
+  const embed = source.embed && typeof source.embed === 'object' ? source.embed : {};
+  return {
+    content: String(source.content ?? fallback.content ?? '').slice(0, 2_000),
+    outsideImageUrl: String(source.outsideImageUrl ?? fallback.outsideImageUrl ?? '').trim().slice(0, 2_000),
+    outsideImageAttachment: source.outsideImageAttachment && typeof source.outsideImageAttachment === 'object'
+      ? {
+          id: String(source.outsideImageAttachment.id || '').trim(),
+          url: String(source.outsideImageAttachment.url || '').trim().slice(0, 2_000),
+          name: String(source.outsideImageAttachment.name || '').trim().slice(0, 120),
+          size: Math.max(0, Number(source.outsideImageAttachment.size || 0))
+        }
+      : null,
+    embed: {
+      title: String(embed.title ?? fallbackEmbed.title ?? '').slice(0, 256),
+      url: String(embed.url ?? fallbackEmbed.url ?? '').trim().slice(0, 2_000),
+      description: migrateDefaultLevelRoleTemplate(embed.description ?? fallbackEmbed.description ?? '').slice(0, 4_096),
+      color: String(embed.color ?? fallbackEmbed.color ?? '').trim().slice(0, 16),
+      authorName: String(embed.authorName ?? fallbackEmbed.authorName ?? '').slice(0, 256),
+      authorIconUrl: String(embed.authorIconUrl ?? fallbackEmbed.authorIconUrl ?? '').trim().slice(0, 2_000),
+      thumbnailUrl: String(embed.thumbnailUrl ?? fallbackEmbed.thumbnailUrl ?? '').trim().slice(0, 2_000),
+      imageUrl: String(embed.imageUrl ?? fallbackEmbed.imageUrl ?? '').trim().slice(0, 2_000),
+      footerText: String(embed.footerText ?? fallbackEmbed.footerText ?? '').slice(0, 2_048),
+      footerIconUrl: String(embed.footerIconUrl ?? fallbackEmbed.footerIconUrl ?? '').trim().slice(0, 2_000),
+      timestamp: embed.timestamp !== false,
+      fields: (Array.isArray(embed.fields) ? embed.fields : fallbackEmbed.fields).slice(0, 21).map((field) => ({
+        name: String(field?.name || '').slice(0, 256),
+        value: migrateDefaultLevelRoleTemplate(field?.value || '').slice(0, 1_024),
         inline: field?.inline === true
       })).filter((field) => field.name || field.value)
     }
   };
 };
+// Wählt das panelDesign: explizit gesetztes Design gewinnt; sonst werden die alten
+// Textfelder (Titel/Beschreibung/Fußzeile/Farbe) migriert; ansonsten das Standard-Design.
+const resolveLevelsPanelDesign = (rawLevels = {}, mergedLevels = {}) => {
+  const explicit = rawLevels?.panelDesign && typeof rawLevels.panelDesign === 'object' ? rawLevels.panelDesign : null;
+  if (explicit) return explicit;
+  const hasLegacyFields = ['levelRolesPanelTitle', 'levelRolesPanelDescription', 'levelRolesPanelFooter', 'levelRolesPanelColor']
+    .some((key) => Object.prototype.hasOwnProperty.call(rawLevels || {}, key));
+  if (hasLegacyFields) return migrateLegacyLevelsPanelDesign(rawLevels);
+  return mergedLevels?.panelDesign;
+};
+// Übernimmt die alten Textfelder (Titel/Beschreibung/Fußzeile/Farbe) in das neue
+// panelDesign-Format, damit bestehende Einstellungen beim Update nicht verloren gehen.
+const migrateLegacyLevelsPanelDesign = (levels = {}) => {
+  const fallback = defaultLevelsPanelDesign();
+  const description = String(levels?.levelRolesPanelDescription || fallback.embed.description).trim();
+  const migratedDescription = migrateDefaultLevelRoleTemplate(description);
+  const descriptionWithRoles = /\{levelRole(?:Block|Name|Level)\d+\}/.test(migratedDescription)
+    ? migratedDescription
+    : `${migratedDescription}\n\n${DEFAULT_LEVEL_ROLE_BLOCK_TEMPLATE()}`;
+  return {
+    content: '',
+    outsideImageUrl: '',
+    outsideImageAttachment: null,
+    embed: {
+      title: String(levels?.levelRolesPanelTitle || fallback.embed.title).trim(),
+      url: '',
+      description: descriptionWithRoles,
+      color: String(levels?.levelRolesPanelColor || fallback.embed.color).trim(),
+      authorName: '',
+      authorIconUrl: '',
+      thumbnailUrl: '',
+      imageUrl: '',
+      footerText: String(levels?.levelRolesPanelFooter || fallback.embed.footerText).trim(),
+      footerIconUrl: '',
+      timestamp: true,
+      fields: []
+    }
+  };
+};
 
 const cryptoRandomId = () => `embed-${Math.random().toString(36).slice(2, 10)}`;
+
+// Hebt gespeicherte Level-Templates, die noch das alte (veraltete) Design
+// enthalten, automatisch auf das aktuelle Fallen-Heaven-Design an – einmalig,
+// ohne eigene Anpassungen des Nutzers an anderen Templates anzufassen.
+const migrateLegacyLevelTemplate = (override, fallback) => {
+  if (!override || !fallback) return override;
+  const id = String(override.id || '');
+  if (id !== 'level-up' && id !== 'level-card' && id !== 'level-up-info') return override;
+  const embed = override.embed && typeof override.embed === 'object' ? override.embed : {};
+  if (id === 'level-card' && Array.isArray(embed.fields)) {
+    const fields = embed.fields.map((field) => {
+      const isRetiredBalanceField = String(field?.name || '') === 'Liga-Bonus'
+        && String(field?.value || '') === '{bonusXp} XP';
+      return isRetiredBalanceField
+        ? { ...field, name: 'Lifetime-XP', value: '{xp} XP' }
+        : field;
+    });
+    if (fields.some((field, index) => field !== embed.fields[index])) {
+      return { ...override, embed: { ...embed, fields } };
+    }
+  }
+  const title = String(embed.title || '');
+  const description = String(embed.description || '');
+  const legacyLevelInfoText = id === 'level-up-info'
+    && (
+      (!description.includes('{rules') && (
+        title === '💜 Leveling – so funktioniert es'
+        || title === '🕊️ Leveling – so funktioniert es'
+        || (description.includes('CHAT-XP') && description.includes('VOICE-XP'))
+        || (description.includes('LEVEL PRÜFEN') && description.includes('NO-XP'))
+        || description.includes('**SPRACHCHAT**')
+      ))
+      || (description.includes('{rulesBonusFieldName}') && description.includes('{rulesBonusFieldText}'))
+    );
+  const legacy = id === 'level-card'
+    ? title === '{username} · Level {level}'
+    : id === 'level-up-info'
+      ? legacyLevelInfoText
+      : (title === 'Level Up!' || description.includes('erreicht und steigt in der Rangliste auf')
+        // Design v2: Der bisherige Standard (ohne Author-Zeile, „Rang #") wird
+        // einmalig auf das neue Level-Up-Design (Author + Thumbnail) gehoben.
+        || (title === '🏆 Level Up!'
+          && description.includes('hat Level **{level}** erreicht – Rang')
+          && String(embed.authorName || '') === ''
+          && String(embed.thumbnailUrl || '') === '{userAvatar}'));
+  if (!legacy) return override;
+  return { ...override, embed: { ...(fallback.embed || {}) } };
+};
 
 const normalizeEmbeds = (value = {}, fallback = {}) => {
   const defaultTemplates = Array.isArray(fallback.templates) ? fallback.templates : defaultEmbedTemplates();
@@ -888,7 +1566,7 @@ const normalizeEmbeds = (value = {}, fallback = {}) => {
   const byId = new Map(defaultTemplates.map((template) => [template.id, template]));
   const normalizedDefaults = defaultTemplates.map((template) => {
     const override = providedTemplates.find((entry) => entry?.id === template.id);
-    return normalizeEmbedTemplate(override || template, template);
+    return normalizeEmbedTemplate(migrateLegacyLevelTemplate(override, template) || template, template);
   });
   const customTemplates = providedTemplates
     .filter((template) => template?.id && !byId.has(template.id))
@@ -898,6 +1576,92 @@ const normalizeEmbeds = (value = {}, fallback = {}) => {
     selectedTemplateId: String(value.selectedTemplateId || fallback.selectedTemplateId || normalizedDefaults[0]?.id || ''),
     templates: [...normalizedDefaults, ...customTemplates]
   };
+};
+
+// Editierbare Embed-Vorlagen der Public-Call-Moderation (Embed Studio).
+const DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS = {
+  panel: {
+    title: '🎙️ Öffentlicher Call · Moderation',
+    description: 'In öffentlichen Calls kannst du per Abstimmung entscheiden, ob ein Mitglied den Call verlassen muss. Wähle **„Rauswurf beantragen“**, nenne das Mitglied und wähle einen Grund – die Community stimmt ab. Bei wiederholten Verstößen greift automatisch ein Server-Timeout.',
+    color: '#2b2d31',
+    authorName: '',
+    authorIconUrl: '',
+    footerText: '{server}',
+    timestamp: false
+  },
+  vote: {
+    title: '🚫 Rauswurf-Abstimmung',
+    description: 'Soll **{targetMention}** aus {channel} entfernt werden?\n\n**Grund:** {reason}\n{progress}',
+    color: '#ed4245',
+    authorName: '{targetName}',
+    authorIconUrl: '',
+    footerText: '{server}',
+    timestamp: false
+  },
+  result: {
+    title: '{outcome}',
+    description: '**{targetMention}** {outcomeText}.',
+    color: '#57f287',
+    authorName: '{targetName}',
+    authorIconUrl: '',
+    footerText: '{server}',
+    timestamp: false
+  },
+  team: {
+    title: '🚫 Rauswurf aus öffentlichem Call',
+    description: '**{targetMention}** wurde per Community-Abstimmung aus {channel} entfernt.',
+    color: '#ed4245',
+    authorName: '{targetName}',
+    authorIconUrl: '',
+    footerText: '{server}',
+    timestamp: true
+  },
+  dm: {
+    title: '🚫 Du wurdest aus dem Call entfernt',
+    description: 'Du wurdest per Community-Abstimmung aus {channel} entfernt.\n\n**Grund:** {reason}\n**Call-Sperre:** {kickMinutes} Min.\n\nFalls du dich ungerecht behandelt fühlst, wende dich an das Team.',
+    color: '#ed4245',
+    authorName: '{targetName}',
+    authorIconUrl: '',
+    footerText: '{server}',
+    timestamp: true
+  },
+  release: {
+    title: '✅ Deine Call-Sperre ist vorbei',
+    description: '**{targetMention}**, deine Call-Sperre in {channel} ist abgelaufen.\n\n**Grund:** {reason}\n**Sperrdauer:** {kickMinutes} Min.\n\nDu kannst dem Call wieder beitreten.',
+    color: '#57f287',
+    authorName: '{targetName}',
+    authorIconUrl: '',
+    footerText: '{server}',
+    timestamp: true
+  }
+};
+
+// 2er-/3er-/4er-Varianten: Jede Call-Art hat eigene, im Embed-Studio einzeln
+// editierbare Sektionen (panel2/vote2/.../dm4). Sie erben die Basis-Designs –
+// nur die Panel-Beschreibung nennt die feste Schwelle der Call-Art. WICHTIG:
+// Diese vollständige Liste ist der Grundstein für normalizeConfig – fehlen die
+// Varianten hier, zeigt der Studio-Editor für 2er/3er/4er ein leeres Embed,
+// weil die gespeicherte Config (aus älteren Versionen) nur die 5 Basis-Sektionen kennt.
+const DEFAULT_PUBLIC_CALL_VOTE_DESIGNS = {
+  ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS,
+  panel2: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.panel, description: `**2er-Call – eine „Dafür“-Stimme genügt.**\n\n${DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.panel.description}` },
+  vote2: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.vote },
+  result2: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.result },
+  team2: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.team },
+  dm2: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.dm },
+  panel3: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.panel, description: `**3er-Call – zwei „Dafür“-Stimmen genügen.**\n\n${DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.panel.description}` },
+  vote3: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.vote },
+  result3: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.result },
+  team3: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.team },
+  dm3: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.dm },
+  panel4: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.panel, description: `**4er-Call – drei „Dafür“-Stimmen genügen.**\n\n${DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.panel.description}` },
+  vote4: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.vote },
+  result4: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.result },
+  team4: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.team },
+  dm4: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.dm },
+  release2: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.release },
+  release3: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.release },
+  release4: { ...DEFAULT_PUBLIC_CALL_VOTE_BASE_DESIGNS.release }
 };
 
 export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
@@ -959,11 +1723,30 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
     warningDeleteSeconds: 15,
     retentionDays: 90
   },
+  instantBanWords: {
+    enabled: false,
+    words: [],
+    caseInsensitive: true,
+    logChannelId: '',
+    autoModLogChannelId: '',
+    deleteMessage: true,
+    banReason: 'Verbotener Begriff verwendet: {word}',
+    logEmbed: {
+      title: 'Instant Bann',
+      description: '{user} wurde sofort gebannt.\n**Begriff:** {word}\n**Grund:** {reason}\n**Gelöschte Nachrichten (7 Tage):** {deletedMessages}',
+      color: '#ff4444',
+      footer: '',
+      author: '',
+      thumbnail: ''
+    }
+  },
   welcomeFarewell: {
     enabled: true,
     welcomeEnabled: true,
     welcomeAfterVerification: false,
     verificationRoleId: '',
+    postVerificationRolesEnabled: false,
+    postVerificationRoleIds: [],
     welcomeChannelId: '',
     welcomeMessage: 'Willkommen {user} auf {guild}!',
     welcomeTemplate: {
@@ -1009,88 +1792,99 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
       { trigger: 'hilfe', mode: 'word', response: 'Das Team hilft dir gern weiter.' }
     ]
   },
-  aiChat: {
-    enabled: true,
-    channelId: '',
-    model: 'qwen2.5:7b',
-    ollamaUrl: 'http://127.0.0.1:11434',
-    requireStart: true,
-    memoryEnabled: true,
-    rememberUserFacts: true,
-    autoCleanChannel: true,
-    channelIdleMinutes: 60,
-    keepPinnedMessages: true,
-    welcomeEmbedEnabled: true,
-    memoryScope: 'user-channel',
-    replyMode: 'channel',
-    memoryLimitGb: 50,
-    maxHistoryMessages: 24,
-    maxStoredMessages: 800,
-    maxUserFacts: 80,
-    maxResponseChars: 2000,
-    responseLimitVersion: 2,
-    temperature: 0.55,
-    contextTokens: 8192,
-    contextWindowVersion: 2,
-    sendTyping: true,
-    strictSafetyEnabled: true,
-    promptInjectionProtection: true,
-    protectPrivateData: true,
-    blockInsults: true,
-    blockPrivilegedActions: true,
-    onlyMeaningfulQuestions: true,
-    floodProtectionEnabled: true,
-    userCooldownSeconds: 0,
-    channelCooldownSeconds: 0,
-    maxUserMessagesPerMinute: 10,
-    maxChannelMessagesPerMinute: 30,
-    duplicateWindowSeconds: 20,
-    webSearchEnabled: true,
-    webSearchMode: 'smart',
-    webSearchCooldownSeconds: 0,
-    webSearchMaxResults: 5,
-    webFetchPages: 2,
-    webSearchTimeoutSeconds: 12,
-    showWebSources: true,
-    serverKnowledgeEnabled: true,
-    serverKnowledgeCacheSeconds: 45,
-    useServerEmojis: true,
-    emojiUsage: 'subtle',
-    useGifReplies: true,
-    gifUsage: 'on-request',
-    gifProvider: 'hybrid',
-    gifChancePercent: 22,
-    tenorContentFilter: 'high',
-    tenorLocale: 'de_DE',
-    gifLibrary: [],
-    personaName: 'Fallen Heaven AI',
-    personality: 'Ruhig, aufmerksam, trocken-humorig, direkt, loyal zur Community, nicht anbiedernd.',
-    speakingStyle: 'Menschliches Deutsch wie im Discord-Chat: kurze Sätze, kein Supportbot-Ton, keine KI-Floskeln.',
-    responseLength: 'normal',
-    lore: 'Du bist die lokale Server-KI von Fallen Heaven. Du lernst die Community über getrennte User-Erinnerungen kennen und hilfst wie ein ruhiger Operator im Hintergrund.',
-    relationshipMode: 'Merke dir hilfreiche Vorlieben, Namen, Projekte und wiederkehrende Themen. Sei persönlicher bei Stammusern, aber nicht aufdringlich oder creepy.',
-    safetyRules: 'Keine privaten Daten erfinden. Keine Massenmentions. Keine gefährlichen Schritt-für-Schritt-Anleitungen. Bei Unsicherheit nachfragen.',
-    forbiddenTopics: '',
-    systemPrompt: 'Du bist Fallen Heaven AI im Discord. Schreib wie ein echter Mensch im Serverchat: kurz, passend, natürlich, ausschließlich Deutsch. Keine Supportbot-Floskeln, keine ständigen Rückfragen, keine Sätze wie "Wie kann ich dir helfen?". Wenn jemand nur grüßt, grüße nur passend zurück. Bei Fragen mit aktuellen Fakten, Release-Daten, Sport, News oder Ergebnissen gilt Webkontext vor Modellwissen. Wenn Webtreffer nichts sauber belegen, sag ehrlich, dass du es gerade nicht sicher belegt findest. Schreibe nie "Lass mich prüfen" oder "ich recherchiere kurz", sondern antworte direkt mit dem vorhandenen Webkontext.'
-  },
   levels: {
     enabled: true,
-    xpPerMessageMin: 6,
-    xpPerMessageMax: 16,
-    cooldownSeconds: 60,
-    minMessageLength: 3,
-    maxXpPerDay: 500,
+    balanceVersion: 'progressive-v1',
+    xpPerMessage: 5,
+    xpPerMessageMin: 5,
+    xpPerMessageMax: 5,
+    cooldownSeconds: 0,
+    minMessageLength: 2,
+    maxXpPerDay: 0,
     ignoredChannelIds: [],
     excludedRoleIds: [],
+    noXpRoleIds: [],
     levelRoleMappings: [],
     cumulativeRoleRewards: false,
     announce: true,
     announceChannelId: '',
-    levelUpMessage: '{user} erreicht Level {level}!'
+    commandChannelId: '',
+    levelUpMessage: '{user} erreicht Level {level}!',
+    voiceXpPerMinute: 1,
+    voiceMinimumParticipants: 2,
+    excludeDeafenedVoice: true,
+    levelCurveBase: 60,
+    activityBonusEnabled: false,
+    activityBonusPlace1: 0,
+    activityBonusPlace2: 0,
+    activityBonusPlace3: 0,
+    activityBonusMaxPerDay: 0,
+    tagBonusXpPerDay: 0,
+    boostBonusEnabled: false,
+    boostBonusXpPerBoost: 0,
+    boostBonusMaxPerDay: 0,
+    levelRolesPanelChannelId: '',
+    rulesTitle: 'Regeln und Wertung',
+    rulesDescription: 'Diese private Übersicht erklärt, wie XP und Level-Rollen funktionieren.',
+    rulesFooter: 'Diese Ansicht ist nur für dich sichtbar.',
+    rulesChatFieldName: 'CHAT',
+    rulesVoiceFieldName: 'SPRACHCHAT',
+    rulesActivityFieldName: 'AKTIVITÄTS-BONUS',
+    rulesBonusFieldName: 'ROLLEN- & BOOSTER-BONUS',
+    rulesCurveFieldName: 'LEVEL-KURVE',
+    rulesNoXpFieldName: 'NO-XP-ROLLE',
+    rulesExcludedFieldName: 'AUSGESCHLOSSEN',
+    rulesActivityDisabledText: 'Deaktiviert.',
+    rulesChatFieldText: '• Jede gültige Nachricht gibt fest **{xpPerMessage} XP**\n• Kein Cooldown, kein Tageslimit und keine Abschwächung\n• Mindestens **{minLength} Buchstaben oder Zahlen**; Anhänge und Sticker zählen ebenfalls\n• Identische Nachrichten zählen innerhalb von **10 Minuten** nur einmal\n• Bots, Webhooks sowie ausgeschlossene Kanäle und Rollen zählen nicht',
+    rulesVoiceFieldText: '• **{voiceXp} XP pro gültiger Minute** im Sprachkanal\n• Mindestens **{voiceMin} Personen** gemeinsam im Kanal\n• Kein Tageslimit und keine Abschwächung\n• AFK-Kanal zählt nicht\n• Vollständig taube Zeit zählt {deafened}; normales Stummschalten ist erlaubt',
+    rulesActivityFieldText: 'Aktivitäts-Liga, Server-Tag und Booster vergeben keine Level-XP. Level entstehen ausschließlich durch gültige Chat- und Voice-Aktivität.',
+    rulesBonusFieldText: 'Keine passiven Level-XP. Liga-, Tag- und Booster-Belohnungen bleiben in ihren eigenen Modulen.',
+    rulesCurveFieldText: '• Level 1: **300 XP** · Level 10: **8.400 XP** · Level 20: **28.800 XP**\n• Level 50: **216.000 XP** · Level 110: **1.238.400 XP**\n• Die höchste konfigurierte Level-Rolle ist das Max-Level.',
+    rulesNoXpFieldText: '• **{noXpRoleNames}** – Mitglieder mit diesen Rollen erhalten **keine XP** mehr: weder im Chat noch im Sprachchat, weder Level noch Aktivitäts-Bonus.',
+    rulesExcludedFieldText: '• Ausgeschlossene Kanäle: **{excludedChannels}**\n• Ausgeschlossene Rollen: **{excludedRoles}**',
+    rulesButtonLabel: 'REGELN',
+    noXpButtonLabel: 'NO-XP (an/aus)',
+    levelUpInfoEnabled: false,
+    levelUpInfoChannelId: '',
+    levelUpCleanupEnabled: false,
+    levelUpCleanupMaxMessages: 20,
+    panelDesign: {
+      content: '',
+      outsideImageUrl: '',
+      outsideImageAttachment: null,
+      embed: {
+        title: '💯 Leveln',
+        url: '',
+        description: `Diese Rollen kannst du durch Aktivität im Chat und in den Sprachkanälen freischalten. Je höher dein Level, desto höher dein Rang.\n\n${DEFAULT_LEVEL_ROLE_BLOCK_TEMPLATE()}`,
+        color: '#8b82ff',
+        authorName: '',
+        authorIconUrl: '',
+        thumbnailUrl: '',
+        imageUrl: '',
+        footerText: 'FALLEN HEAVEN wünscht dir einen schönen Aufenthalt.',
+        footerIconUrl: '',
+        timestamp: true,
+        fields: []
+      }
+    }
   },
   activityRace: {
     enabled: false,
     panelChannelId: '',
+    rankingDisplayCount: 3,
+    completionDaily: 'Die Tagesrollen zeigen den aktuellen Stand und wechseln automatisch, sobald sich Platz 1 bis 3 verändern.',
+    completionWeekly: 'Die Rollen werden erst am Wochenabschluss für die vollständige Kalenderwoche vergeben.',
+    completionMonthly: 'Die Rollen werden erst am Monatsabschluss für den vollständigen Kalendermonat vergeben.',
+    chatFieldName: 'CHAT',
+    voiceFieldName: 'SPRACHCHAT',
+    nextEvaluationFieldName: 'NÄCHSTE AUSWERTUNG',
+    rangeFieldName: 'ZEITRAUM',
+    rankingLineTemplate: '{marker} {mention}\n> **{value}**',
+    rankingEmptyText: 'Noch keine Aktivität erfasst.',
+    rulesButtonLabel: 'REGELN',
+    personalButtonLabel: 'MEIN RANG',
+    pingToggleButtonLabel: 'LIGA-PINGS EIN/AUS',
+    panelDescription: '',
     panelDesign: {
       id: 'activity-race-panel',
       name: 'Aktivitäts-Liga',
@@ -1101,7 +1895,7 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
       embed: {
         title: '{period}',
         url: '',
-        description: 'Die aktivsten Mitglieder im Chat und Sprachchat.\n*{completion}*',
+        description: '{completion}',
         color: '',
         authorName: 'FALLEN HEAVEN · AKTIVITÄTS-LIGA',
         authorIconUrl: '',
@@ -1113,12 +1907,31 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
         fields: []
       }
     },
+    pingInfoDesign: {
+      content: '',
+      outsideImageUrl: '',
+      outsideImageAttachment: null,
+      embeds: [{
+        title: 'Aktivitäts-Liga · Benachrichtigungen',
+        url: '',
+        description: 'Du entscheidest selbst, ob du bei Änderungen deiner Liga-Platzierung erwähnt wirst. Mit dem Button kannst du deine persönlichen Liga-Pings jederzeit ein- oder ausschalten.',
+        color: '#6fd8ff',
+        authorName: '{server}',
+        authorIconUrl: '',
+        thumbnailUrl: '',
+        imageUrl: '',
+        footerText: 'Deine Auswahl bleibt gespeichert.',
+        footerIconUrl: '',
+        timestamp: false,
+        fields: []
+      }]
+    },
     ignoredChannelIds: [],
     excludedRoleIds: [],
     messageCooldownSeconds: 10,
     duplicateWindowMinutes: 10,
     minimumMessageLength: 3,
-    voiceMinimumParticipants: 2,
+    voiceMinimumParticipants: 1,
     excludeDeafened: true,
     placementPings: true,
     placementPingChannelId: '',
@@ -1171,6 +1984,7 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
     panelDescription: 'Öffne hier vertraulich ein Support-Ticket. Beschreibe dein Anliegen so genau wie möglich, damit das Team dir schnell helfen kann.',
     panelButtonLabel: 'Ticket öffnen',
     panelButtonEmoji: '🎫',
+    closeButtonLabel: 'Ticket schließen',
     supportRoleId: '',
     categoryId: '',
     useThreadMode: false,
@@ -1268,7 +2082,77 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
     dryRun: false,
     logChannelId: ''
   },
+  tempVoice: {
+    enabled: false,
+    creatorChannelIds: [],
+    categoryId: '',
+    channelNameTemplate: '🎧 {user}',
+    rememberUserProfiles: true,
+    defaultUserLimit: 0,
+    defaultBitrate: 0,
+    defaultRegion: '',
+    emptyGraceSeconds: 0,
+    blacklistRoleIds: [],
+    requiredRoleIds: [],
+    allowRename: true,
+    allowLimit: true,
+    allowLock: true,
+    allowRegion: true,
+    allowTransfer: true,
+    interfaceDesign: {
+      content: '',
+      outsideImageUrl: '',
+      outsideImageAttachment: null,
+      embed: {
+        title: 'TempVoice · {channelName}',
+        url: '',
+        description: 'Willkommen {owner}. Du verwaltest diesen temporären Sprachkanal mit den Buttons unter dem Embed.',
+        color: '#2b2d31',
+        authorName: '{server}',
+        authorIconUrl: '',
+        thumbnailUrl: '',
+        imageUrl: '',
+        footerText: '{server}',
+        footerIconUrl: '',
+        timestamp: false,
+        fields: [
+          { name: 'Besitzer', value: '{owner}', inline: true },
+          { name: 'Zugang', value: '{accessState}', inline: true },
+          { name: 'Mitglieder', value: '{memberCount} / {userLimit}', inline: true },
+          { name: 'Region', value: '{region}', inline: true },
+          { name: 'Erstellt', value: '{createdAt}', inline: true }
+        ]
+      }
+    }
+  },
+  publicCallVote: {
+    enabled: false,
+    callChannelIds: [],
+    callChannelIds2: [],
+    callChannelIds3: [],
+    callChannelIds4: [],
+    passPercent: 51,
+    minVotes: 3,
+    timeoutSeconds: 60,
+    resultAutoDeleteSeconds: 30,
+    requestButtonLabel: 'Rauswurf beantragen',
+    yesButtonLabel: 'Dafür',
+    noButtonLabel: 'Dagegen',
+    passedOutcomeText: 'wird entfernt',
+    failedOutcomeText: 'bleibt im Call',
+    voteReasons: [
+      { id: 'spam', label: 'Spam / Flood', kickMinutes: 10, timeoutAfter: 3, timeoutMinutes: 60 },
+      { id: 'insult', label: 'Beleidigung', kickMinutes: 30, timeoutAfter: 3, timeoutMinutes: 120 },
+      { id: 'noise', label: 'Lärm / Musik', kickMinutes: 15, timeoutAfter: 4, timeoutMinutes: 60 },
+      { id: 'nsfw', label: 'Unangemessen', kickMinutes: 60, timeoutAfter: 2, timeoutMinutes: 240 },
+      { id: 'other', label: 'Sonstiges', kickMinutes: 10, timeoutAfter: 5, timeoutMinutes: 60 }
+    ],
+    teamChannelId: '',
+    teamRoleIds: [],
+    design: DEFAULT_PUBLIC_CALL_VOTE_DESIGNS
+  },
   serverBackup: {
+
     enabled: true,
     dailyHour: 5,
     keepBackups: 30,
@@ -1305,14 +2189,66 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
     maxStartupAssignments: 100,
     logChannelId: ''
   },
+  roleSwap: {
+    enabled: false,
+    pairs: '',
+    logChannelId: ''
+  },
+  counting: {
+    enabled: false,
+    channelId: '',
+    resetValue: 0,
+    deleteWrongMessages: true,
+    preventSelfCount: true,
+    selfCountIsFail: true,
+    excludedRoleIds: [],
+    maxCount: 1000000000,
+    milestones: [100, 250, 500, 1000, 2500, 5000, 10000, 25000],
+    milestoneMessage: '',
+    successReaction: '✅',
+    failReaction: '❌',
+    statusChannelId: '',
+    statusPanelEnabled: true,
+    rulesButtonLabel: '📖 Regeln',
+    rankButtonLabel: '🏅 Mein Rang',
+    panelDesign: null,
+    lossMessagesEnabled: true,
+    lossMessages: [],
+    clearChannelOnFail: true,
+    clearChannelDelaySeconds: 10,
+    clearChannelKeepMessages: 5,
+    strikesEnabled: true,
+    strikesToLock: 3,
+    strikeLockHours: 24,
+    strikeLockMessage: '',
+    strikeTolerance: 1,
+    dmDesigns: {
+      strikeLock: {
+        title: '🚫 Zähl-Kanal-Sperre',
+        description: '**{targetMention}**, du hast {limit} Verwarnungen gesammelt und bist für **{hours} Std.** vom Zähl-Kanal gesperrt.\n\nFalls du denkst, dass das ein Fehler ist, wende dich an das Team.',
+        color: '#ed4245',
+        authorName: '{server}',
+        footerText: 'FALLEN HEAVEN · ZÄHL-KANAL',
+        timestamp: true
+      },
+      strikeRelease: {
+        title: '✅ Deine Zähl-Kanal-Sperre ist vorbei',
+        description: '**{targetMention}**, deine Chat-Sperre im Zähl-Kanal ist abgelaufen – du kannst wieder zählen!',
+        color: '#57f287',
+        authorName: '{server}',
+        footerText: 'FALLEN HEAVEN · ZÄHL-KANAL',
+        timestamp: true
+      }
+    }
+  },
   serverTagTracker: {
     enabled: false,
     monitorOnly: true,
     roleIds: [],
     roleId: '',
     scanIntervalMinutes: 30,
-    assignmentConfirmations: 2,
-    removalConfirmations: 2,
+    assignmentConfirmations: 1,
+    removalConfirmations: 1,
     maxAssignmentsPerScan: 10,
     startupScan: true,
     excludeBots: true,
@@ -1330,15 +2266,185 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
     historyScanLimit: 2000,
     boostInfoChannelId: '',
     boostEndLogChannelId: '',
-    logChannelId: ''
+    logChannelId: '',
+    boostAnnounceEnabled: false,
+    boostAnnounceChannelId: '',
+    boostTopEnabled: false,
+    boostTopChannelId: '',
+    boostTopPingsEnabled: true,
+    boostTopPingChannelId: '',
+    boostTopPingLifetimeMinutes: 5,
+    boostTopPlaceFieldName: 'PLATZ {place}',
+    boostTopPlaceLineTemplate: '{marker} {mention}\n> **{boostCount}×** geboostet',
+    boostTopStatusFieldName: 'STATUS',
+    boostTopNextEvaluationFieldName: 'NÄCHSTE AUSWERTUNG',
+    boostTopEmptyFieldName: 'TOP BOOSTER',
+    boostTopEmptyText: 'Noch keine aktiven Booster erfasst.',
+    boostTopPlaceName1: 'PLATZ 1',
+    boostTopPlaceName2: 'PLATZ 2',
+    boostTopPlaceName3: 'PLATZ 3',
+    boostTopTemplate: {
+      content: '',
+      outsideImageUrl: '',
+      embeds: [{
+        title: '🚀 Top-Booster',
+        url: '',
+        description: 'Die drei größten Booster des Servers. Das Panel wird live aktualisiert, sobald sich die Top 3 ändern.',
+        color: '#a596ff',
+        authorName: '{server} · Top-Booster',
+        authorIconUrl: '',
+        thumbnailUrl: '',
+        imageUrl: '',
+        footerText: '{boostcount} Boosts gesamt',
+        footerIconUrl: '',
+        timestamp: true,
+        fields: [
+          { name: '{placeName1}', value: '{boostMarker1} {boost1}\n> **{boostCount1}×** geboostet', inline: true },
+          { name: '{placeName2}', value: '{boostMarker2} {boost2}\n> **{boostCount2}×** geboostet', inline: true },
+          { name: '{placeName3}', value: '{boostMarker3} {boost3}\n> **{boostCount3}×** geboostet', inline: true },
+          { name: '{statusFieldName}', value: '{status}', inline: true },
+          { name: '{nextEvalFieldName}', value: '{nextEvaluation}', inline: true }
+        ]
+      }]
+    },
+    boostAnnounceTemplate: {
+      content: '{usermention}',
+      outsideImageUrl: '',
+      embeds: [{
+        title: 'Danke für den Boost, ${usernickname}! 🚀💜',
+        url: '',
+        description: 'Du boostest jetzt **{boostcount}×** und gibst ${guildname} damit extra Power!\nHol dir jetzt deine Booster-Vorteile und genieß die Perks ✨',
+        color: '#a596ff',
+        authorName: '',
+        authorIconUrl: '',
+        thumbnailUrl: 'https://cdn.discordapp.com/emojis/1525165600001888419.webp',
+        imageUrl: 'https://cdn.discordapp.com/attachments/1480216869280546892/1528842383964373152/v1dmh27.png',
+        footerText: 'Liebe Grüße vom Maskottchen, HALO',
+        footerIconUrl: 'https://cdn.discordapp.com/emojis/1525132444171370516.webp',
+        timestamp: true,
+        fields: [
+          { name: 'Booster Farben?', value: '<#1305858566422401116>', inline: false },
+          { name: 'VIP werden?', value: '<#1306724753805021194>', inline: false }
+        ]
+      }]
+    }
   },
   heavenEconomy: {
     enabled: false,
     panelChannelId: '',
-    panelMessageId: '',
-    coinEmoji: '🪙',
+    panelMessageId: '',    coinEmoji: '🪙',
+    accountButtonLabel: 'Mein Konto',
+    shopButtonLabel: 'VIP-Shop',
+    giftButtonLabel: 'VIP verschenken',
+    coinGiftButtonLabel: 'Coins verschenken',
+    coinGiftsEnabled: true,
+    coinGiftMinAmount: 1,
+    coinGiftMaxAmount: 100000,
+    panelTemplate: {
+      content: '',
+      outsideImageUrl: '',
+      outsideImageName: '',
+      outsideImageSize: 0,
+      outsideImageAttachment: null,
+      embeds: [{
+        title: '👑 VIP-VORTEILE',
+        description: 'Mit einem VIP-Rang unterstützt du **{server}** und erhältst Zugang zu zusätzlichen Bereichen und Community-Vorteilen.',
+        color: '#7772ff',
+        authorName: '{server}',
+        footerText: '{server} · Heaven Coins',
+        timestamp: false,
+        fields: [
+          { name: '🌟 Hervorgehobene Präsenz', value: 'Dein VIP-Rang hebt dich sichtbar innerhalb der Community hervor.', inline: false },
+          { name: '📸 VIP-Media', value: 'Zugang zu einem eigenen Bereich für Bilder, Clips und besondere Community-Momente.', inline: false },
+          { name: '🎤 VIP-Lounges', value: 'Nutze zusätzliche Voice-Bereiche, die VIP-Mitgliedern vorbehalten sind.', inline: false },
+          { name: '💬 VIP-Bereiche', value: 'Je nach VIP-Stufe erhältst du Zugang zu den vorgesehenen Chats und Lounges.', inline: false },
+          { name: '🎁 Aktionen & Early Access', value: 'Nimm an exklusiven Aktionen teil und erhalte ausgewählte Informationen früher.', inline: false },
+          { name: '⚡ Priority Support', value: 'VIP-Anliegen werden im Support bevorzugt bearbeitet.', inline: false }
+        ]
+      }]
+    },
+    buyButtonLabel: 'Coins kaufen',
+    progressButtonLabel: 'Boost-Fortschritt',
+    perksButtonLabel: 'VIP-Vorteile',
+    adminButtonLabel: 'Coin-Verwaltung',
     boostMilestoneReward: 100,
-    vipRoleMappings: [],
+      vipRoleMappings: [],
+      vipPanelEnabled: false,
+      vipPanelChannelId: '',
+      separatorRoleName: '━━ VIP ━━',
+      separatorRoleId: '',
+      dmDesigns: {
+        giftReceived: {
+          title: '🎁 Dir wurde VIP geschenkt',
+          description: '**{targetMention}**, du hast von **{giver}** die VIP-Stufe **{tier}** geschenkt bekommen!\n\nDein neuer VIP-Status ist ab sofort aktiv – viel Spaß mit deinen exklusiven Vorteilen!',
+          color: '#57f287',
+          authorName: '{server}',
+          footerText: 'FALLEN HEAVEN · VIP',
+          timestamp: true
+        },
+        vipPurchased: {
+          title: '👑 Willkommen in der VIP-Welt',
+          description: '**{targetMention}**, du hast dir die VIP-Stufe **{tier}** für **{price}** gekauft.\n\nDein neuer VIP-Status ist ab sofort aktiv – vielen Dank für deine Unterstützung!',
+          color: '#ffbd59',
+          authorName: '{server}',
+          footerText: 'FALLEN HEAVEN · VIP',
+          timestamp: true
+        },
+        coinsReceived: {
+          title: '🪙 Du hast Coins erhalten',
+          description: '**{targetMention}**, deinem Konto wurden **{coins}** gutgeschrieben.\n\nDein neuer Kontostand: **{balance}**',
+          color: '#57f287',
+          authorName: '{server}',
+          footerText: 'FALLEN HEAVEN · HEAVEN COINS',
+          timestamp: true
+        },
+        boostMilestone: {
+          title: '⚡ Boost-Meilenstein belohnt',
+          description: '**{targetMention}**, deine neue Boost-Stufe {levels} wurde mit **{coins}** belohnt!\n\nDein neuer Kontostand: **{balance}**',
+          color: '#7772ff',
+          authorName: '{server}',
+          footerText: 'FALLEN HEAVEN · HEAVEN COINS',
+          timestamp: true
+        },
+        coinGiftReceived: {
+          title: '🪙 Du hast Coins geschenkt bekommen',
+          description: '**{giverMention}** hat dir **{coins}** geschenkt.{messageBlock}\n\nDein neuer Kontostand: **{targetBalance}**\nTransaktion: `{transactionId}`',
+          color: '#57f287',
+          authorName: '{server}',
+          footerText: 'FALLEN HEAVEN · COIN-GESCHENK',
+          timestamp: true
+        },
+        coinGiftSent: {
+          title: '🎁 Coin-Geschenk versendet',
+          description: 'Du hast **{targetMention}** erfolgreich **{coins}** geschenkt.{messageBlock}\n\nDein neuer Kontostand: **{giverBalance}**\nTransaktion: `{transactionId}`',
+          color: '#7772ff',
+          authorName: '{server}',
+          footerText: 'FALLEN HEAVEN · COIN-GESCHENK',
+          timestamp: true
+        }
+      },
+    vipPanelTemplate: {
+      content: '',
+      outsideImageUrl: '',
+      vipTierFieldTemplate: '{tierEmoji} {tierName} · {tierMemberCount}',
+      vipTierMemberFormat: '<@{memberId}>',
+      vipTierEmptyText: '*Noch keine Mitglieder.*',
+      vipTierOverflowText: '… und {overflowCount} weitere',
+      embeds: [{
+        title: '👑 VIP-Übersicht',
+        url: '',
+        description: 'Alle VIP-Stufen und ihre Mitglieder auf einen Blick – live aktualisiert.',
+        color: '#ffbd59',
+        authorName: '{server} · VIP-Übersicht',
+        authorIconUrl: '',
+        thumbnailUrl: '',
+        imageUrl: '',
+        footerText: '{memberCount} VIP-Mitglieder in {tierCount} Stufen',
+        footerIconUrl: '',
+        timestamp: true,
+        fields: []
+      }]
+    },
     paypalUrl: '',
     paysafecardUrl: '',
     supportChannelId: '',
@@ -1367,6 +2473,116 @@ export const defaultGuildConfig = (guildId, guildName = 'Server') => ({
     trustedUserIds: [],
     logChannelId: ''
   },
+  memberVerify: {
+    enabled: false,
+    panelChannelId: '',
+    verifiedRoleId: '',
+    unverifiedRoleId: '',
+    welcomeChannelId: '',
+    welcomeMessage: 'Willkommen {user} – du wurdest erfolgreich verifiziert!',
+    logChannelId: '',
+    ownerPingRoleId: '',
+    requireTeamApproval: true,
+    kickOnFailedVerify: true,
+    customQuestions: '',
+    digitRatioPercent: 40,
+    maxDigitRun: 6,
+    autoBanFlaggedNames: false,
+    minAccountAgeDays: 0,
+    autoBanYoungAccounts: false,
+    flaggedTerms: '',
+    panelTemplate: null,
+    panelStartButton: 'Verifizieren',
+    panelStatsButton: 'Statistik',
+    challengeTitle: 'Bist du ein Mensch?',
+    challengeDescription: 'Beantworte die Aufgabe, um zu beweisen, dass du ein echtes Mitglied bist.',
+    challengeFooterButtons: 'Nur für dich sichtbar · Klicke die richtige Antwort',
+    challengeFooterText: 'Nur für dich sichtbar · {validMinutes} Minuten gültig',
+    modalTitle: 'FALLEN HEAVEN · Verifizierung',
+    modalLabel: 'Deine Antwort',
+    modalPlaceholder: '',
+    answerButtonLabel: 'Antwort eingeben',
+    statsTitle: 'Verifizierungs-Statistik',
+    statsAuthor: 'FALLEN HEAVEN · VERIFY-STATISTIK',
+    statsFooter: 'Nur für dich sichtbar',
+    statsVerifiedTotalField: '✅ Verifiziert gesamt',
+    statsVerifiedTodayField: 'Heute verifiziert',
+    statsApprovedField: 'Team-Freigaben',
+    statsFlaggedField: '🚩 Geprüfte Konten',
+    statsBannedField: '⛔ Gebannt',
+    statsKickedField: '👢 Gekickt',
+    statsPendingField: '⏳ Offene Verify',
+    statsAwaitingField: 'Freigabe ausstehend',
+    decisionApprovePending: 'Freigeben',
+    decisionApproveDone: 'Durchlassen',
+    decisionApproveResolved: 'Freigegeben',
+    decisionBan: 'Bannen',
+    decisionBanResolved: 'Gebannt',
+    approvalAuthor: 'VERIFY-FREIGABE ERFORDERLICH',
+    approvalDescription: 'Die Aufgabe wurde richtig gelöst – Team-Freigabe steht aus.',
+    approvalMemberField: 'Mitglied',
+    approvalTaskField: 'Gelöste Aufgabe',
+    approvalAnswersField: 'Antworten',
+    reminderEnabled: true,
+    reminderDelayMinutes: 5,
+    maxReminders: 3,
+    reminderChannelId: '',
+    reminderPhrases: ''
+  },
+  botUpdates: {
+    enabled: false,
+    channelId: '',
+    prevButtonLabel: 'Älter',
+    nextButtonLabel: 'Neuer',
+    design: null
+  },
+  roleSaver: {
+    enabled: false,
+    blacklistedRoleIds: [],
+    excludeBots: true,
+    skipManagedRoles: true,
+    restoreDelaySeconds: 8,
+    retryCount: 3,
+    maxStoredRoles: 40,
+    logChannelId: ''
+  },
+  voiceLogImport: {
+    enabled: false,
+    channelId: '',
+    backfillHours: 4320,
+    batchSize: 100,
+    maxPages: 100
+  },
+  inactiveReminder: {
+    enabled: false,
+    thresholdDays: 180,
+    excludedRoleIds: [],
+    inviteUrl: 'https://discord.gg/fallen-heaven',
+    joinButtonLabel: 'Ja, zum Server',
+    leaveButtonLabel: 'Nein, bitte entfernen',
+    joinInviteButtonLabel: '🔗 Zum Server beitreten',
+    stayConfirmTitle: '✅ Du bleibst bei uns!',
+    stayConfirmDescription: 'Danke! Du bist als aktiv markiert, bleibst auf dem Server und wirst von dieser Inaktivitäts-Erinnerung nicht erneut angeschrieben.',
+    leaveConfirmTitle: '❌ Du verlässt den Server',
+    leaveConfirmDescription: 'Du wirst freundlich vom Server entfernt. Falls du zurückkehren willst, bist du jederzeit willkommen. 👋',
+    joinReplyText: '✅ Danke! Du bist als **aktiv** markiert und wirst nicht erneut angeschrieben. Hier ist deine Einladung – ein Klick und du bist zurück auf **{guild}**:',
+    stayReplyText: '✅ Danke! Du bleibst auf dem Server und wirst von dieser Inaktivitäts-Erinnerung nicht erneut angeschrieben.',
+    leaveReplyText: 'Verstanden. Vielen Dank für deine Ehrlichkeit – du wirst gleich vom Server entfernt. Falls du zurückkehren willst, bist du jederzeit willkommen. 👋',
+    dmDesign: {
+      content: '',
+      outsideImageUrl: '',
+      outsideImageAttachment: null,
+      embed: {
+        title: '🏠 {guild} · Wir vermissen dich!',
+        description: '**{user}**, deine letzte Aktivität auf **{guild}** liegt mehr als **{thresholdDays} Tage** zurück.\n\n📩 Letzte Nachricht: **{lastMessageAt}**\n🎙️ Letzter Sprachchat: **{lastVoiceAt}**\n\nMöchtest du weiterhin auf dem Server bleiben?\n\n✅ **Ja, ich bleibe** – du wirst nicht erneut angeschrieben.\n❌ **Nein, bitte entfernen** – wir verabschieden dich freundlich vom Server.',
+        color: '#9a8cff',
+        authorName: '{server}',
+        footerText: 'FALLEN HEAVEN',
+        timestamp: true,
+        fields: []
+      }
+    }
+  },
   embeds: {
     selectedTemplateId: 'level-up',
     templates: defaultEmbedTemplates()
@@ -1392,10 +2608,39 @@ const merge = (base, patch) => {
   return output;
 };
 
+const VOTE_DESIGN_SECTIONS = ['panel', 'vote', 'result', 'team', 'dm', 'release', 'panel2', 'vote2', 'result2', 'team2', 'dm2', 'release2', 'panel3', 'vote3', 'result3', 'team3', 'dm3', 'release3', 'panel4', 'vote4', 'result4', 'team4', 'dm4', 'release4'];
+
+const normalizeVoteDesignSection = (section, value = {}) => {
+  const fallback = DEFAULT_PUBLIC_CALL_VOTE_DESIGNS[section] || {};
+  const embed = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    title: String(embed.title !== undefined ? embed.title : fallback.title || '').slice(0, 256),
+    url: String(embed.url || '').slice(0, 2048),
+    description: String(embed.description !== undefined ? embed.description : fallback.description || '').slice(0, 4096),
+    color: String(embed.color || fallback.color || '#2b2d31').slice(0, 16),
+    authorName: String(embed.authorName !== undefined ? embed.authorName : fallback.authorName || '').slice(0, 256),
+    authorIconUrl: String(embed.authorIconUrl || '').slice(0, 2048),
+    thumbnailUrl: String(embed.thumbnailUrl || '').slice(0, 2048),
+    imageUrl: String(embed.imageUrl || '').slice(0, 2048),
+    footerText: String(embed.footerText !== undefined ? embed.footerText : fallback.footerText || '').slice(0, 2048),
+    footerIconUrl: String(embed.footerIconUrl || '').slice(0, 2048),
+    timestamp: embed.timestamp !== false
+  };
+};
+
+const normalizeVoteDesigns = (value = {}) => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return Object.fromEntries(VOTE_DESIGN_SECTIONS.map((section) => [section, normalizeVoteDesignSection(section, source[section])]));
+};
+
 export function normalizeConfig(raw = {}) {
   const base = defaultGuildConfig(raw.guildId, raw.guildName);
   const normalizedInput = normalizeLegacyTopLevelModules(raw);
   const normalized = merge(base, normalizedInput);
+  const legacyLevelBalance = String(normalizedInput.levels?.balanceVersion || '') !== 'progressive-v1';
+  const fixedMessageXp = legacyLevelBalance
+    ? 5
+    : toBoundedInteger(normalized.levels?.xpPerMessage, base.levels.xpPerMessage, 1, 1000);
   const rawServerTagTracker = raw.serverTagTracker && typeof raw.serverTagTracker === 'object' ? raw.serverTagTracker : {};
   const activeServerTagRoleIds = [...new Set(toList(
     Object.prototype.hasOwnProperty.call(rawServerTagTracker, 'roleIds')
@@ -1403,9 +2648,6 @@ export function normalizeConfig(raw = {}) {
       : rawServerTagTracker.roleId ? [rawServerTagTracker.roleId] : [],
     []
   ).map(String).map((roleId) => roleId.trim()).filter(Boolean))];
-  const safeAiChat = { ...normalized.aiChat };
-  delete safeAiChat.tenorApiKey;
-
   return {
     ...normalized,
     general: {
@@ -1440,6 +2682,38 @@ export function normalizeConfig(raw = {}) {
       logChannelId: String(normalized.moderation.logChannelId || '').trim(),
       warningDeleteSeconds: toBoundedInteger(normalized.moderation.warningDeleteSeconds, base.moderation.warningDeleteSeconds, 3, 300),
       retentionDays: toBoundedInteger(normalized.moderation.retentionDays, base.moderation.retentionDays, 7, 365)
+    },
+    instantBanWords: {
+      ...normalized.instantBanWords,
+      enabled: Boolean(normalized.instantBanWords.enabled),
+      words: toList(normalized.instantBanWords.words, base.instantBanWords.words).slice(0, 200),
+      caseInsensitive: normalized.instantBanWords.caseInsensitive !== false,
+      logChannelId: String(normalized.instantBanWords.logChannelId || '').trim(),
+      autoModLogChannelId: String(normalized.instantBanWords.autoModLogChannelId || '').trim(),
+      deleteMessage: normalized.instantBanWords.deleteMessage !== false,
+      banReason: String(normalized.instantBanWords.banReason || base.instantBanWords.banReason).slice(0, 500),
+      logEmbed: {
+        title: String(normalized.instantBanWords.logEmbed?.title || base.instantBanWords.logEmbed.title).slice(0, 256),
+        description: String(normalized.instantBanWords.logEmbed?.description || base.instantBanWords.logEmbed.description).slice(0, 4096),
+        color: String(normalized.instantBanWords.logEmbed?.color || base.instantBanWords.logEmbed.color || '').trim().slice(0, 16),
+        footer: String(normalized.instantBanWords.logEmbed?.footer || base.instantBanWords.logEmbed.footer || '').slice(0, 2048),
+        author: String(normalized.instantBanWords.logEmbed?.author || base.instantBanWords.logEmbed.author || '').slice(0, 256),
+        thumbnail: String(normalized.instantBanWords.logEmbed?.thumbnail || base.instantBanWords.logEmbed.thumbnail || '').trim().slice(0, 2000)
+      }
+    },
+    welcomeFarewell: {
+      ...normalized.welcomeFarewell,
+      enabled: normalized.welcomeFarewell?.enabled !== false,
+      welcomeEnabled: normalized.welcomeFarewell?.welcomeEnabled === true,
+      welcomeAfterVerification: normalized.welcomeFarewell?.welcomeAfterVerification === true,
+      verificationRoleId: String(normalized.welcomeFarewell?.verificationRoleId || '').trim(),
+      postVerificationRolesEnabled: normalized.welcomeFarewell?.postVerificationRolesEnabled === true,
+      postVerificationRoleIds: [...new Set(toList(normalized.welcomeFarewell?.postVerificationRoleIds, [])
+        .map((entry) => String(entry?.id || entry || '').trim()).filter(Boolean))],
+      welcomeChannelId: String(normalized.welcomeFarewell?.welcomeChannelId || '').trim(),
+      farewellChannelId: String(normalized.welcomeFarewell?.farewellChannelId || '').trim(),
+      autoRoleEnabled: normalized.welcomeFarewell?.autoRoleEnabled === true,
+      autoRoleName: String(normalized.welcomeFarewell?.autoRoleName || '').trim()
     },
     autoresponder: {
       ...normalized.autoresponder,
@@ -1476,60 +2750,6 @@ export function normalizeConfig(raw = {}) {
         })
         .filter(Boolean)
     },
-    aiChat: {
-      ...safeAiChat,
-      channelId: String(normalized.aiChat.channelId || '').trim(),
-      model: String(normalized.aiChat.model || base.aiChat.model).trim(),
-      ollamaUrl: String(normalized.aiChat.ollamaUrl || base.aiChat.ollamaUrl).trim(),
-      memoryLimitGb: Math.min(50, Math.max(1, toNumber(normalized.aiChat.memoryLimitGb, base.aiChat.memoryLimitGb))),
-      maxHistoryMessages: Math.min(80, Math.max(6, toNumber(normalized.aiChat.maxHistoryMessages, base.aiChat.maxHistoryMessages))),
-      maxStoredMessages: Math.min(5000, Math.max(100, toNumber(normalized.aiChat.maxStoredMessages, base.aiChat.maxStoredMessages))),
-      maxUserFacts: Math.min(250, Math.max(10, toNumber(normalized.aiChat.maxUserFacts, base.aiChat.maxUserFacts))),
-      maxResponseChars: Number(raw.aiChat?.responseLimitVersion || 0) >= 2
-        ? Math.min(2000, Math.max(400, toNumber(normalized.aiChat.maxResponseChars, base.aiChat.maxResponseChars)))
-        : 2000,
-      responseLimitVersion: 2,
-      temperature: Math.min(2, Math.max(0, toNumber(normalized.aiChat.temperature, base.aiChat.temperature))),
-      contextTokens: Number(raw.aiChat?.contextWindowVersion || 0) >= 2
-        ? Math.min(32768, Math.max(8192, toNumber(normalized.aiChat.contextTokens, base.aiChat.contextTokens)))
-        : 8192,
-      contextWindowVersion: 2,
-      requireStart: normalized.aiChat.requireStart !== false,
-      memoryEnabled: normalized.aiChat.memoryEnabled !== false,
-      rememberUserFacts: normalized.aiChat.rememberUserFacts !== false,
-      autoCleanChannel: normalized.aiChat.autoCleanChannel !== false,
-      channelIdleMinutes: Math.min(10080, Math.max(15, toNumber(normalized.aiChat.channelIdleMinutes, base.aiChat.channelIdleMinutes))),
-      keepPinnedMessages: normalized.aiChat.keepPinnedMessages !== false,
-      memoryScope: String(normalized.aiChat.memoryScope || base.aiChat.memoryScope),
-      replyMode: String(normalized.aiChat.replyMode || base.aiChat.replyMode),
-      sendTyping: normalized.aiChat.sendTyping !== false,
-      serverKnowledgeEnabled: normalized.aiChat.serverKnowledgeEnabled !== false,
-      serverKnowledgeCacheSeconds: Math.min(300, Math.max(15, toNumber(normalized.aiChat.serverKnowledgeCacheSeconds, base.aiChat.serverKnowledgeCacheSeconds))),
-      useServerEmojis: normalized.aiChat.useServerEmojis !== false,
-      emojiUsage: String(normalized.aiChat.emojiUsage || base.aiChat.emojiUsage),
-      useGifReplies: normalized.aiChat.useGifReplies !== false,
-      gifUsage: ['off', 'on-request', 'mood'].includes(String(normalized.aiChat.gifUsage || '').trim().toLowerCase())
-        ? String(normalized.aiChat.gifUsage).trim().toLowerCase()
-        : base.aiChat.gifUsage,
-      gifProvider: ['hybrid', 'tenor', 'library'].includes(String(normalized.aiChat.gifProvider || '').trim().toLowerCase())
-        ? String(normalized.aiChat.gifProvider).trim().toLowerCase()
-        : base.aiChat.gifProvider,
-      gifChancePercent: Math.min(100, Math.max(0, toNumber(normalized.aiChat.gifChancePercent, base.aiChat.gifChancePercent))),
-      tenorContentFilter: ['high', 'medium', 'low'].includes(String(normalized.aiChat.tenorContentFilter || '').trim().toLowerCase())
-        ? String(normalized.aiChat.tenorContentFilter).trim().toLowerCase()
-        : base.aiChat.tenorContentFilter,
-      tenorLocale: String(normalized.aiChat.tenorLocale || '').trim().replace('-', '_').toLowerCase() === 'en_us' ? 'en_US' : 'de_DE',
-      gifLibrary: toSafeGifLibrary(normalized.aiChat.gifLibrary),
-      personaName: String(normalized.aiChat.personaName || base.aiChat.personaName),
-      personality: String(normalized.aiChat.personality || base.aiChat.personality),
-      speakingStyle: String(normalized.aiChat.speakingStyle || base.aiChat.speakingStyle),
-      responseLength: String(normalized.aiChat.responseLength || base.aiChat.responseLength),
-      lore: String(normalized.aiChat.lore || base.aiChat.lore),
-      relationshipMode: String(normalized.aiChat.relationshipMode || base.aiChat.relationshipMode),
-      safetyRules: String(normalized.aiChat.safetyRules || base.aiChat.safetyRules),
-      forbiddenTopics: String(normalized.aiChat.forbiddenTopics || ''),
-      systemPrompt: String(normalized.aiChat.systemPrompt || base.aiChat.systemPrompt)
-    },
     customRichPresence: {
       ...normalized.customRichPresence,
       enabled: normalized.customRichPresence?.enabled === true,
@@ -1550,39 +2770,113 @@ export function normalizeConfig(raw = {}) {
     levels: {
       ...normalized.levels,
       enabled: normalized.levels?.enabled !== false,
-      xpPerMessageMin: toBoundedInteger(normalized.levels.xpPerMessageMin, base.levels.xpPerMessageMin, 1, 1000),
-      xpPerMessageMax: Math.max(
-        toBoundedInteger(normalized.levels.xpPerMessageMin, base.levels.xpPerMessageMin, 1, 1000),
-        toBoundedInteger(normalized.levels.xpPerMessageMax, base.levels.xpPerMessageMax, 1, 1000)
-      ),
-      cooldownSeconds: toBoundedInteger(normalized.levels.cooldownSeconds, base.levels.cooldownSeconds, 5, 3600),
+      balanceVersion: 'progressive-v1',
+      xpPerMessage: fixedMessageXp,
+      xpPerMessageMin: fixedMessageXp,
+      xpPerMessageMax: fixedMessageXp,
+      cooldownSeconds: 0,
       minMessageLength: toBoundedInteger(normalized.levels.minMessageLength, base.levels.minMessageLength, 1, 500),
-      maxXpPerDay: toBoundedInteger(normalized.levels.maxXpPerDay, base.levels.maxXpPerDay, 50, 100000),
+      maxXpPerDay: 0,
       ignoredChannelIds: [...new Set(toList(normalized.levels.ignoredChannelIds, []).map(String).filter(Boolean))],
       excludedRoleIds: [...new Set(toList(normalized.levels.excludedRoleIds, []).map(String).filter(Boolean))],
+      noXpRoleIds: [...new Set(toList(normalized.levels.noXpRoleIds, []).map(String).filter(Boolean))],
       levelRoleMappings: toList(normalized.levels.levelRoleMappings, []).map(String).map((entry) => entry.trim()).filter(Boolean),
       cumulativeRoleRewards: normalized.levels?.cumulativeRoleRewards === true,
       announce: normalized.levels?.announce !== false,
       announceChannelId: String(normalized.levels?.announceChannelId || '').trim(),
-      levelUpMessage: String(normalized.levels?.levelUpMessage || base.levels.levelUpMessage)
+      commandChannelId: String(normalized.levels?.commandChannelId || '').trim(),
+      levelUpMessage: String(normalized.levels?.levelUpMessage || base.levels.levelUpMessage),
+      voiceXpPerMinute: legacyLevelBalance ? 1 : toBoundedInteger(normalized.levels.voiceXpPerMinute, base.levels.voiceXpPerMinute, 0, 60),
+      voiceMinimumParticipants: toBoundedInteger(normalized.levels.voiceMinimumParticipants, base.levels.voiceMinimumParticipants, 1, 20),
+      excludeDeafenedVoice: normalized.levels?.excludeDeafenedVoice !== false,
+      levelCurveBase: 60,
+      activityBonusEnabled: false,
+      activityBonusPlace1: 0,
+      activityBonusPlace2: 0,
+      activityBonusPlace3: 0,
+      activityBonusMaxPerDay: 0,
+      tagBonusXpPerDay: 0,
+      boostBonusEnabled: false,
+      boostBonusXpPerBoost: 0,
+      boostBonusMaxPerDay: 0,
+      levelRolesPanelChannelId: String(normalized.levels?.levelRolesPanelChannelId || '').trim(),
+      rulesTitle: String(normalized.levels?.rulesTitle ?? base.levels.rulesTitle).slice(0, 256),
+      rulesDescription: String(normalized.levels?.rulesDescription ?? base.levels.rulesDescription).slice(0, 4096),
+      rulesFooter: String(normalized.levels?.rulesFooter ?? base.levels.rulesFooter).slice(0, 256),
+      rulesChatFieldName: String(normalized.levels?.rulesChatFieldName ?? base.levels.rulesChatFieldName).slice(0, 256),
+      rulesVoiceFieldName: String(normalized.levels?.rulesVoiceFieldName ?? base.levels.rulesVoiceFieldName).slice(0, 256),
+      rulesActivityFieldName: String(normalized.levels?.rulesActivityFieldName ?? base.levels.rulesActivityFieldName).slice(0, 256),
+      rulesBonusFieldName: String(normalized.levels?.rulesBonusFieldName ?? base.levels.rulesBonusFieldName).slice(0, 256),
+      rulesCurveFieldName: String(normalized.levels?.rulesCurveFieldName ?? base.levels.rulesCurveFieldName).slice(0, 256),
+      rulesNoXpFieldName: String(normalized.levels?.rulesNoXpFieldName ?? base.levels.rulesNoXpFieldName).slice(0, 256),
+      rulesExcludedFieldName: String(normalized.levels?.rulesExcludedFieldName ?? base.levels.rulesExcludedFieldName).slice(0, 256),
+      rulesActivityDisabledText: String(normalized.levels?.rulesActivityDisabledText ?? base.levels.rulesActivityDisabledText).slice(0, 1024),
+      rulesChatFieldText: (() => {
+        const value = String(normalized.levels?.rulesChatFieldText ?? base.levels.rulesChatFieldText);
+        return (/zufällig gewählt|höchstens eine Wertung alle/i.test(value) ? base.levels.rulesChatFieldText : value).slice(0, 4096);
+      })(),
+      rulesVoiceFieldText: (() => {
+        const value = String(normalized.levels?.rulesVoiceFieldText ?? base.levels.rulesVoiceFieldText);
+        return (/bewusst weniger als Chat/i.test(value) ? base.levels.rulesVoiceFieldText : value).slice(0, 4096);
+      })(),
+      rulesActivityFieldText: String(normalized.levels?.rulesActivityFieldText ?? base.levels.rulesActivityFieldText).slice(0, 4096),
+      rulesBonusFieldText: String(normalized.levels?.rulesBonusFieldText ?? base.levels.rulesBonusFieldText).slice(0, 4096),
+      rulesCurveFieldText: (() => {
+        const value = String(normalized.levels?.rulesCurveFieldText ?? base.levels.rulesCurveFieldText);
+        return (/Level 1 ≈ \*\*100 XP|Level 110 ≈ \*\*251\.000 XP/i.test(value) ? base.levels.rulesCurveFieldText : value).slice(0, 4096);
+      })(),
+      rulesNoXpFieldText: (() => {
+        const value = String(normalized.levels?.rulesNoXpFieldText ?? base.levels.rulesNoXpFieldText);
+        return (/weder Level noch Aktivitäts-Bonus/i.test(value) ? base.levels.rulesNoXpFieldText : value).slice(0, 4096);
+      })(),
+      rulesExcludedFieldText: String(normalized.levels?.rulesExcludedFieldText ?? base.levels.rulesExcludedFieldText).slice(0, 4096),
+      rulesButtonLabel: String(normalized.levels?.rulesButtonLabel ?? 'REGELN').slice(0, 80),
+      noXpButtonLabel: String(normalized.levels?.noXpButtonLabel ?? 'NO-XP (an/aus)').slice(0, 80),
+      levelUpInfoEnabled: normalized.levels?.levelUpInfoEnabled === true,
+      levelUpInfoChannelId: String(normalized.levels?.levelUpInfoChannelId || '').trim(),
+      levelUpCleanupEnabled: normalized.levels?.levelUpCleanupEnabled === true,
+      levelUpCleanupMaxMessages: toBoundedInteger(normalized.levels.levelUpCleanupMaxMessages, base.levels.levelUpCleanupMaxMessages, 2, 200),
+      panelDesign: normalizeLevelsPanelDesign(resolveLevelsPanelDesign(normalizedInput.levels, normalized.levels))
     },
     activityRace: {
       ...normalized.activityRace,
       enabled: normalized.activityRace?.enabled === true,
       panelChannelId: String(normalized.activityRace?.panelChannelId || '').trim(),
-      panelDesign: normalizeActivityPanelDesign(normalized.activityRace?.panelDesign, base.activityRace.panelDesign),
+      panelDesign: applyActivityStatusFieldNames(normalizeActivityPanelDesign(normalized.activityRace?.panelDesign, base.activityRace.panelDesign), normalized.activityRace, base.activityRace),
+      panelDesignWeekly: applyActivityStatusFieldNames(normalizeActivityPanelDesign(normalized.activityRace?.panelDesignWeekly ?? activityPeriodDesignFallback(normalized.activityRace?.panelDesign), base.activityRace.panelDesign), normalized.activityRace, base.activityRace),
+      panelDesignMonthly: applyActivityStatusFieldNames(normalizeActivityPanelDesign(normalized.activityRace?.panelDesignMonthly ?? activityPeriodDesignFallback(normalized.activityRace?.panelDesign), base.activityRace.panelDesign), normalized.activityRace, base.activityRace),
+      pingInfoDesign: normalizeActivityPingInfoDesign(normalized.activityRace?.pingInfoDesign, base.activityRace.pingInfoDesign),
       ignoredChannelIds: [...new Set(toList(normalized.activityRace?.ignoredChannelIds, []).map(String).filter(Boolean))],
       excludedRoleIds: [...new Set(toList(normalized.activityRace?.excludedRoleIds, []).map(String).filter(Boolean))],
       messageCooldownSeconds: toBoundedInteger(normalized.activityRace?.messageCooldownSeconds, base.activityRace.messageCooldownSeconds, 0, 300),
       duplicateWindowMinutes: toBoundedInteger(normalized.activityRace?.duplicateWindowMinutes, base.activityRace.duplicateWindowMinutes, 0, 1440),
       minimumMessageLength: toBoundedInteger(normalized.activityRace?.minimumMessageLength, base.activityRace.minimumMessageLength, 1, 500),
-      voiceMinimumParticipants: toBoundedInteger(normalized.activityRace?.voiceMinimumParticipants, base.activityRace.voiceMinimumParticipants, 2, 20),
+      rankingDisplayCount: toBoundedInteger(normalized.activityRace?.rankingDisplayCount, base.activityRace.rankingDisplayCount, 3, 20),
+      voiceMinimumParticipants: toBoundedInteger(normalized.activityRace?.voiceMinimumParticipants, base.activityRace.voiceMinimumParticipants, 1, 20),
       excludeDeafened: normalized.activityRace?.excludeDeafened !== false,
       placementPings: normalized.activityRace?.placementPings !== false,
       placementPingChannelId: String(normalized.activityRace?.placementPingChannelId || '').trim(),
       placementPingLifetimeMinutes: toBoundedInteger(normalized.activityRace?.placementPingLifetimeMinutes, base.activityRace.placementPingLifetimeMinutes, 1, 60),
       announceCompletedPeriods: normalized.activityRace?.announceCompletedPeriods !== false,
       announcementChannelId: String(normalized.activityRace?.announcementChannelId || '').trim(),
+      completionDaily: String(normalized.activityRace?.completionDaily ?? base.activityRace.completionDaily).slice(0, 4096),
+      completionWeekly: String(normalized.activityRace?.completionWeekly ?? base.activityRace.completionWeekly).slice(0, 4096),
+      completionMonthly: String(normalized.activityRace?.completionMonthly ?? base.activityRace.completionMonthly).slice(0, 4096),
+      chatFieldName: String(normalized.activityRace?.chatFieldName ?? base.activityRace.chatFieldName).slice(0, 256),
+      voiceFieldName: String(normalized.activityRace?.voiceFieldName ?? base.activityRace.voiceFieldName).slice(0, 256),
+      nextEvaluationFieldName: String(normalized.activityRace?.nextEvaluationFieldName ?? base.activityRace.nextEvaluationFieldName).slice(0, 256),
+      rangeFieldName: String(normalized.activityRace?.rangeFieldName ?? base.activityRace.rangeFieldName).slice(0, 256),
+      rankingLineTemplate: String(normalized.activityRace?.rankingLineTemplate ?? base.activityRace.rankingLineTemplate).slice(0, 1024),
+      rankingEmptyText: String(normalized.activityRace?.rankingEmptyText ?? base.activityRace.rankingEmptyText).slice(0, 1024),
+      rulesButtonLabel: String(normalized.activityRace?.rulesButtonLabel ?? 'REGELN').slice(0, 80),
+      personalButtonLabel: String(normalized.activityRace?.personalButtonLabel ?? 'MEIN RANG').slice(0, 80),
+      pingToggleButtonLabel: String(normalized.activityRace?.pingToggleButtonLabel ?? 'LIGA-PINGS EIN/AUS').slice(0, 80),
+      // Backfill: alter fester Standardtext im Modul-Feld → leer (zeigt den
+      // ausgeschriebenen Vollständigkeits-Text der Periode).
+      panelDescription: (() => {
+        const value = String(normalized.activityRace?.panelDescription ?? base.activityRace.panelDescription ?? '');
+        return (value.includes('Die aktivsten Mitglieder im Chat und Sprachchat') ? '' : value).slice(0, 4096);
+      })(),
       separatorRoleName: normalizedActivityRoleName(normalized.activityRace?.separatorRoleName, base.activityRace.separatorRoleName),
       separatorRoleId: String(normalized.activityRace?.separatorRoleId || '').trim(),
       ...Object.fromEntries(activityLeagueRoleEntries.flatMap((entry) => [
@@ -1601,6 +2895,71 @@ export function normalizeConfig(raw = {}) {
       maxStartupAssignments: toBoundedInteger(normalized.autoRole.maxStartupAssignments, base.autoRole.maxStartupAssignments, 1, 1000),
       logChannelId: String(normalized.autoRole.logChannelId || '').trim()
     },
+    roleSwap: {
+      ...normalized.roleSwap,
+      enabled: normalized.roleSwap?.enabled === true,
+      pairs: String(normalized.roleSwap?.pairs || '').trim(),
+      logChannelId: String(normalized.roleSwap?.logChannelId || '').trim()
+    },
+    counting: {
+      ...normalized.counting,
+      enabled: normalized.counting?.enabled === true,
+      channelId: String(normalized.counting?.channelId || '').trim(),
+      resetValue: Math.max(0, Math.min(100000, toNumber(normalized.counting?.resetValue, base.counting.resetValue))),
+      deleteWrongMessages: normalized.counting?.deleteWrongMessages !== false,
+      preventSelfCount: normalized.counting?.preventSelfCount !== false,
+      selfCountIsFail: normalized.counting?.selfCountIsFail !== false,
+      excludedRoleIds: [...new Set(toList(normalized.counting?.excludedRoleIds, []).map(String).filter(Boolean))],
+      maxCount: Math.max(10, Math.min(1000000000000, toNumber(normalized.counting?.maxCount, base.counting.maxCount))),
+      milestones: [...new Set(toList(normalized.counting?.milestones, base.counting.milestones)
+        .map((value) => Math.floor(Number(value)))
+        .filter((value) => Number.isFinite(value) && value > 0))].sort((left, right) => left - right),
+      milestoneMessage: String(normalized.counting?.milestoneMessage || '').trim().slice(0, 2000),
+      successReaction: (String(normalized.counting?.successReaction || base.counting.successReaction).trim() || '✅').slice(0, 64),
+      failReaction: (String(normalized.counting?.failReaction || base.counting.failReaction).trim() || '❌').slice(0, 64),
+      statusChannelId: String(normalized.counting?.statusChannelId || '').trim(),
+      statusPanelEnabled: normalized.counting?.statusPanelEnabled !== false,
+      rulesButtonLabel: String(normalized.counting?.rulesButtonLabel ?? '📖 Regeln').slice(0, 80),
+      rankButtonLabel: String(normalized.counting?.rankButtonLabel ?? '🏅 Mein Rang').slice(0, 80),
+      panelDesign: normalized.counting?.panelDesign || null,
+      lossMessagesEnabled: normalized.counting?.lossMessagesEnabled !== false,
+      lossMessages: toList(normalized.counting?.lossMessages, [])
+        .map((line) => String(line || '').trim().slice(0, 500))
+        .filter(Boolean),
+      clearChannelOnFail: normalized.counting?.clearChannelOnFail !== false,
+      clearChannelDelaySeconds: Math.max(0, Math.min(300, Math.floor(Number(normalized.counting?.clearChannelDelaySeconds) || 10))),
+      clearChannelKeepMessages: Number.isFinite(Number(normalized.counting?.clearChannelKeepMessages))
+        ? Math.max(0, Math.min(100, Math.floor(Number(normalized.counting?.clearChannelKeepMessages))))
+        : 5,
+      strikesEnabled: normalized.counting?.strikesEnabled !== false,
+      strikesToLock: Math.max(1, Math.min(20, Math.floor(Number(normalized.counting?.strikesToLock) || 3))),
+      strikeLockHours: Math.max(1, Math.min(720, Math.floor(Number(normalized.counting?.strikeLockHours) || 24))),
+      strikeLockMessage: String(normalized.counting?.strikeLockMessage || '').trim().slice(0, 2000),
+      strikeTolerance: Number.isFinite(Number(normalized.counting?.strikeTolerance))
+        ? Math.max(0, Math.min(1000000, Math.floor(Number(normalized.counting?.strikeTolerance))))
+        : 1,
+      dmDesigns: (() => {
+        const source = normalized.counting?.dmDesigns && typeof normalized.counting.dmDesigns === 'object' ? normalized.counting.dmDesigns : {};
+        const fallback = base.counting.dmDesigns || {};
+        return Object.fromEntries(['strikeLock', 'strikeRelease'].map((section) => {
+          const input = source[section] && typeof source[section] === 'object' ? source[section] : {};
+          const baseSection = fallback[section] || {};
+          return [section, {
+            title: String(input.title !== undefined ? input.title : baseSection.title).slice(0, 256),
+            url: String(input.url || '').slice(0, 2048),
+            description: String(input.description !== undefined ? input.description : baseSection.description).slice(0, 4096),
+            color: String(input.color || baseSection.color || '').slice(0, 16),
+            authorName: String(input.authorName !== undefined ? input.authorName : baseSection.authorName).slice(0, 256),
+            authorIconUrl: String(input.authorIconUrl || '').slice(0, 2048),
+            thumbnailUrl: String(input.thumbnailUrl || '').slice(0, 2048),
+            imageUrl: String(input.imageUrl || '').slice(0, 2048),
+            footerText: String(input.footerText !== undefined ? input.footerText : baseSection.footerText).slice(0, 2048),
+            footerIconUrl: String(input.footerIconUrl || '').slice(0, 2048),
+            timestamp: input.timestamp !== false
+          }];
+        }));
+      })()
+    },
     voiceChatCleaner: {
       ...normalized.voiceChatCleaner,
       enabled: normalized.voiceChatCleaner?.enabled === true,
@@ -1611,6 +2970,75 @@ export function normalizeConfig(raw = {}) {
       dryRun: normalized.voiceChatCleaner?.dryRun === true,
       logChannelId: String(normalized.voiceChatCleaner?.logChannelId || '').trim()
     },
+    tempVoice: {
+      ...normalized.tempVoice,
+      enabled: normalized.tempVoice?.enabled === true,
+      creatorChannelIds: toList(normalized.tempVoice?.creatorChannelIds, []).map(String).map((channelId) => channelId.trim()).filter(Boolean),
+      categoryId: String(normalized.tempVoice?.categoryId || '').trim(),
+      channelNameTemplate: String(normalized.tempVoice?.channelNameTemplate || base.tempVoice.channelNameTemplate).slice(0, 100),
+      rememberUserProfiles: normalized.tempVoice?.rememberUserProfiles !== false,
+      defaultUserLimit: Math.min(99, Math.max(0, toNumber(normalized.tempVoice?.defaultUserLimit, 0))),
+      // kbps (max 384). Migration: ältere Configs mit bps (>= 8000) werden umgerechnet.
+      defaultBitrate: (() => {
+        const raw = toNumber(normalized.tempVoice?.defaultBitrate, 0);
+        const bps = raw >= 8000 ? Math.round(raw / 1000) : raw;
+        return Math.min(384, Math.max(0, Math.trunc(bps)));
+      })(),
+      defaultRegion: String(normalized.tempVoice?.defaultRegion || '').trim(),
+      emptyGraceSeconds: Math.min(3600, Math.max(0, toNumber(normalized.tempVoice?.emptyGraceSeconds, base.tempVoice.emptyGraceSeconds))),
+      blacklistRoleIds: toList(normalized.tempVoice?.blacklistRoleIds, []).map(String).filter(Boolean),
+      requiredRoleIds: toList(normalized.tempVoice?.requiredRoleIds, []).map(String).filter(Boolean),
+      permissionOverwrites: (Array.isArray(normalized.tempVoice?.permissionOverwrites) ? normalized.tempVoice.permissionOverwrites : [])
+        .filter((entry) => entry && entry.id)
+        .map((entry) => ({
+          id: String(entry.id),
+          type: Number(entry.type) === 1 ? 1 : 0,
+          allow: String(entry.allow ?? '0'),
+          deny: String(entry.deny ?? '0')
+        })),
+      allowRename: normalized.tempVoice?.allowRename !== false,
+      allowLimit: normalized.tempVoice?.allowLimit !== false,
+      allowLock: normalized.tempVoice?.allowLock !== false,
+      allowRegion: normalized.tempVoice?.allowRegion !== false,
+      // Legacy-Feld bleibt intern explizit aus, damit ältere Desktop-Versionen
+      // keinen funktionslosen VoiceChannel-Thread-Button mehr vorschauen.
+      allowThreads: false,
+      allowTransfer: normalized.tempVoice?.allowTransfer !== false,
+      interfaceDesign: normalizeTempVoiceInterfaceConfigDesign(
+        normalized.tempVoice?.interfaceDesign,
+        base.tempVoice.interfaceDesign
+      )
+    },
+    publicCallVote: {
+      ...normalized.publicCallVote,
+      enabled: normalized.publicCallVote?.enabled === true,
+      callChannelIds: toList(normalized.publicCallVote?.callChannelIds, []).map(String).map((channelId) => channelId.trim()).filter(Boolean),
+      callChannelIds2: toList(normalized.publicCallVote?.callChannelIds2, []).map(String).map((channelId) => channelId.trim()).filter(Boolean),
+      callChannelIds3: toList(normalized.publicCallVote?.callChannelIds3, []).map(String).map((channelId) => channelId.trim()).filter(Boolean),
+      callChannelIds4: toList(normalized.publicCallVote?.callChannelIds4, []).map(String).map((channelId) => channelId.trim()).filter(Boolean),
+      passPercent: Math.min(100, Math.max(10, toNumber(normalized.publicCallVote?.passPercent, base.publicCallVote.passPercent))),
+      minVotes: Math.min(50, Math.max(1, toNumber(normalized.publicCallVote?.minVotes, base.publicCallVote.minVotes))),
+      timeoutSeconds: Math.min(600, Math.max(15, toNumber(normalized.publicCallVote?.timeoutSeconds, base.publicCallVote.timeoutSeconds))),
+      voteReasons: (Array.isArray(normalized.publicCallVote?.voteReasons) && normalized.publicCallVote.voteReasons.length
+        ? normalized.publicCallVote.voteReasons
+        : base.publicCallVote.voteReasons).map((reason) => ({
+          id: String(reason?.id || '').trim() || 'other',
+          label: String(reason?.label || 'Sonstiges').slice(0, 80),
+          kickMinutes: Math.min(1440, Math.max(1, toNumber(reason?.kickMinutes, 10))),
+          timeoutAfter: Math.min(20, Math.max(1, toNumber(reason?.timeoutAfter, 3))),
+          timeoutMinutes: Math.min(10080, Math.max(1, toNumber(reason?.timeoutMinutes, 60))),
+          needsText: reason?.needsText === true
+        })),
+      resultAutoDeleteSeconds: Math.min(600, Math.max(5, toNumber(normalized.publicCallVote?.resultAutoDeleteSeconds, base.publicCallVote.resultAutoDeleteSeconds))),
+      requestButtonLabel: String(normalized.publicCallVote?.requestButtonLabel ?? 'Rauswurf beantragen').slice(0, 80),
+      yesButtonLabel: String(normalized.publicCallVote?.yesButtonLabel ?? 'Dafür').slice(0, 80),
+      noButtonLabel: String(normalized.publicCallVote?.noButtonLabel ?? 'Dagegen').slice(0, 80),
+      passedOutcomeText: String(normalized.publicCallVote?.passedOutcomeText ?? 'wird entfernt').slice(0, 160),
+      failedOutcomeText: String(normalized.publicCallVote?.failedOutcomeText ?? 'bleibt im Call').slice(0, 160),
+      teamChannelId: String(normalized.publicCallVote?.teamChannelId || '').trim(),
+      teamRoleIds: toList(normalized.publicCallVote?.teamRoleIds, []).map(String).filter(Boolean),
+      design: normalizeVoteDesigns(normalized.publicCallVote?.design)
+    },
     serverTagTracker: {
       ...normalized.serverTagTracker,
       enabled: normalized.serverTagTracker?.enabled === true,
@@ -1618,8 +3046,8 @@ export function normalizeConfig(raw = {}) {
       roleIds: activeServerTagRoleIds,
       roleId: activeServerTagRoleIds[0] || '',
       scanIntervalMinutes: Math.min(1440, Math.max(5, toNumber(normalized.serverTagTracker?.scanIntervalMinutes, base.serverTagTracker.scanIntervalMinutes))),
-      assignmentConfirmations: Math.min(5, Math.max(2, toNumber(normalized.serverTagTracker?.assignmentConfirmations, base.serverTagTracker.assignmentConfirmations))),
-      removalConfirmations: Math.min(5, Math.max(2, toNumber(normalized.serverTagTracker?.removalConfirmations, base.serverTagTracker.removalConfirmations))),
+      assignmentConfirmations: Math.min(5, Math.max(1, toNumber(normalized.serverTagTracker?.assignmentConfirmations, base.serverTagTracker.assignmentConfirmations))),
+      removalConfirmations: Math.min(5, Math.max(1, toNumber(normalized.serverTagTracker?.removalConfirmations, base.serverTagTracker.removalConfirmations))),
       maxAssignmentsPerScan: Math.min(100, Math.max(1, toNumber(normalized.serverTagTracker?.maxAssignmentsPerScan, base.serverTagTracker.maxAssignmentsPerScan))),
       startupScan: normalized.serverTagTracker?.startupScan !== false,
       excludeBots: normalized.serverTagTracker?.excludeBots !== false,
@@ -1638,7 +3066,21 @@ export function normalizeConfig(raw = {}) {
       historyScanLimit: Math.min(50000, Math.max(100, toNumber(normalized.boostRoles?.historyScanLimit, 2000))),
       boostInfoChannelId: String(normalized.boostRoles?.boostInfoChannelId || '').trim(),
       boostEndLogChannelId: String(normalized.boostRoles?.boostEndLogChannelId || '').trim(),
-      logChannelId: String(normalized.boostRoles?.logChannelId || '')
+      logChannelId: String(normalized.boostRoles?.logChannelId || ''),
+      boostTopEnabled: normalized.boostRoles?.boostTopEnabled === true,
+      boostTopChannelId: String(normalized.boostRoles?.boostTopChannelId || '').trim(),
+      boostTopPingsEnabled: normalized.boostRoles?.boostTopPingsEnabled !== false,
+      boostTopPingChannelId: String(normalized.boostRoles?.boostTopPingChannelId || '').trim(),
+      boostTopPingLifetimeMinutes: Math.min(60, Math.max(1, toNumber(normalized.boostRoles?.boostTopPingLifetimeMinutes, 5))),
+      boostTopPlaceFieldName: String(normalized.boostRoles?.boostTopPlaceFieldName || base.boostRoles.boostTopPlaceFieldName).slice(0, 256),
+      boostTopPlaceLineTemplate: String(normalized.boostRoles?.boostTopPlaceLineTemplate || base.boostRoles.boostTopPlaceLineTemplate).slice(0, 1024),
+      boostTopStatusFieldName: String(normalized.boostRoles?.boostTopStatusFieldName || base.boostRoles.boostTopStatusFieldName).slice(0, 256),
+      boostTopNextEvaluationFieldName: String(normalized.boostRoles?.boostTopNextEvaluationFieldName || base.boostRoles.boostTopNextEvaluationFieldName).slice(0, 256),
+      boostTopEmptyFieldName: String(normalized.boostRoles?.boostTopEmptyFieldName || base.boostRoles.boostTopEmptyFieldName).slice(0, 256),
+      boostTopEmptyText: String(normalized.boostRoles?.boostTopEmptyText || base.boostRoles.boostTopEmptyText).slice(0, 1024),
+      boostTopPlaceName1: String(normalized.boostRoles?.boostTopPlaceName1 || base.boostRoles.boostTopPlaceName1).slice(0, 256),
+      boostTopPlaceName2: String(normalized.boostRoles?.boostTopPlaceName2 || base.boostRoles.boostTopPlaceName2).slice(0, 256),
+      boostTopPlaceName3: String(normalized.boostRoles?.boostTopPlaceName3 || base.boostRoles.boostTopPlaceName3).slice(0, 256)
     },
     heavenEconomy: {
       ...normalized.heavenEconomy,
@@ -1646,8 +3088,92 @@ export function normalizeConfig(raw = {}) {
       panelChannelId: String(normalized.heavenEconomy?.panelChannelId || ''),
       panelMessageId: String(normalized.heavenEconomy?.panelMessageId || ''),
       coinEmoji: String(normalized.heavenEconomy?.coinEmoji || '🪙').slice(0, 100),
+      accountButtonLabel: String(normalized.heavenEconomy?.accountButtonLabel || 'Mein Konto').slice(0, 80),
+      shopButtonLabel: String(normalized.heavenEconomy?.shopButtonLabel || 'VIP-Shop').slice(0, 80),
+      giftButtonLabel: String(normalized.heavenEconomy?.giftButtonLabel || 'VIP verschenken').slice(0, 80),
+      coinGiftButtonLabel: String(normalized.heavenEconomy?.coinGiftButtonLabel || 'Coins verschenken').slice(0, 80),
+      coinGiftsEnabled: normalized.heavenEconomy?.coinGiftsEnabled !== false,
+      coinGiftMinAmount: Math.min(10_000_000, Math.max(1, toNumber(normalized.heavenEconomy?.coinGiftMinAmount, 1))),
+      coinGiftMaxAmount: (() => {
+        const minimum = Math.min(10_000_000, Math.max(1, toNumber(normalized.heavenEconomy?.coinGiftMinAmount, 1)));
+        return Math.min(10_000_000, Math.max(minimum, toNumber(normalized.heavenEconomy?.coinGiftMaxAmount, 100000)));
+      })(),
+      panelTemplate: (() => {
+        const source = normalized.heavenEconomy?.panelTemplate && typeof normalized.heavenEconomy.panelTemplate === 'object' ? normalized.heavenEconomy.panelTemplate : {};
+        const fallback = base.heavenEconomy.panelTemplate;
+        const baseEmbed = fallback.embeds[0];
+        const inputEmbeds = (Array.isArray(source.embeds) ? source.embeds : [source.embed]).filter((entry) => entry && typeof entry === 'object').slice(0, 10);
+        return {
+          content: String(source.content || '').slice(0, 2000),
+          outsideImageUrl: String(source.outsideImageUrl || '').slice(0, 2048),
+          outsideImageName: String(source.outsideImageName || source.outsideImageAttachment?.name || '').slice(0, 120),
+          outsideImageSize: Math.max(0, Number(source.outsideImageSize || source.outsideImageAttachment?.size || 0)),
+          outsideImageAttachment: source.outsideImageAttachment && typeof source.outsideImageAttachment === 'object'
+            ? {
+                localAsset: source.outsideImageAttachment.localAsset === true,
+                id: String(source.outsideImageAttachment.id || ''),
+                url: String(source.outsideImageAttachment.url || '').slice(0, 2048),
+                name: String(source.outsideImageAttachment.name || source.outsideImageName || 'bild.png').slice(0, 120),
+                size: Math.max(0, Number(source.outsideImageAttachment.size || source.outsideImageSize || 0)),
+                mime: String(source.outsideImageAttachment.mime || '').slice(0, 100)
+              }
+            : null,
+          embeds: (inputEmbeds.length ? inputEmbeds : [baseEmbed]).map((inputEmbed) => ({
+            title: String(inputEmbed.title !== undefined ? inputEmbed.title : baseEmbed.title).slice(0, 256),
+            url: String(inputEmbed.url || '').slice(0, 2048),
+            description: String(inputEmbed.description !== undefined ? inputEmbed.description : baseEmbed.description).slice(0, 4096),
+            color: String(inputEmbed.color || baseEmbed.color).slice(0, 16),
+            authorName: String(inputEmbed.authorName !== undefined ? inputEmbed.authorName : baseEmbed.authorName).slice(0, 256),
+            authorIconUrl: String(inputEmbed.authorIconUrl || '').slice(0, 2048),
+            thumbnailUrl: String(inputEmbed.thumbnailUrl || '').slice(0, 2048),
+            imageUrl: String(inputEmbed.imageUrl || '').slice(0, 2048),
+            footerText: String(inputEmbed.footerText !== undefined ? inputEmbed.footerText : baseEmbed.footerText).slice(0, 2048),
+            footerIconUrl: String(inputEmbed.footerIconUrl || '').slice(0, 2048),
+            timestamp: inputEmbed.timestamp === true,
+            fields: (Array.isArray(inputEmbed.fields) ? inputEmbed.fields : baseEmbed.fields).slice(0, 25).map((field) => ({
+              name: String(field?.name || '').slice(0, 256),
+              value: String(field?.value || '').slice(0, 1024),
+              inline: field?.inline === true
+            })).filter((field) => field.name && field.value)
+          }))
+        };
+      })(),
+      buyButtonLabel: String(normalized.heavenEconomy?.buyButtonLabel || 'Coins kaufen').slice(0, 80),
+      progressButtonLabel: String(normalized.heavenEconomy?.progressButtonLabel || 'Boost-Fortschritt').slice(0, 80),
+      perksButtonLabel: String(normalized.heavenEconomy?.perksButtonLabel || 'VIP-Vorteile').slice(0, 80),
+      adminButtonLabel: String(normalized.heavenEconomy?.adminButtonLabel || 'Coin-Verwaltung').slice(0, 80),
       boostMilestoneReward: Math.min(10000, Math.max(1, toNumber(normalized.heavenEconomy?.boostMilestoneReward, 100))),
       vipRoleMappings: toList(normalized.heavenEconomy?.vipRoleMappings, []),
+      vipPanelEnabled: normalized.heavenEconomy?.vipPanelEnabled === true,
+      vipPanelChannelId: String(normalized.heavenEconomy?.vipPanelChannelId || '').trim(),
+      separatorRoleName: String(normalized.heavenEconomy?.separatorRoleName || base.heavenEconomy.separatorRoleName || '━━ VIP ━━').slice(0, 100),
+      separatorRoleId: String(normalized.heavenEconomy?.separatorRoleId || '').trim(),
+      dmDesigns: (() => {
+        const source = normalized.heavenEconomy?.dmDesigns && typeof normalized.heavenEconomy.dmDesigns === 'object' ? normalized.heavenEconomy.dmDesigns : {};
+        const fallback = base.heavenEconomy.dmDesigns || {};
+        return Object.fromEntries(['giftReceived', 'vipPurchased', 'coinsReceived', 'boostMilestone', 'coinGiftReceived', 'coinGiftSent'].map((section) => {
+          const input = source[section] && typeof source[section] === 'object' ? source[section] : {};
+          const baseSection = fallback[section] || {};
+          return [section, {
+            title: String(input.title !== undefined ? input.title : baseSection.title).slice(0, 256),
+            url: String(input.url || '').slice(0, 2048),
+            description: String(input.description !== undefined ? input.description : baseSection.description).slice(0, 4096),
+            color: String(input.color || baseSection.color || '').slice(0, 16),
+            authorName: String(input.authorName !== undefined ? input.authorName : baseSection.authorName).slice(0, 256),
+            authorIconUrl: String(input.authorIconUrl || '').slice(0, 2048),
+            thumbnailUrl: String(input.thumbnailUrl || '').slice(0, 2048),
+            imageUrl: String(input.imageUrl || '').slice(0, 2048),
+            footerText: String(input.footerText !== undefined ? input.footerText : baseSection.footerText).slice(0, 2048),
+            footerIconUrl: String(input.footerIconUrl || '').slice(0, 2048),
+            fields: (Array.isArray(input.fields) ? input.fields : Array.isArray(baseSection.fields) ? baseSection.fields : []).slice(0, 25).map((field) => ({
+              name: String(field?.name || '').slice(0, 256),
+              value: String(field?.value || '').slice(0, 1024),
+              inline: field?.inline === true
+            })).filter((field) => field.name && field.value),
+            timestamp: input.timestamp !== false
+          }];
+        }));
+      })(),
       paypalUrl: String(normalized.heavenEconomy?.paypalUrl || ''),
       paysafecardUrl: String(normalized.heavenEconomy?.paysafecardUrl || ''),
       supportChannelId: String(normalized.heavenEconomy?.supportChannelId || ''),
@@ -1686,6 +3212,7 @@ export function normalizeConfig(raw = {}) {
       panelDescription: String(normalized.tickets?.panelDescription || '').trim().slice(0, 4000) || base.tickets.panelDescription,
       panelButtonLabel: String(normalized.tickets?.panelButtonLabel || '').trim().slice(0, 80) || base.tickets.panelButtonLabel,
       panelButtonEmoji: String(normalized.tickets?.panelButtonEmoji || base.tickets.panelButtonEmoji).trim(),
+      closeButtonLabel: String(normalized.tickets?.closeButtonLabel || base.tickets.closeButtonLabel).trim().slice(0, 80) || base.tickets.closeButtonLabel,
       supportRoleId: String(normalized.tickets?.supportRoleId || '').trim(),
       categoryId: String(normalized.tickets?.categoryId || '').trim(),
       useThreadMode: normalized.tickets?.useThreadMode === true,
@@ -1784,12 +3311,49 @@ export function normalizeConfig(raw = {}) {
       moderatorRoleIds: toList(normalized.memberManagement.moderatorRoleIds, []),
       logChannelId: String(normalized.memberManagement.logChannelId || '')
     },
+    botUpdates: {
+      ...normalized.botUpdates,
+      enabled: normalized.botUpdates?.enabled === true,
+      channelId: String(normalized.botUpdates?.channelId || '').trim(),
+      prevButtonLabel: String(normalized.botUpdates?.prevButtonLabel ?? 'Älter').slice(0, 80),
+      nextButtonLabel: String(normalized.botUpdates?.nextButtonLabel ?? 'Neuer').slice(0, 80),
+      design: normalizeBotUpdatesDesign(normalized.botUpdates?.design)
+    },
+    roleSaver: {
+      enabled: normalized.roleSaver?.enabled === true,
+      blacklistedRoleIds: toIdList(normalized.roleSaver?.blacklistedRoleIds, []),
+      excludeBots: normalized.roleSaver?.excludeBots !== false,
+      skipManagedRoles: normalized.roleSaver?.skipManagedRoles !== false,
+      restoreDelaySeconds: Math.min(120, Math.max(1, toNumber(normalized.roleSaver?.restoreDelaySeconds, 8))),
+      retryCount: Math.min(5, Math.max(1, toNumber(normalized.roleSaver?.retryCount, 3))),
+      maxStoredRoles: Math.min(100, Math.max(5, toNumber(normalized.roleSaver?.maxStoredRoles, 40))),
+      logChannelId: String(normalized.roleSaver?.logChannelId || '').trim()
+    },
+    inactiveReminder: {
+      enabled: normalized.inactiveReminder?.enabled === true,
+      thresholdDays: Math.min(3650, Math.max(7, toNumber(normalized.inactiveReminder?.thresholdDays, 180))),
+      excludedRoleIds: toIdList(normalized.inactiveReminder?.excludedRoleIds, []),
+      inviteUrl: String(normalized.inactiveReminder?.inviteUrl || base.inactiveReminder?.inviteUrl || 'https://discord.gg/fallen-heaven').trim() || 'https://discord.gg/fallen-heaven',
+      joinButtonLabel: String(normalized.inactiveReminder?.joinButtonLabel ?? 'Ja, zum Server').slice(0, 2000),
+      leaveButtonLabel: String(normalized.inactiveReminder?.leaveButtonLabel ?? 'Nein, bitte entfernen').slice(0, 2000),
+      joinInviteButtonLabel: String(normalized.inactiveReminder?.joinInviteButtonLabel ?? '🔗 Zum Server beitreten').slice(0, 2000),
+      stayConfirmTitle: String(normalized.inactiveReminder?.stayConfirmTitle ?? '✅ Du bleibst bei uns!').slice(0, 2000),
+      stayConfirmDescription: String(normalized.inactiveReminder?.stayConfirmDescription ?? 'Danke! Du bist als aktiv markiert, bleibst auf dem Server und wirst von dieser Inaktivitäts-Erinnerung nicht erneut angeschrieben.').slice(0, 2000),
+      leaveConfirmTitle: String(normalized.inactiveReminder?.leaveConfirmTitle ?? '❌ Du verlässt den Server').slice(0, 2000),
+      leaveConfirmDescription: String(normalized.inactiveReminder?.leaveConfirmDescription ?? 'Du wirst freundlich vom Server entfernt. Falls du zurückkehren willst, bist du jederzeit willkommen. 👋').slice(0, 2000),
+      joinReplyText: String(normalized.inactiveReminder?.joinReplyText ?? '✅ Danke! Du bist als **aktiv** markiert und wirst nicht erneut angeschrieben. Hier ist deine Einladung – ein Klick und du bist zurück auf **{guild}**:').slice(0, 2000),
+      stayReplyText: String(normalized.inactiveReminder?.stayReplyText ?? '✅ Danke! Du bleibst auf dem Server und wirst von dieser Inaktivitäts-Erinnerung nicht erneut angeschrieben.').slice(0, 2000),
+      leaveReplyText: String(normalized.inactiveReminder?.leaveReplyText ?? 'Verstanden. Vielen Dank für deine Ehrlichkeit – du wirst gleich vom Server entfernt. Falls du zurückkehren willst, bist du jederzeit willkommen. 👋').slice(0, 2000),
+      dmDesign: normalizeInactiveReminderDesign(normalized.inactiveReminder?.dmDesign, base.inactiveReminder?.dmDesign)
+    },
+    voiceLogImport: {
+      enabled: normalized.voiceLogImport?.enabled === true,
+      channelId: String(normalized.voiceLogImport?.channelId || '').trim(),
+      backfillHours: Math.min(17520, Math.max(1, toNumber(normalized.voiceLogImport?.backfillHours, 4320))),
+      batchSize: Math.min(200, Math.max(20, toNumber(normalized.voiceLogImport?.batchSize, 100))),
+      maxPages: Math.min(1000, Math.max(1, toNumber(normalized.voiceLogImport?.maxPages, 100)))
+    },
     embeds: normalizeEmbeds(normalized.embeds, base.embeds)
   };
 }
-
-
-
-
-
 

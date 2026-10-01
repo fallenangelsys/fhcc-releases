@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getServerIndexNativeBoostEvents } from '../serverIndexStore.js';
 
 // Discord message type 8 is one individual user boost event. A number in the
 // content is preserved as metadata but never replaces the number of events.
@@ -71,23 +72,28 @@ export const getBoostSystemIndexStatus = (guildId) => ({
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const readJson = (filePath, fallback) => {
+// Datei-I/O ausschließlich ASYNC: Synchrones Lesen großer JSONL-/Cache-Dateien
+// (Daten liegen auf der Freigabe) blockiert den gesamten Event-Loop – dann
+// kann auch der Interaction-Watchdog nicht feuern und Klicks laufen in
+// „Fallen-Heaven hat nicht rechtzeitig reagiert“. Alle Pfade hier sind daher
+// Promise-basiert.
+const readJsonAsync = async (filePath, fallback) => {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
   } catch {
     return fallback;
   }
 };
 
-const writeJsonAtomic = (filePath, value) => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const temporary = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(value, null, 2), 'utf8');
+const writeJsonAtomicAsync = async (filePath, value) => {
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 7)}.tmp`;
   try {
-    fs.renameSync(temporary, filePath);
+    await fs.promises.writeFile(temporary, JSON.stringify(value, null, 2), 'utf8');
+    await fs.promises.rename(temporary, filePath);
   } catch {
-    fs.rmSync(filePath, { force: true });
-    fs.renameSync(temporary, filePath);
+    await fs.promises.rm(filePath, { force: true }).catch(() => null);
+    await fs.promises.rename(temporary, filePath).catch(() => null);
   }
 };
 
@@ -182,19 +188,29 @@ const pruneCache = (cache) => {
   cache.messages = Object.fromEntries(entries.slice(0, MAX_CACHE_ENTRIES));
 };
 
-const collectChannelIndex = ({ cache, guildId, channelId, since, onProgress }) => {
+const collectChannelIndex = async ({ cache, guildId, channelId, since, onProgress }) => {
   const channelRoot = path.join(SERVER_INDEX_ROOT, String(guildId), String(channelId));
-  if (!fs.existsSync(channelRoot)) return;
+  try {
+    await fs.promises.access(channelRoot);
+  } catch {
+    return;
+  }
 
   const minimumMonth = monthKey(since);
   const fileState = cache.files[channelId] || {};
   cache.files[channelId] = fileState;
 
-  const files = fs.readdirSync(channelRoot, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
-    .map((entry) => entry.name)
-    .filter((name) => name.slice(0, 7) >= minimumMonth)
-    .sort();
+  let files = [];
+  try {
+    const entries = await fs.promises.readdir(channelRoot, { withFileTypes: true });
+    files = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
+      .map((entry) => entry.name)
+      .filter((name) => name.slice(0, 7) >= minimumMonth)
+      .sort();
+  } catch {
+    return;
+  }
 
   onProgress?.(0, files.length);
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
@@ -208,7 +224,7 @@ const collectChannelIndex = ({ cache, guildId, channelId, since, onProgress }) =
     const filePath = path.join(channelRoot, fileName);
     let content = '';
     try {
-      content = fs.readFileSync(filePath, 'utf8');
+      content = await fs.promises.readFile(filePath, 'utf8');
     } catch {
       onProgress?.(fileIndex + 1, files.length);
       continue;
@@ -308,7 +324,7 @@ const verifyLegacyCandidates = async ({ guild, cache, activeUserIds, since, maxC
 
     if (dirty && (completed % 100 === 0 || index + 4 >= candidates.length)) {
       pruneCache(cache);
-      writeJsonAtomic(TYPE_CACHE_FILE, cache);
+      await writeJsonAtomicAsync(TYPE_CACHE_FILE, cache);
       dirty = false;
     }
     onProgress?.(Math.min(index + batch.length, candidates.length), candidates.length);
@@ -335,11 +351,11 @@ export const getIndexedNativeBoostEvents = async ({
   });
 
   try {
-    const cache = normalizeCache(readJson(TYPE_CACHE_FILE, null));
+    const cache = normalizeCache(await readJsonAsync(TYPE_CACHE_FILE, null));
     for (let channelIndex = 0; channelIndex < uniqueChannels.length; channelIndex += 1) {
       const channelId = uniqueChannels[channelIndex];
       const channelName = guild.channels.cache.get(channelId)?.name || channelId;
-      collectChannelIndex({
+      await collectChannelIndex({
         cache,
         guildId,
         channelId,
@@ -359,7 +375,7 @@ export const getIndexedNativeBoostEvents = async ({
       });
     }
     pruneCache(cache);
-    writeJsonAtomic(TYPE_CACHE_FILE, cache);
+    await writeJsonAtomicAsync(TYPE_CACHE_FILE, cache);
 
     await verifyLegacyCandidates({
       guild,
@@ -386,6 +402,39 @@ export const getIndexedNativeBoostEvents = async ({
       .filter(([, entry]) => Number(entry.timestamp || 0) >= since)
       .filter(([, entry]) => !active.size || active.has(String(entry.userId || '')))
       .map(([messageId, entry]) => toEvent(entry, messageId))
+      .filter((event) => event.userId && event.timestamp);
+
+    // Die SQLite-Instanz des persistenten Serverindex ist seit der Migration
+    // die autoritative Quelle für frische Boost-Systemmeldungen (Typ 8). Die
+    // JSONL-Kanaldateien werden nicht mehr geschrieben und sind eingefroren –
+    // ohne diesen Pfad bleiben Boosts, die während eines Bot-Neustarts
+    // eintreffen, dauerhaft unentdeckt (bekannter Fehler: „nur 1× statt 2×").
+    let indexedDbEvents = [];
+    try {
+      indexedDbEvents = await getServerIndexNativeBoostEvents({
+        guildId,
+        channelIds: uniqueChannels,
+        activeUserIds,
+        since
+      });
+    } catch (error) {
+      console.warn(`[Boost-Rollen] SQLite-Boost-Quelle konnte nicht gelesen werden: ${error.message}`);
+    }
+    const mergedEvents = new Map();
+    for (const event of events) mergedEvents.set(String(event.messageId || ''), event);
+    for (const event of indexedDbEvents) {
+      const key = String(event.messageId || '');
+      if (!key) continue;
+      mergedEvents.set(key, {
+        ...event,
+        type: 'boost',
+        source: 'native-system-index',
+        delta: 1,
+        discordMessageType: 8,
+        reportedCount: Math.max(0, Number(event.reportedCount || 0))
+      });
+    }
+    const finalEvents = [...mergedEvents.values()]
       .filter((event) => event.userId && event.timestamp)
       .sort((left, right) => left.timestamp - right.timestamp);
 
@@ -393,11 +442,11 @@ export const getIndexedNativeBoostEvents = async ({
       running: false,
       phase: 'complete',
       progress: 100,
-      completed: events.length,
-      total: events.length,
-      detail: `${events.length} bestätigte Boost-Systemmeldungen sind abgeglichen.`
+      completed: finalEvents.length,
+      total: finalEvents.length,
+      detail: `${finalEvents.length} bestätigte Boost-Systemmeldungen sind abgeglichen.`
     });
-    return events;
+    return finalEvents;
   } catch (error) {
     setProgress(guildId, {
       running: false,
@@ -408,14 +457,14 @@ export const getIndexedNativeBoostEvents = async ({
   }
 };
 
-export const getIndexedBoostEvidenceEvents = ({
+export const getIndexedBoostEvidenceEvents = async ({
   guildId = '',
   channelIds = [],
   activeUserIds = [],
   since = Date.now() - (180 * 24 * 60 * 60 * 1000)
 } = {}) => {
   if (!guildId) return [];
-  const cache = normalizeCache(readJson(TYPE_CACHE_FILE, null));
+  const cache = normalizeCache(await readJsonAsync(TYPE_CACHE_FILE, null));
   const channels = new Set(channelIds.map(String).filter(Boolean));
   const active = new Set(activeUserIds.map(String).filter(Boolean));
   return Object.entries(cache.messages || {})

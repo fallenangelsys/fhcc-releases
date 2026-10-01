@@ -26,12 +26,12 @@ const features = [
     }
   },
   {
-    id: 'aiChat',
+    id: 'slowPerGuild',
     async onMessageCreate({ message }) {
       if (!message) return;
-      timeline.push(`ai-${message.id}-start`);
+      timeline.push(`perguild-${message.id}-start`);
       await sleep(60);
-      timeline.push(`ai-${message.id}-end`);
+      timeline.push(`perguild-${message.id}-end`);
     }
   }
 ];
@@ -46,20 +46,20 @@ await sleep(5);
 const second = dispatcher.dispatch('onMessageCreate', { sequence: 2 });
 await Promise.all([first, second]);
 
-const aiFirst = dispatcher.dispatch('onMessageCreate', {
+const guildFirst = dispatcher.dispatch('onMessageCreate', {
   message: { id: '1001', guildId: 'guild-a', channelId: 'channel-a' }
 });
 await sleep(5);
-const aiSecond = dispatcher.dispatch('onMessageCreate', {
+const guildSecond = dispatcher.dispatch('onMessageCreate', {
   message: { id: '1002', guildId: 'guild-b', channelId: 'channel-b' }
 });
-await Promise.all([aiFirst, aiSecond]);
+await Promise.all([guildFirst, guildSecond]);
 
 assert(timeline.indexOf('fast-1') < timeline.indexOf('slow-1-end'), 'Schnelle Module dürfen nicht auf langsame Module warten.');
 assert(timeline.indexOf('slow-1-end') < timeline.indexOf('slow-2-start'), 'Ereignisse desselben Moduls müssen geordnet bleiben.');
 assert.equal(errors.filter((entry) => entry.name === 'broken.onMessageCreate' && entry.message === 'Testfehler').length, 4);
-assert.equal(errors.filter((entry) => entry.name === 'aiChat.onMessageCreate').length, 0);
-assert(timeline.indexOf('ai-1002-start') < timeline.indexOf('ai-1001-end'), 'AI requests from different guilds must not be serialized globally.');
+assert.equal(errors.filter((entry) => entry.name === 'slowPerGuild.onMessageCreate').length, 0);
+assert(timeline.indexOf('perguild-1002-start') < timeline.indexOf('perguild-1001-end'), 'Unabhängige Guilds dürfen sich im gleichen Modul nicht gegenseitig blockieren.');
 const snapshot = dispatcher.getSnapshot();
 assert.equal(snapshot.activeFeatures, 0);
 assert.equal(snapshot.features.find((entry) => entry.featureId === 'slow').completed, 4);

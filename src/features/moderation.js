@@ -1,5 +1,4 @@
 import path from 'node:path';
-import process from 'node:process';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -9,8 +8,11 @@ import {
   PermissionFlagsBits
 } from 'discord.js';
 import { atomicWriteJson, readJsonWithRecovery } from '../runtime/atomicJsonStore.js';
+import { quietLog, QUIET_LOG_SCOPE } from '../runtime/quietLog.js';
+import { finiteInteger } from '../runtime/utils.js';
+import { DATA_DIR } from '../shared/paths.js';
 
-const DATA_ROOT = process.env.FALLEN_HEAVEN_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_ROOT = DATA_DIR;
 const INCIDENT_FILE = path.join(DATA_ROOT, 'moderation-incidents.json');
 const STORE_VERSION = 2;
 const MAX_INCIDENTS_PER_MEMBER = 250;
@@ -19,10 +21,6 @@ const muteTimers = new Map();
 let mutationQueue = Promise.resolve();
 
 const emptyStore = () => ({ version: STORE_VERSION, guilds: {} });
-const finiteInteger = (value, fallback, minimum, maximum) => {
-  const number = Math.floor(Number(value));
-  return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
-};
 const settings = (cfg) => cfg?.moderation || {};
 const severityRank = { light: 1, medium: 2, high: 3, critical: 4 };
 const highestSeverity = (left, right) => severityRank[right] > severityRank[left] ? right : left;
@@ -287,7 +285,10 @@ const scheduleMuteReconcile = (member, cfg) => {
   const delay = Math.max(1000, Math.min(2_147_000_000, Number(member.communicationDisabledUntilTimestamp || 0) - Date.now() + 1500));
   const timer = setTimeout(async () => {
     muteTimers.delete(key);
-    const fresh = await member.guild.members.fetch(member.id).catch(() => null);
+    const fresh = await member.guild.members.fetch(member.id).catch((error) => {
+      quietLog(QUIET_LOG_SCOPE.moderation, error, `members.fetch (Fresh) fehlgeschlagen: ${member.id}`);
+      return null;
+    });
     if (fresh) await syncMuteRole(fresh, cfg).catch(() => {});
   }, delay);
   timer.unref?.();
@@ -313,7 +314,10 @@ const sendChannelNotice = async ({ message, strikeCount, timeoutResult, cfg }) =
   const text = timeoutResult?.applied
     ? `${message.author}, der Moderationsassistent hat einen Timeout von ${timeoutResult.minutes} Minuten gesetzt. Aktive Verwarnungen: ${strikeCount}.`
     : `${message.author}, bitte beachte die Serverregeln. Aktive Verwarnungen: ${strikeCount}.`;
-  const notice = await message.channel.send({ content: text, allowedMentions: { users: [message.author.id], roles: [], repliedUser: false } }).catch(() => null);
+  const notice = await message.channel.send({ content: text, allowedMentions: { users: [message.author.id], roles: [], repliedUser: false } }).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.moderation, error, `channel.send (Notice) fehlgeschlagen: Kanal ${message.channel?.id}`);
+    return null;
+  });
   const deleteSeconds = finiteInteger(settings(cfg).warningDeleteSeconds, 15, 3, 300);
   if (notice?.deletable) {
     const timer = setTimeout(() => notice.delete().catch(() => {}), deleteSeconds * 1000);
@@ -324,7 +328,10 @@ const sendChannelNotice = async ({ message, strikeCount, timeoutResult, cfg }) =
 const sendModerationLog = async ({ guild, cfg, member, incident, strikeCount, mode, timeoutResult }) => {
   const channelId = String(settings(cfg).logChannelId || '');
   if (!channelId) return;
-  const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+  const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.moderation, error, `channels.fetch (Log) fehlgeschlagen: ${channelId}`);
+    return null;
+  });
   if (!channel?.isTextBased?.()) return;
   const color = ({ light: 0xf0b84b, medium: 0xff8a52, high: 0xff5d78, critical: 0xd83cff })[incident.severity] || 0x7772ff;
   const embed = new EmbedBuilder()
@@ -401,7 +408,10 @@ const handleReviewButton = async (interaction, cfg) => {
     await interaction.reply({ content: 'Dieser Vorfall ist nicht mehr im aktiven Moderationsspeicher vorhanden.', flags: MessageFlags.Ephemeral });
     return true;
   }
-  const member = await interaction.guild.members.fetch(found.userId).catch(() => null);
+  const member = await interaction.guild.members.fetch(found.userId).catch((error) => {
+    quietLog(QUIET_LOG_SCOPE.moderation, error, `members.fetch (Audit) fehlgeschlagen: ${found.userId}`);
+    return null;
+  });
   if (action === 'false-positive' || action === 'forgive') {
     const status = action === 'false-positive' ? 'false_positive' : 'pardoned';
     await patchIncident(interaction.guildId, found.userId, incidentIdValue, {
@@ -456,7 +466,10 @@ export const feature = {
   },
   async onAutoModerationActionExecution({ execution, cfg }) {
     if (!settings(cfg).enabled || !execution?.guild || !execution.userId) return;
-    const member = execution.guild.members.cache.get(execution.userId) || await execution.guild.members.fetch(execution.userId).catch(() => null);
+    const member = execution.guild.members.cache.get(execution.userId) || await execution.guild.members.fetch(execution.userId).catch((error) => {
+      quietLog(QUIET_LOG_SCOPE.moderation, error, `members.fetch (AutoMod) fehlgeschlagen: ${execution.userId}`);
+      return null;
+    });
     if (!member || isProtectedMember(member, cfg)) return;
     const syntheticMessage = {
       id: execution.messageId || `automod:${execution.ruleId}:${execution.userId}:${Date.now()}`,
