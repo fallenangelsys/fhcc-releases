@@ -1,6 +1,15 @@
 {
   "entries": [
     {
+      "version": "4.0.3",
+      "date": "2026-10-01",
+      "changes": [
+        "Behoben: Die Discord-Anmeldung funktioniert wieder. Seit 4.0.1 hat die gepackte App nur noch die .env neben den Appdaten gelesen; Installationen, deren OAuth-Zugangsdaten noch in Documents/Discord Bot/.env lagen, konnten sich danach nicht mehr anmelden.",
+        "Der Schutz gegen fremde Zugangsdaten bleibt bestehen: Eine frische Installation liest diese geerbten Werte weiterhin nicht.",
+        "Behoben: 4.0.2 stellte den Standard auf \"Erst manuell starten\" um. Für Einrichtungen vor 4.0.1 ist dadurch die Anmeldung ausgefallen, weil der Anmeldedienst die Zugangsdaten nicht mehr fand."
+      ]
+    },
+    {
       "version": "4.0.2",
       "date": "2026-10-01",
       "changes": [

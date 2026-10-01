@@ -146,8 +146,15 @@ const supervisor = read('desktop/process-supervisor.cjs');
 expect('gepackte App uebernimmt keine alten Serverdaten', () => {
   assert.match(supervisor, /!this\.isPackaged && targetEmpty/);
 });
-expect('gepackte App liest kein .env aus fremden Ordnern', () => {
-  assert.match(supervisor, /if \(this\.isPackaged\) return \[path\.join\(this\.app\.getPath\('userData'\), '\.env'\)\]/);
+expect('eine FRISCHE gepackte App liest kein .env aus fremden Ordnern', () => {
+  // Nur der verwaltete Pfad darf fuer eine nie benutzte Installation gelten.
+  assert.match(supervisor, /if \(!this\.isFreshInstall\(\)\) \{[\s\S]{0,400}return \[managed, path\.join\(this\.projectRoot/);
+  assert.match(supervisor, /return \[managed\];\s*\}/);
+});
+expect('eine EINGERICHTETE gepackte App behaelt die geerbten .env als Rueckfall', () => {
+  // Sonst verlieren Installationen aus der Zeit vor 4.0.1 ihre OAuth-Daten
+  // und die Discord-Anmeldung ist nach dem Update nicht mehr moeglich.
+  assert.match(supervisor, /if \(!this\.isFreshInstall\(\)\)/);
 });
 expect('Entwicklungsmodus behaelt die Rueckfaelle', () => {
   assert.match(supervisor, /'Discord Bot', '\.env'/);

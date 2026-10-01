@@ -145,16 +145,23 @@ class BotProcessSupervisor {
   }
 
   secretCandidates() {
-    // In der gepackten App zaehlt ausschliesslich die .env neben den Appdaten.
-    // Projektordner und ~/Documents/Discord Bot sind Entwicklungsrueckfaelle -
-    // ohne diese Einschraenkung wuerde deren DISCORD_TOKEN still eine fremde
-    // Installation starten.
-    if (this.isPackaged) return [path.join(this.app.getPath('userData'), '.env')];
-    return [
-      path.join(this.app.getPath('userData'), '.env'),
-      path.join(this.projectRoot, '.env'),
-      path.join(this.app.getPath('documents'), 'Discord Bot', '.env')
-    ];
+    const managed = path.join(this.app.getPath('userData'), '.env');
+    if (!this.isPackaged) {
+      return [managed, path.join(this.projectRoot, '.env'), path.join(this.app.getPath('documents'), 'Discord Bot', '.env')];
+    }
+    // Gepackte App, aber bereits eingerichtet: die geerbten Pfade bleiben als
+    // Rueckfall erhalten. Installationen vor 4.0.1 hatten ihre OAuth-Zugangsdaten
+    // teilweise nur in ~/Documents/Discord Bot/.env - ohne diesen Rueckfall war
+    // die Discord-Anmeldung nach dem Update nicht mehr moeglich.
+    //
+    // Wichtig ist die Trennung: eine FRISCHE Installation bekommt diese Werte
+    // nie, weil der ganze Startpfad bei frischen Daten ohnehin blockiert ist.
+    // Damit bleibt der Schutz gegen fremde Zugangsdaten erhalten, ohne eine
+    // bestehende Einrichtung zu zerstoeren.
+    if (!this.isFreshInstall()) {
+      return [managed, path.join(this.projectRoot, '.env'), path.join(this.app.getPath('documents'), 'Discord Bot', '.env')];
+    }
+    return [managed];
   }
 
   /**
