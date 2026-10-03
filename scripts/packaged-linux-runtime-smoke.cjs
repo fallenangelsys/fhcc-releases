@@ -32,6 +32,21 @@ for (const file of [appImage, deb, executable, appAsar, sqliteNative]) {
 }
 assert.ok(fs.statSync(executable).mode & 0o111, 'Linux-App-Binary ist nicht ausführbar.');
 
+// Erst der Wirts-seitige Vergleich: stimmt das Archiv nicht mit der Quelle
+// überein, ist das Paket kaputt und der Runtime-Probe wäre nur die Folge.
+{
+  const verify = require('node:child_process').spawnSync(process.execPath, [
+    path.join(root, 'scripts', 'verify-packaged-asar.cjs'),
+    appAsar,
+    'scripts/packaged-runtime-probe.cjs',
+    'scripts/packaged-linux-runtime-smoke.cjs',
+    'desktop/main.cjs',
+    'src/index.js'
+  ], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+  assert.equal(verify.status, 0, `Linux-Archivprüfung fehlgeschlagen.\n${verify.stderr || verify.stdout}`);
+  console.log(String(verify.stdout || '').trim());
+}
+
 const probe = spawnSync(executable, [runtimeProbe], {
   cwd: appDir,
   encoding: 'utf8',

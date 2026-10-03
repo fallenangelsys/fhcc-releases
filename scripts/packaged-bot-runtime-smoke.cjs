@@ -17,6 +17,21 @@ const instanceId = 'packaged-smoke-instance';
 assert.ok(fs.existsSync(executable), 'Gepackte FHCC-EXE fehlt.');
 assert.ok(fs.existsSync(appAsar), 'Gepacktes app.asar fehlt.');
 
+// Erst der Wirts-seitige Vergleich: stimmt das Archiv nicht mit der Quelle
+// überein, ist das Paket kaputt und der Runtime-Probe waere nur die Folge.
+{
+  const verify = spawnSync(process.execPath, [
+    path.join(root, 'scripts', 'verify-packaged-asar.cjs'),
+    appAsar,
+    'scripts/packaged-runtime-probe.cjs',
+    'scripts/packaged-bot-runtime-smoke.cjs',
+    'desktop/main.cjs',
+    'src/index.js'
+  ], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+  assert.equal(verify.status, 0, `Archivprüfung fehlgeschlagen.\n${verify.stderr || verify.stdout}`);
+  console.log(String(verify.stdout || '').trim());
+}
+
 const runtimeProbe = path.join(appAsar, 'scripts', 'packaged-runtime-probe.cjs');
 const probe = spawnSync(executable, [runtimeProbe], {
   cwd: path.dirname(executable),
