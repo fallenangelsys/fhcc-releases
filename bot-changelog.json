@@ -1,7 +1,7 @@
 {
   "entries": [
     {
-      "version": "4.1.2",
+      "version": "4.1.3",
       "date": "2026-10-03",
       "changes": [
         "Neu: Erste veröffentlichte Linux-Version. FHCC kommt für Linux x64 als AppImage (keine Installation, kein Root) und als Debian-/Ubuntu-Paket (.deb); das .deb zieht die benötigten Electron-Bibliotheken sowie libsecret-1-0 automatisch nach.",

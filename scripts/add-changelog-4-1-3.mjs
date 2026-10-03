@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 
 const file = new URL('../bot-changelog.json', import.meta.url);
-const target = '4.1.2';
-// 4.1.0 und 4.1.1 wurden nie veröffentlicht (beide Release-Läufe brachen vor dem
+const target = '4.1.3';
+// 4.1.0 bis 4.1.2 wurden nie veröffentlicht (jeder Release-Lauf brach vor dem
 // Publish ab). Ihre Hinweise stehen deshalb gebündelt unter der echten Version,
-// statt zwei nicht existierende Releases im Changelog zu zeigen.
-const superseded = '4.1.1';
+// statt nicht existierende Releases im Changelog zu zeigen.
+const superseded = ['4.1.2', '4.1.1'];
 
 const changes = [
   'Neu: Erste veröffentlichte Linux-Version. FHCC kommt für Linux x64 als AppImage (keine Installation, kein Root) und als Debian-/Ubuntu-Paket (.deb); das .deb zieht die benötigten Electron-Bibliotheken sowie libsecret-1-0 automatisch nach.',
@@ -16,12 +16,12 @@ const changes = [
 ];
 
 const changelog = JSON.parse(fs.readFileSync(file, 'utf8'));
-const entries = Array.isArray(changelog.entries) ? changelog.entries : [];
-const withoutSuperseded = entries.filter((entry) => String(entry?.version || '') !== superseded);
-const index = withoutSuperseded.findIndex((entry) => String(entry?.version || '') === target);
+const entries = (Array.isArray(changelog.entries) ? changelog.entries : [])
+  .filter((entry) => !superseded.includes(String(entry?.version || '')));
+const index = entries.findIndex((entry) => String(entry?.version || '') === target);
 const entry = { version: target, date: new Date().toISOString().slice(0, 10), changes };
-if (index >= 0) withoutSuperseded[index] = entry;
-else withoutSuperseded.unshift(entry);
-changelog.entries = withoutSuperseded;
+if (index >= 0) entries[index] = entry;
+else entries.unshift(entry);
+changelog.entries = entries;
 fs.writeFileSync(file, JSON.stringify(changelog, null, 2) + '\n', 'utf8');
-console.log(`[changelog] ${target} geschrieben (${changes.length} Punkte, ${withoutSuperseded.length} Einträge gesamt, ${superseded} zusammengeführt).`);
+console.log(`[changelog] ${target} geschrieben (${changes.length} Punkte, ${entries.length} Einträge gesamt, ${superseded.join('+')} zusammengeführt).`);

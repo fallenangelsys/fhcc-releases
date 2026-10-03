@@ -87,10 +87,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 8 vCPU/16 GB: das Erzeugen der ~600-MB-Installer samt Blockmap ist
-          # der speicherintensivste Schritt des Releases.
           - label: windows-x64
-            os: windows-latest-8-cores
+            os: windows-latest
           - label: linux-x64
             os: ubuntu-latest
     steps:

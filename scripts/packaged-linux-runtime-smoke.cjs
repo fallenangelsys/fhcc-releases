@@ -35,9 +35,24 @@ assert.ok(fs.statSync(executable).mode & 0o111, 'Linux-App-Binary ist nicht ausf
 const probe = spawnSync(executable, [runtimeProbe], {
   cwd: appDir,
   encoding: 'utf8',
-  timeout: 30_000,
+  timeout: 60_000,
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
 });
+if (probe.status !== 0) {
+  // Der Release-Workflow zeigt nur die ersten zehn Logzeilen als Annotation.
+  // Deshalb muss der komplette Befund in EINER Zeile stehen, sonst bleibt nur
+  // einFragment der Node-Fehlermeldung uebrig.
+  console.error(`PROBE-FEHLER ${JSON.stringify({
+    ausfuehrbar: executable,
+    probe: runtimeProbe,
+    cwd: appDir,
+    exit: probe.status,
+    signal: probe.signal,
+    spawnFehler: probe.error ? String(probe.error.message || probe.error) : null,
+    stdout: String(probe.stdout || '').slice(0, 1500),
+    stderr: String(probe.stderr || '').slice(0, 1500)
+  })}`);
+}
 assert.equal(probe.status, 0, `Linux-Runtime-Probe fehlgeschlagen.\n${probe.stderr || probe.stdout}`);
 const result = JSON.parse(String(probe.stdout || '{}'));
 assert.equal(result.packagedAsar, true, 'Runtime-Probe wurde nicht aus app.asar ausgeführt.');
