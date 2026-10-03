@@ -37,6 +37,8 @@ const result = {
   sqlite: sqlite?.version || null,
   node: process.versions.node,
   electron: process.versions.electron || null,
+  platform: process.platform,
+  arch: process.arch,
   modules: process.versions.modules
 };
 

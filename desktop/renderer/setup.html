@@ -15,10 +15,10 @@
   </header>
   <main>
     <section class="intro">
-      <p class="eyebrow">WINDOWS SECURITY SETUP</p>
+      <p class="eyebrow">SICHERE SYSTEM-EINRICHTUNG</p>
       <h1>Bot und Login<br>sicher verbinden.</h1>
-      <p>Bot-Token, Application-ID und Client-Secret werden lokal mit Windows verschlüsselt. Dein persönliches Discord-Konto wird anschließend ausschließlich über das offizielle Discord-OAuth2-Fenster verbunden.</p>
-      <div class="security-list"><span><i></i>Windows DPAPI</span><span><i></i>Kein Klartext in Dateien</span><span><i></i>Discord-Verbindungstest</span></div>
+      <p>Bot-Token, Application-ID und Client-Secret werden lokal mit dem System-Schlüsselbund verschlüsselt. Dein persönliches Discord-Konto wird anschließend ausschließlich über das offizielle Discord-OAuth2-Fenster verbunden.</p>
+      <div class="security-list"><span><i></i>OS-Schlüsselbund</span><span><i></i>Kein Klartext in Dateien</span><span><i></i>Discord-Verbindungstest</span></div>
     </section>
     <section class="setup-card">
       <header><div class="step" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-5"></path></svg></div><div><small>DISCORD-ANWENDUNG</small><h2>Bot und OAuth2</h2></div><span id="credential-state" class="state">Wird geprüft</span></header>
@@ -42,6 +42,13 @@
       <div id="bot-identity" class="bot-identity" hidden><img id="bot-avatar" src="assets/fallen-heaven-app-icon.png" alt=""><div><small>VERIFIZIERT</small><b id="bot-name">Discord Bot</b><span id="bot-id"></span></div></div>
       <div class="actions"><button id="delete-token" class="secondary" type="button">Alle Zugangsdaten löschen</button><button id="save-token" class="primary" type="button">Prüfen & alles speichern</button></div>
       <footer><div><b>Persönlicher Discord-Account</b><span>Die Anmeldung erfolgt in der Haupt-App über Discord OAuth2. Die Redirect-URI oben muss im Developer Portal exakt hinterlegt sein.</span></div><button id="open-main" type="button">Haupt-App öffnen</button></footer>
+      <div class="actions"><button id="setup-portable-import" class="secondary" type="button">Verschlüsselten FHCC-Arbeitsstand importieren</button></div>
+      <div id="setup-portable-result" class="result" role="status" aria-live="polite"></div>
+      <section class="credential-group" id="setup-portable-password-section" hidden>
+        <label for="setup-portable-password">Backup-Passwort</label>
+        <div class="token-field single"><input id="setup-portable-password" type="password" autocomplete="current-password" spellcheck="false"></div>
+        <div class="actions"><button id="setup-portable-import-cancel" class="secondary" type="button">Abbrechen</button><button id="setup-portable-import-confirm" class="primary" type="button">Backup prüfen & importieren</button></div>
+      </section>
     </section>
   </main>
   <script src="setup.js"></script>

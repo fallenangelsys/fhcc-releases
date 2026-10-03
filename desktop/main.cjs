@@ -9,6 +9,12 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 // (data-motion="off" / low-power) abgeschaltet, die einfache Kompositierung
 // übernimmt weiterhin die GPU.
 const { BotProcessSupervisor } = require('./process-supervisor.cjs');
+const {
+  createEncryptedBackup,
+  extractEncryptedBackup,
+  replaceTargetsTransaction,
+  validatePassphrase
+} = require('./portable-backup.cjs');
 const { buildUpdateRunnerScript, checkForUpdate, findUpdateArtifact, isVersionNewer, verifyArtifactSha512 } = require('./update-check.cjs');
 const {
   buildAuthHeaders,
@@ -35,8 +41,25 @@ const net = require('node:net');
 const path = require('node:path');
 
 const APP_NAME = 'FALLEN HEAVEN Control Center';
+const LEGACY_APP_NAMES = ['FALLEN HEAVEN Control Center', 'FALLEN HEAVEN Control Center Dev'];
+const APP_DATA_FOLDER = process.platform === 'win32' ? APP_NAME : 'fhcc';
 app.setAppUserModelId('de.fallenheaven.discordbot');
-app.setPath('userData', path.join(app.getPath('appData'), APP_NAME));
+app.setPath('userData', path.join(app.getPath('appData'), APP_DATA_FOLDER));
+const getEncryptionBackend = () => {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return 'unavailable';
+    if (process.platform !== 'linux') return process.platform === 'win32' ? 'windows_dpapi' : 'electron_safe_storage';
+    if (typeof safeStorage.getSelectedStorageBackend !== 'function') return 'unknown';
+    const backend = safeStorage.getSelectedStorageBackend();
+    return backend === 'gnome_libsecret' ? 'gnome-keyring' : backend;
+  } catch {
+    return 'unavailable';
+  }
+};
+const canEncryptSecrets = () => {
+  const backend = getEncryptionBackend();
+  return backend !== 'unavailable' && backend !== 'unknown' && backend !== 'basic_text';
+};
 const CANONICAL_DASHBOARD_PORT = 3000;
 const CANONICAL_DASHBOARD_HOST = '127.0.0.1';
 const CANONICAL_DASHBOARD_ORIGIN = `http://${CANONICAL_DASHBOARD_HOST}:${CANONICAL_DASHBOARD_PORT}`;
@@ -61,7 +84,7 @@ const isDev = !app.isPackaged;
 // dashboard from starting and therefore blocked OAuth before any login window.
 const projectRoot = path.resolve(__dirname, '..');
 const iconPath = path.join(projectRoot, 'public', 'assets', process.platform === 'win32' ? 'fallen-heaven-app.ico' : 'fallen-heaven-app-icon.png');
-const controllerExe = path.join(projectRoot, 'dist', 'botctl.exe');
+const controllerExe = path.join(projectRoot, 'dist', process.platform === 'win32' ? 'botctl.exe' : 'botctl');
 const controllerScript = path.join(projectRoot, 'botctl.cjs');
 const runtimeLog = path.join(projectRoot, 'runtime', 'botctl.log');
 const credentialFile = () => path.join(app.getPath('userData'), 'credentials', 'discord-bot-token.bin');
@@ -73,7 +96,7 @@ const LOCAL_SESSION_URLS = [`${CANONICAL_DASHBOARD_ORIGIN}/`, 'http://localhost:
 
 function readProtectedText(file) {
   try {
-    if (!safeStorage.isEncryptionAvailable() || !existsSync(file)) return '';
+    if (!canEncryptSecrets() || !existsSync(file)) return '';
     return safeStorage.decryptString(readFileSync(file));
   } catch {
     return '';
@@ -81,10 +104,323 @@ function readProtectedText(file) {
 }
 
 function writeProtectedText(file, value) {
-  if (!safeStorage.isEncryptionAvailable()) return false;
+  if (!canEncryptSecrets()) return false;
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, safeStorage.encryptString(String(value || '')), { mode: 0o600 });
   return true;
+}
+
+let portableBackupBusy = false;
+const portableUserDataRoot = () => app.getPath('userData');
+function migrateLegacyLinuxUserData() {
+  if (process.platform !== 'linux') return;
+  const currentRoot = portableUserDataRoot();
+  mkdirSync(currentRoot, { recursive: true });
+  if (existsSync(path.join(currentRoot, 'runtime'))) return;
+  for (const name of LEGACY_APP_NAMES) {
+    const legacyRoot = path.join(app.getPath('appData'), name);
+    if (legacyRoot === currentRoot || !existsSync(legacyRoot)) continue;
+    for (const item of readdirSync(legacyRoot)) {
+      const source = path.join(legacyRoot, item);
+      const destination = path.join(currentRoot, item);
+      if (existsSync(destination)) continue;
+      try { renameSync(source, destination); } catch {}
+    }
+    if (existsSync(path.join(currentRoot, 'runtime'))) break;
+  }
+}
+function collectPortableEntries(userData, localStorageSnapshot, portableSecrets, updateToken) {
+  const entries = [];
+  const addTree = (root, archiveRoot) => {
+    const pending = [{ disk: root, archive: archiveRoot, exists: existsSync(root) }];
+    while (pending.length) {
+      const current = pending.pop();
+      if (!current.exists) {
+        entries.push({ path: current.archive, type: 'directory' });
+        continue;
+      }
+      const stat = lstatSync(current.disk);
+      if (stat.isSymbolicLink()) throw new Error(`Backup abgebrochen: symbolischer Pfad im Arbeitsstand (${current.archive}).`);
+      if (stat.isDirectory()) {
+        entries.push({ path: current.archive, type: 'directory' });
+        for (const name of readdirSync(current.disk)) {
+          pending.push({ disk: path.join(current.disk, name), archive: `${current.archive}/${name}`, exists: true });
+        }
+      } else if (stat.isFile()) {
+        entries.push({ path: current.archive, type: 'file', filePath: current.disk });
+      }
+    }
+  };
+  addTree(path.join(userData, 'runtime', 'data'), 'runtime/data');
+  addTree(path.join(userData, 'runtime', 'backups'), 'runtime/backups');
+  addTree(path.join(userData, 'runtime', 'logs'), 'runtime/logs');
+  entries.push({ path: 'credentials', type: 'directory' });
+  for (const name of ['startup-settings.json', 'update-settings.json']) {
+    const filePath = path.join(userData, name);
+    const loaded = existsSync(filePath) && lstatSync(filePath).isFile() ? readPortableJson(filePath, {}) : {};
+    const settings = loaded && typeof loaded === 'object' && !Array.isArray(loaded) ? { ...loaded } : {};
+    if (name === 'startup-settings.json') settings.startMode = 'manual';
+    else {
+      delete settings.tokenEnc;
+      delete settings.tokenHint;
+    }
+    entries.push({ path: `app/${name}`, type: 'file', data: Buffer.from(JSON.stringify(settings, null, 2), 'utf8') });
+  }
+  entries.push({ path: 'portable/local-storage.json', type: 'file', data: Buffer.from(JSON.stringify(localStorageSnapshot), 'utf8') });
+  entries.push({ path: 'portable/secrets.json', type: 'file', data: Buffer.from(JSON.stringify(portableSecrets), 'utf8') });
+  entries.push({ path: 'portable/update-token.json', type: 'file', data: Buffer.from(JSON.stringify({ token: updateToken || '' }), 'utf8') });
+  return { entries };
+}
+
+function readPortableJson(filePath, fallback) {
+  try { return JSON.parse(readFileSync(filePath, 'utf8')); } catch { return fallback; }
+}
+
+function gatherPortableSecrets() {
+  if (!canEncryptSecrets()) throw new Error('Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.');
+  const secrets = { ...(getBotSupervisor().loadSecrets() || {}) };    const botToken = readProtectedBotToken() || String(secrets.DISCORD_TOKEN || secrets.BOT_TOKEN || '');
+  if (botToken) secrets.DISCORD_TOKEN = botToken;
+  delete secrets.BOT_TOKEN;
+  delete secrets.DASHBOARD_SESSION_SECRET;
+  delete secrets.DASHBOARD_JWT_TTL;
+  delete secrets.DASHBOARD_DISCORD_REDIRECT_URI;
+  const dashboardSecret = readProtectedText(dashboardSecretFile());
+  if (dashboardSecret) secrets.DASHBOARD_SESSION_SECRET = dashboardSecret;
+  return secrets;
+}
+
+async function stopForPortableTransfer() {
+  const supervisor = getBotSupervisor();
+  const stopped = await runController('stop');
+  const health = await requestRuntimeHealth().catch(() => null);
+  if (!stopped?.ok || health?.ok) throw new Error('Der Bot konnte nicht vollständig gestoppt werden. Backup/Import wurde abgebrochen, damit keine Datenbank beschädigt wird.');
+  await waitBriefly(400);
+  return supervisor;
+}
+
+async function readPortableText(stageDirectory, relativePath, fallback, records = []) {
+  const memoryEntry = records.find((entry) => entry.path === relativePath && Buffer.isBuffer(entry.data));
+  if (memoryEntry) return memoryEntry.data.toString('utf8');
+  try { return await fsPromises.readFile(path.join(stageDirectory, ...relativePath.split('/')), 'utf8'); } catch { return fallback; }
+}
+
+async function preparePortableRestore(stageDirectory, records) {
+  const portableSecrets = JSON.parse(await readPortableText(stageDirectory, 'portable/secrets.json', '{}', records));
+  if (!portableSecrets || typeof portableSecrets !== 'object' || Array.isArray(portableSecrets)) throw new Error('Zugangsdaten im Backup sind ungültig.');
+  const tokenRecord = JSON.parse(await readPortableText(stageDirectory, 'portable/update-token.json', '{"token":""}', records));
+  const updateToken = String(tokenRecord?.token || '');
+  const uiStateText = await readPortableText(stageDirectory, 'portable/local-storage.json', '[]', records);
+  const uiState = JSON.parse(uiStateText);
+  if (!Array.isArray(uiState) || uiState.some((entry) => !Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || entry[0].length > 512 || typeof entry[1] !== 'string') || Buffer.byteLength(uiStateText, 'utf8') > 4 * 1024 * 1024) throw new Error('Oberflächeneinstellungen im Backup sind ungültig oder zu groß.');
+
+
+  const updateSettingsSource = await readPortableText(stageDirectory, 'app/update-settings.json', '{}');
+  const updateSettingsParsed = JSON.parse(updateSettingsSource);
+  if (!updateSettingsParsed || typeof updateSettingsParsed !== 'object' || Array.isArray(updateSettingsParsed) || Object.keys(updateSettingsParsed).length > 1000) throw new Error('Update-Einstellungen im Backup sind ungültig.');
+  const startupSettingsSource = await readPortableText(stageDirectory, 'app/startup-settings.json', '{}');
+  const startupSettingsParsed = JSON.parse(startupSettingsSource);
+  if (!startupSettingsParsed || typeof startupSettingsParsed !== 'object' || Array.isArray(startupSettingsParsed) || Object.keys(startupSettingsParsed).length > 1000) throw new Error('Start-Einstellungen im Backup sind ungültig.');
+  if (!tokenRecord || typeof tokenRecord !== 'object' || Array.isArray(tokenRecord) || String(tokenRecord.token || '').length > 8192) throw new Error('Update-Zugangsdaten im Backup sind ungültig.');
+
+  if (Object.keys(portableSecrets).length > 1000 || Object.values(portableSecrets).some((value) => typeof value !== 'string' || value.length > 16_384)) throw new Error('Zugangsdaten im Backup sind ungültig.');
+  const botToken = String(portableSecrets.DISCORD_TOKEN || '');
+  if (botToken && (botToken.length < 40 || botToken.length > 220 || /\s/.test(botToken))) throw new Error('Bot-Token im Backup hat ein ungültiges Format.');
+  delete portableSecrets.DISCORD_TOKEN;
+  if (botToken) {
+    const target = path.join(stageDirectory, 'credentials', 'discord-bot-token.bin');
+    await fsPromises.mkdir(path.dirname(target), { recursive: true });
+    await fsPromises.writeFile(target, safeStorage.encryptString(botToken), { mode: 0o600 });
+  } else {
+    await fsPromises.rm(path.join(stageDirectory, 'credentials', 'discord-bot-token.bin'), { force: true });
+    await fsPromises.mkdir(path.join(stageDirectory, 'credentials'), { recursive: true });
+  }
+
+  const targetSecrets = {
+    ...portableSecrets,
+    DASHBOARD_DISCORD_REDIRECT_URI: CANONICAL_DISCORD_REDIRECT_URI,
+    DASHBOARD_SESSION_SECRET: crypto.randomBytes(48).toString('hex'),
+    DASHBOARD_JWT_TTL: '30d'
+  };
+  await fsPromises.writeFile(path.join(stageDirectory, 'secrets.bin'), safeStorage.encryptString(JSON.stringify(targetSecrets)), { mode: 0o600 });
+  await fsPromises.mkdir(path.join(stageDirectory, 'credentials'), { recursive: true });
+  await fsPromises.writeFile(path.join(stageDirectory, 'credentials', 'dashboard-session-secret.bin'), safeStorage.encryptString(targetSecrets.DASHBOARD_SESSION_SECRET), { mode: 0o600 });
+
+  const settingsPath = path.join(stageDirectory, 'app', 'update-settings.json');
+  const updateSettings = updateSettingsParsed;
+  delete updateSettings.tokenEnc;
+  delete updateSettings.tokenHint;
+  if (updateToken && canEncryptSecrets()) {
+    updateSettings.tokenEnc = safeStorage.encryptString(updateToken).toString('base64');
+    updateSettings.tokenHint = tokenHint(updateToken);
+  }
+  await fsPromises.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fsPromises.writeFile(settingsPath, JSON.stringify(updateSettings, null, 2), { mode: 0o600 });
+
+  const startupPath = path.join(stageDirectory, 'app', 'startup-settings.json');
+  const startupSettings = startupSettingsParsed;
+  startupSettings.startMode = 'manual';
+  await fsPromises.mkdir(path.dirname(startupPath), { recursive: true });
+  await fsPromises.writeFile(startupPath, JSON.stringify(startupSettings, null, 2), { mode: 0o600 });
+  await fsPromises.rename(settingsPath, path.join(stageDirectory, 'update-settings.json'));
+  await fsPromises.rename(startupPath, path.join(stageDirectory, 'startup-settings.json'));
+  await fsPromises.rm(path.join(stageDirectory, 'app'), { recursive: true, force: true });
+  await fsPromises.rm(path.join(stageDirectory, 'portable'), { recursive: true, force: true });
+  await fsPromises.rm(path.join(stageDirectory, 'credentials', 'dashboard-session.bin'), { force: true });
+  return uiState;
+}
+
+async function readPortableLocalStorage(webContents) {
+  if (!webContents || webContents.isDestroyed()) return [];
+  return webContents.executeJavaScript(`(() => { const values = []; for (let index = 0; index < localStorage.length; index += 1) { const key = localStorage.key(index); if (key) values.push([key, localStorage.getItem(key)]); } return values; })()`, true);
+}
+
+async function writePortableLocalStorage(webContents, values) {
+  if (!webContents || webContents.isDestroyed()) return { keys: 0, bytes: 0 };
+  const entries = (Array.isArray(values) ? values : []).filter((entry) => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string' && entry[0].length <= 512 && typeof entry[1] === 'string');
+  const serialized = JSON.stringify(entries);
+  const bytes = Buffer.byteLength(serialized, 'utf8');
+  if (bytes > 4 * 1024 * 1024) throw new Error('Die Oberflächeneinstellungen im Backup überschreiten das 4-MB-Limit des Browserspeichers.');
+  const snapshot = await readPortableLocalStorage(webContents);
+  try {
+    await webContents.executeJavaScript(`(() => { const previous = ${JSON.stringify(snapshot)}; try { localStorage.clear(); for (const [key, value] of ${JSON.stringify(entries)}) localStorage.setItem(key, value); return true; } catch (error) { localStorage.clear(); for (const [key, value] of previous) localStorage.setItem(key, value); throw error; } })()`, true);
+  } catch (error) {
+    throw new Error(`Oberflächeneinstellungen konnten nicht übernommen werden: ${String(error?.message || error).slice(0, 180)}`);
+  }
+  return { keys: entries.length, bytes, previous: snapshot };
+}
+
+async function portableBackupExport(payload = {}) {
+  if (portableBackupBusy) return { ok: false, error: 'Ein Datenumzug läuft bereits.' };
+  if (autoUpdateRunning) return { ok: false, error: 'FHCC führt gerade ein Update aus. Bitte nach Abschluss erneut exportieren.' };
+  portableBackupBusy = true;
+  let destination = '';
+  try {
+    const passphrase = validatePassphrase(payload?.password);
+    const saveResult = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, { title: 'FHCC Arbeitsstand verschlüsselt exportieren', defaultPath: `FHCC-Arbeitsstand-${new Date().toISOString().slice(0, 10)}.fhccbackup`, filters: [{ name: 'FHCC verschlüsseltes Backup', extensions: ['fhccbackup'] }] })
+      : await dialog.showSaveDialog({ title: 'FHCC Arbeitsstand verschlüsselt exportieren', defaultPath: `FHCC-Arbeitsstand-${new Date().toISOString().slice(0, 10)}.fhccbackup`, filters: [{ name: 'FHCC verschlüsseltes Backup', extensions: ['fhccbackup'] }] });
+    if (saveResult.canceled || !saveResult.filePath) return { ok: false, canceled: true };
+    destination = path.resolve(saveResult.filePath);
+    const normalizedDestination = destination.toLocaleLowerCase();
+    const normalizedDataRoot = path.resolve(portableUserDataRoot()).toLocaleLowerCase();
+    if (normalizedDestination === normalizedDataRoot || normalizedDestination.startsWith(`${normalizedDataRoot}${path.sep}`)) {
+      throw new Error('Das Backup muss außerhalb des FHCC-Datenordners gespeichert werden.');
+    }
+    if (canEncryptSecrets() !== true) throw new Error('Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.');
+    await stopForPortableTransfer();
+    const localStorageSnapshot = await readPortableLocalStorage(mainWindow.webContents);
+    if (!Array.isArray(localStorageSnapshot) || Buffer.byteLength(JSON.stringify(localStorageSnapshot), 'utf8') > 4 * 1024 * 1024) throw new Error('Oberflächeneinstellungen überschreiten das 4-MB-Limit des Browserspeichers.');
+    const prepared = collectPortableEntries(portableUserDataRoot(), localStorageSnapshot, gatherPortableSecrets(), readUpdateToken());
+    const entries = prepared.entries;
+    // OS-bound credentials appear only in the authenticated encrypted stream; restore re-encrypts them for the target PC.
+    const result = await createEncryptedBackup({ outputPath: destination, password: passphrase, entries });
+    return { ok: true, entries: result.entries, size: result.size, botStopped: true };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error).slice(0, 500), botStopped: Boolean(getBotSupervisor()?.state?.phase === 'stopped') };
+  } finally {
+    portableBackupBusy = false;
+  }
+}
+
+async function portableBackupImport(payload = {}, sender = null) {
+  if (portableBackupBusy) return { ok: false, error: 'Ein Datenumzug läuft bereits.' };
+  if (autoUpdateRunning) return { ok: false, error: 'FHCC führt gerade ein Update aus. Bitte nach Abschluss erneut importieren.' };
+  portableBackupBusy = true;
+  let temporaryRoot = '';
+  let transactionRoot = '';
+  let preserveTransactionRoot = false;
+  try {
+    const passphrase = validatePassphrase(payload?.password);
+    if (canEncryptSecrets() !== true) throw new Error('Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.');
+    const isSetupImport = Boolean(sender && setupWindow && !setupWindow.isDestroyed() && sender.id === setupWindow.webContents.id);
+    if (isSetupImport) {
+      const confirmation = await dialog.showMessageBox(setupWindow, {
+        type: 'warning',
+        title: 'FHCC-Arbeitsstand importieren',
+        message: 'Der Import ersetzt den lokalen Arbeitsstand auf diesem PC.',
+        detail: 'Serverdaten, Bilder, Embed-Einstellungen und Zugangsdaten werden durch den Inhalt des Backups ersetzt. Der Bot bleibt anschließend gestoppt; mit Discord musst du dich neu anmelden.',
+        buttons: ['Abbrechen', 'Import fortsetzen'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      });
+      if (confirmation.response !== 1) return { ok: false, canceled: true };
+    }
+    const openResult = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, { title: 'FHCC-Arbeitsstand importieren', properties: ['openFile'], filters: [{ name: 'FHCC verschlüsseltes Backup', extensions: ['fhccbackup'] }] })
+      : await dialog.showOpenDialog({ title: 'FHCC-Arbeitsstand importieren', properties: ['openFile'], filters: [{ name: 'FHCC verschlüsseltes Backup', extensions: ['fhccbackup'] }] });
+    const selected = openResult.filePaths?.[0];
+    if (openResult.canceled || !selected) return { ok: false, canceled: true };
+    const sourceFile = path.resolve(selected);
+    const targetRoot = path.resolve(portableUserDataRoot());
+    if (sourceFile.toLocaleLowerCase().startsWith(`${targetRoot.toLocaleLowerCase()}${path.sep}`)) throw new Error('Das Backup darf nicht innerhalb des FHCC-Datenordners liegen.');
+    const stat = await fsPromises.lstat(sourceFile);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Die gewählte Backup-Datei ist ungültig.');
+    temporaryRoot = path.join(path.dirname(targetRoot), `.fhcc-restore-${crypto.randomBytes(8).toString('hex')}`);
+    const extracted = await extractEncryptedBackup({
+      inputPath: sourceFile,
+      password: passphrase,
+      stageDirectory: temporaryRoot,
+      memoryPaths: ['portable/local-storage.json', 'portable/secrets.json', 'portable/update-token.json']
+    });
+    const requiredEntries = ['runtime/data', 'credentials', 'app/startup-settings.json', 'app/update-settings.json', 'portable/local-storage.json', 'portable/secrets.json', 'portable/update-token.json'];
+    const presentEntries = new Set(extracted.records.map((record) => record.path));
+    const missingPortableEntries = requiredEntries.filter((entry) => !presentEntries.has(entry));
+    if (missingPortableEntries.length) throw new Error(`Backup unvollständig. Portable Daten fehlen: ${missingPortableEntries.join(', ')}`);
+    const uiState = await preparePortableRestore(temporaryRoot, extracted.records);
+    await stopForPortableTransfer();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      const created = createWindow();
+      await created.loadPromise;
+    }
+    const restoreTargets = ['runtime/data', 'runtime/backups', 'runtime/logs', 'credentials', 'secrets.bin', 'startup-settings.json', 'update-settings.json'];
+    const missing = ['runtime/data', 'credentials', 'secrets.bin', 'startup-settings.json', 'update-settings.json']
+      .filter((relative) => !existsSync(path.join(temporaryRoot, ...relative.split('/'))));
+    for (const relative of ['runtime/backups', 'runtime/logs']) {
+      if (!existsSync(path.join(temporaryRoot, ...relative.split('/')))) await fsPromises.mkdir(path.join(temporaryRoot, ...relative.split('/')), { recursive: true });
+    }
+    if (missing.length) throw new Error(`Backup unvollständig. Fehlende Daten: ${missing.join(', ')}`);
+    // The restore stage is a sibling of userData, so transactional renames stay
+    // on the same volume and large image/database trees are not copied twice.
+    transactionRoot = temporaryRoot;
+    const storageBefore = await readPortableLocalStorage(mainWindow?.webContents);
+    let replaced;
+    let oldSession = '';
+    try {
+      oldSession = readProtectedText(dashboardSessionFile());
+      replaced = await replaceTargetsTransaction({
+        stageDirectory: transactionRoot,
+        targetRoot,
+        targets: restoreTargets,
+        afterReplace: async () => {
+          await clearProtectedDashboardSession();
+          await writePortableLocalStorage(mainWindow?.webContents, uiState);
+        }
+      });
+    } catch (error) {
+      await writePortableLocalStorage(mainWindow?.webContents, storageBefore).catch(() => {});
+      if (oldSession) {
+        writeProtectedText(dashboardSessionFile(), oldSession);
+        const saved = JSON.parse(oldSession);
+        if (saved.token && Number(saved.expiresAt) > Date.now() / 1000) await setDashboardSessionToken(saved.token, saved.expiresAt).catch(() => {});
+      }
+      if (/Rollback fehlgeschlagen/.test(String(error?.message || error))) preserveTransactionRoot = true;
+      throw error;
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+      setTimeout(() => mainWindow?.webContents.reload(), 700);
+    }
+    if (sender && setupWindow && !setupWindow.isDestroyed() && sender.id === setupWindow.webContents.id) setupWindow.close();
+    return { ok: true, entries: extracted.records.length, replaced: replaced.replaced, localStorageKeys: uiState.length, botStopped: true, reLoginRequired: true };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error).slice(0, 500), botStopped: Boolean(getBotSupervisor()?.state?.phase === 'stopped') };
+  } finally {
+    if (temporaryRoot && temporaryRoot !== transactionRoot) await fsPromises.rm(temporaryRoot, { recursive: true, force: true }).catch(() => {});
+    if (transactionRoot && !preserveTransactionRoot) await fsPromises.rm(transactionRoot, { recursive: true, force: true }).catch(() => {});
+    portableBackupBusy = false;
+  }
 }
 
 function readProtectedBotToken() {
@@ -120,8 +456,8 @@ function protectedCredentialStatus() {
     hasDiscordClientId: Boolean(oauth.discordClientId),
     hasDiscordClientSecret: Boolean(oauth.discordClientSecret),
     redirectUri: CANONICAL_DISCORD_REDIRECT_URI,
-    encryptionAvailable: safeStorage.isEncryptionAvailable(),
-    provider: process.platform === 'win32' ? 'Windows DPAPI' : 'Electron safeStorage'
+    encryptionAvailable: canEncryptSecrets(),
+    provider: process.platform === 'win32' ? 'Windows DPAPI' : process.platform === 'linux' ? getEncryptionBackend() : 'Electron safeStorage'
   };
 }
 
@@ -152,9 +488,10 @@ async function verifyDiscordBotToken(token) {
 }
 
 async function saveProtectedBotToken(rawToken) {
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs können keine Zugangsdaten geändert werden.' };
   const token = String(rawToken || '').trim();
   if (token.length < 40 || token.length > 220 || /\s/.test(token)) return { ok: false, error: 'Der Bot-Token hat kein gültiges Format.' };
-  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Windows-Verschlüsselung ist für dieses Benutzerkonto nicht verfügbar.' };
+  if (!canEncryptSecrets()) return { ok: false, error: 'Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.' };
   const verification = await verifyDiscordBotToken(token);
   if (!verification.ok) return verification;
   const file = credentialFile();
@@ -180,8 +517,9 @@ function validateDiscordOAuthCredentials(rawClientId, rawClientSecret) {
 }
 
 async function saveProtectedSetupCredentials(payload = {}) {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, error: 'Windows-Verschlüsselung ist für dieses Benutzerkonto nicht verfügbar.' };
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs können keine Zugangsdaten geändert werden.' };
+  if (!canEncryptSecrets()) {
+    return { ok: false, error: 'Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.' };
   }
   const status = protectedCredentialStatus();
   const rawToken = String(payload?.botToken || '').trim();
@@ -234,6 +572,7 @@ async function saveProtectedSetupCredentials(payload = {}) {
 }
 
 async function deleteProtectedBotToken() {
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs können keine Zugangsdaten geändert werden.' };
   const supervisor = getBotSupervisor();
   await supervisor.control('stop').catch(() => {});
   rmSync(credentialFile(), { force: true });
@@ -243,6 +582,7 @@ async function deleteProtectedBotToken() {
 }
 
 function resolveNodeExecutable() {
+  if (process.platform !== 'win32') return process.env.FALLEN_HEAVEN_NODE_EXECUTABLE || process.execPath;
   const candidates = [
     process.env.FALLEN_HEAVEN_NODE_EXECUTABLE,
     'C:\\Program Files\\nodejs\\node.exe',
@@ -275,7 +615,7 @@ function runLegacyController(action) {
 
     execFile(command, args, {
       cwd: projectRoot,
-      windowsHide: true,
+      ...(process.platform === 'win32' ? { windowsHide: true } : {}),
       timeout: action === 'status' ? 10000 : 45000,
       encoding: 'utf8',
       env: {
@@ -321,6 +661,7 @@ function runController(action) {
 }
 
 function startBotFromCommandLine() {
+  if (portableBackupBusy) return Promise.resolve({ ok: false, output: 'Während des Datenumzugs bleibt der Bot gestoppt.', active: false });
   const operation = controlQueue.then(() => runController('start'));
   controlQueue = operation.catch(() => {});
   void operation
@@ -1023,6 +1364,7 @@ function createWindow({ headless = false } = {}) {
       }
     });
   });
+  if (headless && process.platform === 'linux') mainWindow.setMenuBarVisibility(false);
   if (!headless) mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('close', (event) => {
     if (forceClosing) return;
@@ -1095,6 +1437,7 @@ if (!ownsApplicationLock) {
   });
   app.whenReady().then(async () => {
     app.setName(APP_NAME);
+    migrateLegacyLinuxUserData();
     recordMainFailure('Main ready', 'Electron-Hauptprozess ist bereit.');
     const restoredDashboardSession = await restoreProtectedDashboardSession();
     if (!restoredDashboardSession) await clearProtectedDashboardSession();
@@ -1428,16 +1771,13 @@ const describeStartupState = () => {
 // ---------------------------------------------------------------------------
 // Update-Kanal über ein privates GitHub-Release-Repository.
 //
-// Das Token wird NICHT im Klartext in update-settings.json abgelegt, sondern
-// über Electron safeStorage verschlüsselt – unter Windows ist das DPAPI, also
-// an das Benutzerkonto gebunden. Eine Kopie von %APPDATA% auf einen anderen
-// Rechner liefert damit nur unlesbaren Datenmüll. Ohne verfügbares
-// safeStorage (Linux ohne Keyring) wird gar nicht erst gespeichert, statt das
-// Token im Klartext zu riskieren.
+// Das Token wird über Electron safeStorage verschlüsselt: Windows nutzt DPAPI,
+// Linux den verfügbaren System-Schlüsselbund. Ein unsicherer Linux-Fallback
+// (basic_text) wird abgelehnt, statt Tokens ungeschützt auf Platte abzulegen.
 // ---------------------------------------------------------------------------
 const isTokenEncryptionAvailable = () => {
   try {
-    return safeStorage.isEncryptionAvailable();
+    return canEncryptSecrets();
   } catch {
     return false;
   }
@@ -1455,6 +1795,8 @@ const readUpdateToken = () => {
 };
 
 const writeUpdateToken = (token) => {
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs sind Einstellungen gesperrt.' };
+  if (token && !canEncryptSecrets()) return { ok: false, error: 'Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.' };
   const value = String(token || '').trim();
   const settings = readUpdateSettings();
   if (!value) {
@@ -1464,7 +1806,7 @@ const writeUpdateToken = (token) => {
     return { ok: true, cleared: true };
   }
   if (!isTokenEncryptionAvailable()) {
-    return { ok: false, error: 'Dieses System kann den Token nicht verschlüsselt speichern. Bitte den Ordner-Kanal verwenden.' };
+    return { ok: false, error: 'Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.' };
   }
   settings.tokenEnc = safeStorage.encryptString(value).toString('base64');
   settings.tokenHint = tokenHint(value);
@@ -1583,6 +1925,7 @@ const checkAndInstallUpdate = async () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('update-available', { version: release.version, auto: true, source: 'github-release' });
       }
+      if (portableBackupBusy) { autoUpdateRunning = false; return; }
       const result = await installUpdateFromRelease(release);
       if (result.ok) {
         console.log(`[auto-update] Installation gestartet: ${result.installer}`);
@@ -1592,6 +1935,7 @@ const checkAndInstallUpdate = async () => {
       }
       return;
     }
+    if (portableBackupBusy) return;
     if (!release.ok) {
       console.warn(`[auto-update] GitHub-Kanal: ${release.error || release.reason}`);
     }
@@ -1607,7 +1951,7 @@ const checkAndInstallUpdate = async () => {
         best = { ...result, folder };
       }
     }
-    if (!best) { autoUpdateRunning = false; return; }
+    if (portableBackupBusy || !best) { autoUpdateRunning = false; return; }
     if (best.version === lastAutoUpdateVersion) { autoUpdateRunning = false; return; }
     lastAutoUpdateVersion = best.version;
     console.log(`[auto-update] Update gefunden: ${best.version} (aktuell: ${app.getVersion()}) – Installation wird gestartet.`);
@@ -1655,6 +1999,7 @@ const downloadToFile = async (url, target, { token, onProgress, timeoutMs = 30 *
 };
 
 const runUpdateInstaller = (installerPath) => {
+  if (process.platform !== 'win32') throw new Error('Updates bitte manuell über das neue AppImage oder .deb installieren.');
   const targetFolder = path.join(app.getPath('temp'), 'FHCC-Updates');
   mkdirSync(targetFolder, { recursive: true });
   // NSIS darf erst starten, nachdem Electron wirklich beendet ist. Ein
@@ -1683,6 +2028,7 @@ const runUpdateInstaller = (installerPath) => {
 // Vollständiger GitHub-Weg: Manifest (winzig) -> Integritätsprüfung ->
 // Download -> SHA-512-Prüfung -> gehärtetes Runner-Skript.
 const installUpdateFromRelease = async (releaseUpdate) => {
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs kann kein Update installiert werden.' };
   if (!releaseUpdate?.available) {
     return { ok: false, error: releaseUpdate?.reason === 'up-to-date' ? 'Installierte Version ist bereits aktuell.' : 'Kein Update verfügbar.' };
   }
@@ -1740,7 +2086,7 @@ const installUpdateFromRelease = async (releaseUpdate) => {
   }
 };
 const startAutoUpdate = () => {
-  if (autoUpdateTimer) return;
+  if (process.platform !== 'win32' || autoUpdateTimer) return;
   // Sofort beim Start prüfen (nach 30 Sekunden damit Bot erstmal hochfährt)
   setTimeout(checkAndInstallUpdate, 30_000);
   // Dann alle 5 Minuten
@@ -1748,6 +2094,7 @@ const startAutoUpdate = () => {
 };
 ipcMain.handle('app:update-settings', () => readUpdateSettings());
 ipcMain.handle('app:update-settings-set', (_event, payload) => {
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs sind Einstellungen gesperrt.' };
   const settings = readUpdateSettings();
   if (payload && typeof payload === 'object') {
     const folder = String(payload.updateFolder || '').trim();
@@ -1758,6 +2105,7 @@ ipcMain.handle('app:update-settings-set', (_event, payload) => {
   return settings;
 });
 ipcMain.handle('app:check-update', () => {
+    if (process.platform !== 'win32') return { available: false, reason: 'manual-install', current: app.getVersion() };
     const folders = [];
     const configuredFolder = readUpdateSettings().updateFolder || '';
     if (configuredFolder) folders.push(configuredFolder);
@@ -1774,17 +2122,21 @@ ipcMain.handle('app:check-update', () => {
     return best || checkForUpdate(folders[0] || '', app.getVersion());
   });
 ipcMain.handle('app:install-update', async (_event, payload) => {
+  if (process.platform !== 'win32') return { ok: false, error: 'Updates bitte manuell über das neue AppImage oder .deb installieren.' };
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs kann kein Update installiert werden.' };
   // Ohne Argument wird der GitHub-Kanal bevorzugt, weil er der einzige ist,
   // der auch ohne den Rechner im Bauordner funktioniert.
   const release = await checkGitHubRelease().catch(() => null);
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs kann kein Update installiert werden.' };
   if (release?.ok) return installUpdateFromRelease(release);
   return installUpdate();
 });
 
 // Einstellungen des Update-Kanals. Der Token verlässt den Renderer nur
-// verschluesselt (safeStorage/DPAPI) und wird nie zurueckgesendet.
+// verschlüsselt über den OS-Schlüsselbund und wird nie zurückgesendet.
 ipcMain.handle('app:startup-mode', () => describeStartupState());
 ipcMain.handle('app:startup-mode-set', (_event, payload) => {
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs sind Einstellungen gesperrt.' };
   const requested = String(payload?.startMode || payload || '').trim().toLowerCase();
   if (!isValidStartMode(requested)) {
     return { ok: false, error: 'Startmodus bitte als „auto“ oder „manual“ angeben.' };
@@ -1797,10 +2149,12 @@ ipcMain.handle('app:update-source', () => ({
   ...describeUpdateSource({ ...readUpdateSettings(), __token: readUpdateToken() }),
   version: app.getVersion(),
   encryptionAvailable: isTokenEncryptionAvailable(),
+  encryptionBackend: getEncryptionBackend(),
   owner: String(readUpdateSettings().repoOwner || ''),
   repo: String(readUpdateSettings().repoRepo || '')
 }));
 ipcMain.handle('app:update-source-set', (_event, payload) => {
+  if (portableBackupBusy) return { ok: false, error: 'Während des Datenumzugs sind Einstellungen gesperrt.' };
   const settings = readUpdateSettings();
   const raw = String(payload?.repo || payload?.slug || '').trim();
   const parsed = normalizeRepoTarget({ slug: raw, owner: payload?.owner, repo: payload?.repo });
@@ -1837,6 +2191,8 @@ ipcMain.handle('app:update-channel-test', async () => {
 
 ipcMain.handle('bot:control', async (_event, action) => {
   if (!['start', 'stop', 'restart', 'status'].includes(action)) return { ok: false, output: 'Ungültige Bot-Aktion.', active: false };
+  if (portableBackupBusy && ['start', 'restart'].includes(action)) return { ok: false, output: 'Während des Datenumzugs bleibt der Bot gestoppt.', active: false };
+  if (portableBackupBusy && action === 'stop') return { ok: false, output: 'Während des Datenumzugs wird der Bot bereits sicher gestoppt.', active: false };
   const operation = controlQueue.then(async () => {
     const result = await runController(action);
     if (action === 'stop') {
@@ -1872,7 +2228,9 @@ ipcMain.handle('bot:control', async (_event, action) => {
   controlQueue = operation.catch(() => {});
   return operation;
 });
-ipcMain.handle('bot:ensure-dashboard', () => ensureDashboard());
+ipcMain.handle('bot:ensure-dashboard', () => portableBackupBusy
+  ? { ok: false, message: 'Während des Datenumzugs bleibt der Bot gestoppt.' }
+  : ensureDashboard());
 ipcMain.handle('bot:state', () => getBotSupervisor().state);
 ipcMain.handle('security:secret-status', () => getBotSupervisor().getSecretStatus());
 
@@ -1895,7 +2253,7 @@ ipcMain.handle('app:open-setup', () => {
 });
 ipcMain.on('setup:minimize', () => setupWindow?.minimize());
 ipcMain.on('setup:close', () => setupWindow?.close());
-ipcMain.handle('app:info', () => ({ name: APP_NAME, version: app.getVersion(), packaged: app.isPackaged }));
+ipcMain.handle('app:info', () => ({ name: APP_NAME, version: app.getVersion(), packaged: app.isPackaged, platform: process.platform }));
 ipcMain.handle('app:logs', () => {
   const currentLog = getBotSupervisor().getLogPath();
   if (!existsSync(currentLog)) return 'Noch keine Protokolle vorhanden.';
@@ -1925,6 +2283,9 @@ ipcMain.handle('app:get-live-diagnostics', async () => {
     diagnosticsError: diagnostics?.error ? sanitizeDiagnosticText(diagnostics.error) : null
   };
 });
+ipcMain.handle('app:portable-backup-export', (_event, payload) => portableBackupExport(payload));
+ipcMain.handle('app:portable-backup-import', (event, payload) => portableBackupImport(payload, event.sender));
+ipcMain.handle('setup:portable-backup-import', (event, payload) => portableBackupImport(payload, event.sender));
 ipcMain.handle('app:export-diagnostics', async () => {
   const options = {
     title: 'FALLEN HEAVEN Diagnose speichern',
@@ -1959,8 +2320,12 @@ ipcMain.handle('app:open-external', (_event, url) => {
   void shell.openExternal(url);
   return true;
 });
-ipcMain.handle('api:request', (_event, options) => localApiRequest(options));
-ipcMain.handle('auth:discord-login', () => openDiscordLogin());
+ipcMain.handle('api:request', (_event, options) => portableBackupBusy
+  ? { ok: false, status: 503, data: { error: 'Während des Datenumzugs bleibt der App-Dienst gestoppt.' } }
+  : localApiRequest(options));
+ipcMain.handle('auth:discord-login', () => portableBackupBusy
+  ? { ok: false, message: 'Während des Datenumzugs ist keine Discord-Anmeldung möglich.' }
+  : openDiscordLogin());
 ipcMain.handle('auth:logout', async () => {
   const response = await localApiRequest({ path: '/api/auth/logout', method: 'POST' }).catch(() => ({ ok: false }));
   await clearProtectedDashboardSession();

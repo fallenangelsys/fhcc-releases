@@ -19,6 +19,12 @@
   const botName = byId('bot-name');
   const botId = byId('bot-id');
   const botAvatar = byId('bot-avatar');
+  const portableImport = byId('setup-portable-import');
+  const portableSection = byId('setup-portable-password-section');
+  const portablePassword = byId('setup-portable-password');
+  const portableImportConfirm = byId('setup-portable-import-confirm');
+  const portableImportCancel = byId('setup-portable-import-cancel');
+  const portableResult = byId('setup-portable-result');
 
   if (!token || !clientId || !clientSecret || !result || !save || !remove || !state || !identity) {
     console.warn('[FH Setup] Setup-UI unvollständig geladen. Initialisierung sicher beendet.');
@@ -126,6 +132,57 @@
     } finally {
       save.disabled = false;
       await loadStatus().catch(() => {});
+    }
+  });
+
+  if (portableImport && portableSection) portableImport.addEventListener('click', () => {
+    portableSection.hidden = false;
+    portablePassword?.focus();
+  });
+  if (portableImportCancel && portableSection) portableImportCancel.addEventListener('click', () => {
+    portableSection.hidden = true;
+    if (portablePassword) portablePassword.value = '';
+    if (portableResult) {
+      portableResult.textContent = '';
+      portableResult.className = 'result';
+    }
+  });
+  if (portableImportConfirm) portableImportConfirm.addEventListener('click', async () => {
+    const password = String(portablePassword?.value || '').normalize('NFC');
+    if (password.length < 12) {
+      if (portableResult) setResult('Das Backup-Passwort muss mindestens 12 Zeichen lang sein.', 'error');
+      portablePassword?.focus();
+      return;
+    }
+    portableImportConfirm.disabled = true;
+    if (portableResult) setResult('Backup wird verschlüsselt geprüft. Bestehende Daten bleiben bis dahin unangetastet.');
+    try {
+      const response = await api.importPortableBackup({ password });
+      if (response?.canceled) {
+        if (portableResult) {
+          portableResult.textContent = 'Import abgebrochen.';
+          portableResult.className = 'result';
+        }
+        return;
+      }
+      if (!response?.ok) {
+        if (portableResult) {
+          portableResult.textContent = response?.error || 'Import fehlgeschlagen.';
+          portableResult.className = 'result error';
+        }
+        return;
+      }
+      if (portableResult) {
+        portableResult.textContent = 'Arbeitsstand importiert. Bitte mit Discord anmelden; der Bot bleibt gestoppt.';
+        portableResult.className = 'result success';
+      }
+      if (portableSection) portableSection.hidden = true;
+      setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      if (portableResult) setResult(`Import fehlgeschlagen: ${String(error?.message || error)}`, 'error');
+    } finally {
+      if (portablePassword) portablePassword.value = '';
+      portableImportConfirm.disabled = false;
     }
   });
 

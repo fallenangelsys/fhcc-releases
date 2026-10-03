@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('fallenHeaven', {
   getDiagnostics: () => ipcRenderer.invoke('app:diagnostics'),
   getLiveDiagnostics: () => ipcRenderer.invoke('app:get-live-diagnostics'),
   exportDiagnostics: () => ipcRenderer.invoke('app:export-diagnostics'),
+  exportPortableBackup: (payload) => ipcRenderer.invoke('app:portable-backup-export', payload),
+  importPortableBackup: (payload) => ipcRenderer.invoke('app:portable-backup-import', payload),
   openDataFolder: () => ipcRenderer.invoke('app:open-data-folder'),
   openLogFolder: () => ipcRenderer.invoke('app:open-log-folder'),
   getUpdateSettings: () => ipcRenderer.invoke('app:update-settings'),

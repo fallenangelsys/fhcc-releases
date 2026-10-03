@@ -38,7 +38,7 @@
 
           <div class="pro-login-benefits">
             <article>${shield}<span><b>Nur erlaubte Server</b><small>Du siehst nur Server, die du verwalten darfst.</small></span></article>
-            <article>${lock}<span><b>Lokale Sitzung</b><small>Geschützt über Windows und automatisch geprüft.</small></span></article>
+            <article>${lock}<span><b>Lokale Sitzung</b><small>Durch das Betriebssystem geschützt und automatisch geprüft.</small></span></article>
             <article>${pulse}<span><b>Live verbunden</b><small>Bot, Discord und Module laden ohne Seitenflackern.</small></span></article>
           </div>
         </section>
@@ -78,7 +78,7 @@
         </section>
       </main>
 
-      <footer class="pro-login-footer"><span>Native Windows App</span><span><i></i> Bot erreichbar</span><span id="modern-login-version">Version wird geprüft</span></footer>`;
+      <footer class="pro-login-footer"><span>Native Desktop-App</span><span><i></i> Bot erreichbar</span><span id="modern-login-version">Version wird geprüft</span></footer>`;
   }
 
   const appNav = document.querySelector('.app-nav');

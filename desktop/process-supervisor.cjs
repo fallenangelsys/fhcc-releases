@@ -71,6 +71,17 @@ class BotProcessSupervisor {
     return this.paths.log;
   }
 
+  canEncryptSecrets() {
+    try {
+      if (!this.safeStorage.isEncryptionAvailable()) return false;
+      if (process.platform !== 'linux') return true;
+      if (typeof this.safeStorage.getSelectedStorageBackend !== 'function') return false;
+      return !['basic_text', 'unknown'].includes(this.safeStorage.getSelectedStorageBackend());
+    } catch {
+      return false;
+    }
+  }
+
   getControlHeaders() {
     return {
       'x-fallen-heaven-app': 'desktop-control-v2',
@@ -181,9 +192,9 @@ class BotProcessSupervisor {
       managed.DASHBOARD_SESSION_SECRET = crypto.randomBytes(48).toString('hex');
       changed = true;
     }
-    if (changed && this.safeStorage.isEncryptionAvailable()) {
+    if (changed && this.canEncryptSecrets()) {
       try {
-        writeFileSync(this.paths.secrets, this.safeStorage.encryptString(JSON.stringify(managed)));
+        writeFileSync(this.paths.secrets, this.safeStorage.encryptString(JSON.stringify(managed)), { mode: 0o600 });
         this.log('Dauerhaftes Dashboard-Sitzungsgeheimnis verschlüsselt gespeichert.');
       } catch (error) {
         this.log(`Dashboard-Sitzungsgeheimnis konnte nicht gespeichert werden: ${error.message}`);
@@ -198,7 +209,7 @@ class BotProcessSupervisor {
       if (!existsSync(this.paths.secrets)) return true;
       try { return statSync(candidate).mtimeMs > statSync(this.paths.secrets).mtimeMs; } catch { return false; }
     });
-    if (!newerSource && existsSync(this.paths.secrets) && this.safeStorage.isEncryptionAvailable()) {
+    if (!newerSource && existsSync(this.paths.secrets) && this.canEncryptSecrets()) {
       try {
         return this.ensureManagedSecrets(JSON.parse(this.safeStorage.decryptString(readFileSync(this.paths.secrets))));
       } catch (error) {
@@ -217,9 +228,9 @@ class BotProcessSupervisor {
         const values = parseEnv(readFileSync(candidate, 'utf8'));
         if (!Object.keys(values).length) continue;
         const managed = this.ensureManagedSecrets(values);
-        if (this.safeStorage.isEncryptionAvailable()) {
-          writeFileSync(this.paths.secrets, this.safeStorage.encryptString(JSON.stringify(managed)));
-          this.log('Secret-Konfiguration mit Windows-Verschlüsselung gesichert.');
+        if (this.canEncryptSecrets()) {
+          writeFileSync(this.paths.secrets, this.safeStorage.encryptString(JSON.stringify(managed)), { mode: 0o600 });
+          this.log('Secret-Konfiguration mit Systemverschlüsselung gesichert.');
         }
         return managed;
       } catch (error) {
@@ -230,8 +241,8 @@ class BotProcessSupervisor {
   }
 
   saveSecrets(patch = {}) {
-    if (!this.safeStorage.isEncryptionAvailable()) {
-      return { ok: false, error: 'Windows-Verschlüsselung ist für dieses Benutzerkonto nicht verfügbar.' };
+    if (!this.canEncryptSecrets()) {
+      return { ok: false, error: 'Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.' };
     }
     const allowedKeys = new Set([
       'DISCORD_CLIENT_ID',
@@ -255,8 +266,8 @@ class BotProcessSupervisor {
   }
 
   deleteSecrets(keys = []) {
-    if (!this.safeStorage.isEncryptionAvailable()) {
-      return { ok: false, error: 'Windows-Verschlüsselung ist für dieses Benutzerkonto nicht verfügbar.' };
+    if (!this.canEncryptSecrets()) {
+      return { ok: false, error: 'Der System-Schlüsselbund ist nicht verfügbar. Bitte aktiviere GNOME Keyring oder KDE Wallet und starte FHCC erneut.' };
     }
     const current = this.loadSecrets();
     const next = { ...current };
@@ -274,7 +285,7 @@ class BotProcessSupervisor {
     const clientIdValid = /^\d{15,22}$/.test(clientId);
     const clientSecretValid = clientSecret.length >= 20 && !/^paste_your_/i.test(clientSecret) && !/\s/.test(clientSecret);
     return {
-      encrypted: existsSync(this.paths.secrets) && this.safeStorage.isEncryptionAvailable(),
+      encrypted: existsSync(this.paths.secrets) && this.canEncryptSecrets(),
       discordToken: Boolean(values.DISCORD_TOKEN || values.BOT_TOKEN),
       discordClientId: clientIdValid,
       discordClientSecret: clientSecretValid,
@@ -384,7 +395,16 @@ class BotProcessSupervisor {
   killTree(pid) {
     return new Promise((resolve) => {
       if (!pid) return resolve(false);
-      execFile('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve(true));
+      if (process.platform === 'win32') {
+        execFile('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve(true));
+        return;
+      }
+      try {
+        process.kill(pid, 'SIGKILL');
+        resolve(true);
+      } catch {
+        resolve(false);
+      }
     });
   }
 
@@ -401,6 +421,8 @@ class BotProcessSupervisor {
           timeout: 5000
         });
       } catch {}
+    } else {
+      try { process.kill(pid, 'SIGKILL'); } catch {}
     }
     this.child = null;
     return true;
@@ -448,7 +470,6 @@ class BotProcessSupervisor {
     const runtimeMode = this.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {};
     const child = spawn(runtimeExecutable, [launcher], {
       cwd: this.isPackaged ? this.paths.root : this.projectRoot,
-      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env: {
         ...process.env,
@@ -466,7 +487,8 @@ class BotProcessSupervisor {
         DASHBOARD_PORT: String(this.port),
         HOST: '127.0.0.1',
         PORT: String(this.port)
-      }
+      },
+      ...(process.platform === 'win32' ? { windowsHide: true } : {})
     });
     this.child = child;
     this.publish({ pid: child.pid });

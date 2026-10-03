@@ -147,9 +147,9 @@
       .fh-preboot-bar i { width: 100%; transform: none; }
     }
   </style>
-<link rel="stylesheet" href="ui-base.css?v=4.0.4" data-live-diagnostics-v2>
-  <link rel="stylesheet" href="ui-aurora.css?v=4.0.4">
-  <link rel="stylesheet" href="ui-system.css?v=4.0.4">
+<link rel="stylesheet" href="ui-base.css?v=4.1.0" data-live-diagnostics-v2>
+  <link rel="stylesheet" href="ui-aurora.css?v=4.1.0">
+  <link rel="stylesheet" href="ui-system.css?v=4.1.0">
   </head>
 <body data-theme="dark">
   <div class="app-shell">
@@ -219,7 +219,7 @@
           <div class="access-satellite satellite-two"><i></i><span><small>COMMUNITY</small><b>SERVER READY</b></span></div>
           <div class="access-satellite satellite-three"><i></i><span><small>SECURITY</small><b>ACCESS SHIELDED</b></span></div>
         </div>
-        <div class="access-footnote"><span><i></i> Lokale Windows-App</span><span>Discord OAuth2</span><span>Geschützte Sitzung</span></div>
+        <div class="access-footnote"><span><i></i> Native Desktop-App</span><span>Discord OAuth2</span><span>Geschützte Sitzung</span></div>
       </div>
 
       <aside class="access-panel">
@@ -243,7 +243,7 @@
           <small>Gespeicherte Sitzungen werden beim Start geprüft und sonst erneuert.</small>
         </div>
         <div class="access-assurance">
-          <article><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-5"></path></svg><span><b>Windows-geschützt</b><small>Lokaler Systemschutz</small></span></article>
+          <article><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-5"></path></svg><span><b>Systemgeschützt</b><small>Lokaler OS-Schlüsselbund</small></span></article>
           <article><svg viewBox="0 0 24 24"><path d="M4 7h16v11H4zM8 7V5h8v2"></path><circle cx="12" cy="12" r="2"></circle></svg><span><b>Ohne Passwort</b><small>Discord übernimmt die Prüfung</small></span></article>
         </div>
         <p class="access-privacy">FALLEN HEAVEN speichert kein Discord-Passwort. Die Anmeldung läuft im offiziellen Discord-Fenster.</p>
@@ -609,6 +609,25 @@
         <button class="ghost-button" id="open-log-folder" type="button">Logordner öffnen</button>
         <button class="ghost-button" id="system-theme" type="button">Darstellung wechseln</button>
       </div>
+      <div class="system-recovery-actions">
+        <button class="primary-button" id="portable-backup-export" type="button">Arbeitsstand verschlüsselt exportieren</button>
+        <button class="ghost-button" id="portable-backup-import" type="button">Arbeitsstand importieren</button>
+      </div>
+      <p class="system-privacy-note">Der Export umfasst lokale Serverdaten, SQLite-Stand, Bilder, Embed-Assets, lokale Backups/Logs, FHCC-Oberflächeneinstellungen sowie Bot-/OAuth-/Update-Zugangsdaten. Die Datei wird mit deinem eigenen Passwort verschlüsselt. Beim Import wird der vorhandene FHCC-Arbeitsstand auf diesem PC ersetzt; der Bot bleibt gestoppt und Discord muss erneut angemeldet werden.</p>
+      <dialog id="portable-backup-dialog" class="command-palette portable-backup-dialog" aria-labelledby="portable-backup-title">
+        <form method="dialog">
+          <header><div><span>VERSCHLÜSSELTER DATENUMZUG</span><h2 id="portable-backup-title">FHCC-Arbeitsstand sichern</h2></div><button value="cancel" type="submit" aria-label="Backup-Fenster schließen">×</button></header>
+          <section>
+            <p id="portable-backup-copy">Dieses Passwort wird zum Öffnen des Backups auf dem neuen PC benötigt. Mindestens 12 Zeichen verwenden und sicher aufbewahren.</p>
+            <label for="portable-backup-password">Backup-Passwort</label>
+            <input id="portable-backup-password" type="password" autocomplete="new-password" spellcheck="false">
+            <label for="portable-backup-password-confirm" id="portable-backup-password-confirm-label">Passwort bestätigen</label>
+            <input id="portable-backup-password-confirm" type="password" autocomplete="new-password" spellcheck="false">
+            <p id="portable-backup-status" role="status" aria-live="polite"></p>
+          </section>
+          <footer><button class="app-confirm-secondary" id="portable-backup-cancel" type="button">Abbrechen</button><button class="app-confirm-primary" id="portable-backup-submit" type="button">Export starten</button></footer>
+        </form>
+      </dialog>
       <p class="system-privacy-note"><strong>Privacy by default:</strong> Der Diagnose-Export enthält keine Nachrichteninhalte, Tokens, Passwörter oder Konfigurationswerte. Exportiert werden nur technische Zustände, Größen, Zähler und bereinigte Protokolle.</p>
       <div class="update-folder-row">
         <label for="startup-mode-select">Startverhalten des Bots</label>
@@ -643,10 +662,10 @@
           <button class="ghost-button" id="update-channel-test" type="button">Verbindung testen</button>
           <span class="update-token-hint" id="update-token-hint"></span>
         </div>
-        <p class="system-privacy-note">Der Token wird über Windows DPAPI verschlüsselt und nur für dieses Benutzerkonto gespeichert – niemals im Klartext, niemals in der App. Ohne Token sind private Repositories nicht lesbar; der Kanal bleibt dann auf den Ordner zurückgestellt.</p>
+        <p class="system-privacy-note">Der Token wird über den System-Schlüsselbund verschlüsselt gespeichert – niemals im Klartext in der App. Unter Linux werden GNOME Keyring oder KDE Wallet benötigt. Ohne verfügbaren Schlüsselbund kann der Token nicht sicher gespeichert werden.</p>
       </div>
       <div class="update-folder-row">
-        <label for="update-folder">Update-Ordner (Rückfall, auch Netzwerkfreigabe möglich)</label>
+        <label for="update-folder">Windows-Update-Ordner (Rückfall, auch Netzwerkfreigabe möglich)</label>
         <div class="update-folder-input">
           <input id="update-folder" type="text" placeholder="z. B. C:\FHCC-Updates oder \\SERVER\Freigabe" spellcheck="false">
           <button class="ghost-button" id="update-folder-save" type="button">Speichern</button>
@@ -657,7 +676,7 @@
         <button class="primary-button" id="update-install" type="button" disabled>Update installieren</button>
         <button class="text-button" id="update-open-folder" type="button">Ordner öffnen</button>
       </div>
-      <p class="system-privacy-note"><strong>Sicher:</strong> Die Update-Datei wird vor der Installation anhand des SHA-512-Werts aus <code>latest.yml</code> geprüft und in den Temp-Ordner kopiert – der Kanal muss während der Installation nicht mehr erreichbar sein. Die Installation läuft still (silent), die App startet danach neu.</p>
+      <p class="system-privacy-note"><strong>Sicher:</strong> Windows-Installer werden vor der Installation anhand des SHA-512-Werts aus <code>latest.yml</code> geprüft und starten danach neu. Linux-Versionen werden manuell über das neue AppImage oder .deb installiert.</p>
     </article>
     <article class="log-panel">
       <div class="system-panel-head">
@@ -705,24 +724,24 @@
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   <script src="stability.js"></script>
   <script src="runtime-state.js"></script>
-<script src="modern-ui-v5.js?v=4.0.4"></script>
-<script src="discord-reference-v7.js?v=4.0.4"></script>
-<script src="discord-reference-v8.js?v=4.0.4"></script>
-<script src="activity-race-studio.js?v=4.0.4"></script>
-<script src="studio-components.js?v=4.0.4"></script>
-<script src="temp-voice-ui.js?v=4.0.4"></script>
-<script src="economy-panel-studio.js?v=4.0.4"></script>
-<script src="studio-json-import.js?v=4.0.4"></script>
-<script src="message-emoji-loader.js?v=4.0.4"></script>
-<script src="counting-panel.js?v=4.0.4"></script>
-<script src="inactive-reminder-panel.js?v=4.0.4"></script>
-<script src="levels-panel.js?v=4.0.4"></script>
-<script src="app-editor.js?v=4.0.4"></script>
-<script src="module-config-inputs.js?v=4.0.4"></script>
-<script src="app.js?v=4.0.4"></script>
+<script src="modern-ui-v5.js?v=4.1.0"></script>
+<script src="discord-reference-v7.js?v=4.1.0"></script>
+<script src="discord-reference-v8.js?v=4.1.0"></script>
+<script src="activity-race-studio.js?v=4.1.0"></script>
+<script src="studio-components.js?v=4.1.0"></script>
+<script src="temp-voice-ui.js?v=4.1.0"></script>
+<script src="economy-panel-studio.js?v=4.1.0"></script>
+<script src="studio-json-import.js?v=4.1.0"></script>
+<script src="message-emoji-loader.js?v=4.1.0"></script>
+<script src="counting-panel.js?v=4.1.0"></script>
+<script src="inactive-reminder-panel.js?v=4.1.0"></script>
+<script src="levels-panel.js?v=4.1.0"></script>
+<script src="app-editor.js?v=4.1.0"></script>
+<script src="module-config-inputs.js?v=4.1.0"></script>
+<script src="app.js?v=4.1.0"></script>
     <!-- three.js + skinview3d werden erst beim ersten Öffnen des Skin Studios nachgeladen (skin-editor.js → loadViewerLibraries) -->
-<script src="skin-editor.js?v=4.0.4"></script>
-<script src="server-management.js?v=4.0.4"></script>
+<script src="skin-editor.js?v=4.1.0"></script>
+<script src="server-management.js?v=4.1.0"></script>
     <script src="theme-bridge.js"></script>
   <script src="admin-safety.js"></script>
   <script src="media-resilience.js"></script>

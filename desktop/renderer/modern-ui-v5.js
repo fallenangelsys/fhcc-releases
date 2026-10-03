@@ -81,10 +81,10 @@
           </button>
           <div class="modern-session"><span><i></i><b id="login-session-status">Gespeicherte Sitzung wird geprüft</b></span><small>Beim Start wird die Sitzung erst mit Discord-Daten bestätigt.</small></div>
           <div class="modern-login-divider"><span>Sicher & privat</span></div>
-          <div class="modern-login-assurance"><span>${icons.shield}<b>Nur berechtigte Server</b></span><span>${icons.lock}<b>Windows-geschützte Sitzung</b></span></div>
+          <div class="modern-login-assurance"><span>${icons.shield}<b>Nur berechtigte Server</b></span><span>${icons.lock}<b>Systemgeschützte Sitzung</b></span></div>
           <p class="modern-privacy">FALLEN HEAVEN sieht niemals dein Discord-Passwort.</p>
         </div>
-        <footer class="discord-login-footer"><span><i></i> Systeme erreichbar</span><span>Native Windows App</span><span id="modern-login-version">Version wird geprüft</span></footer>
+        <footer class="discord-login-footer"><span><i></i> Systeme erreichbar</span><span>Native Desktop-App</span><span id="modern-login-version">Version wird geprüft</span></footer>
       </aside>`;
   }
 

@@ -6810,15 +6810,38 @@ async function loadUpdateCenter() {
   const tokenHint = document.getElementById('update-token-hint');
   try {
     // GitHub-Kanal zuerst, Update-Ordner als Rückfall.
+    const appInfo = typeof api.getInfo === 'function' ? await api.getInfo() : null;
+    if (appInfo?.platform === 'linux') {
+      const updateAction = document.getElementById('update-open-folder');
+      const updateCheck = document.getElementById('update-check');
+      const updateRepo = document.getElementById('update-repo');
+      const updateRepoSave = document.getElementById('update-repo-save');
+      const updateToken = document.getElementById('update-token');
+      const updateTokenSave = document.getElementById('update-token-save');
+      const updateChannelTest = document.getElementById('update-channel-test');
+      const updateFolderSave = document.getElementById('update-folder-save');
+      const updatePanel = state?.closest('.update-panel');
+      if (installButton) { installButton.hidden = true; installButton.disabled = true; }
+      if (updateAction) updateAction.hidden = true;
+      if (updateCheck) updateCheck.disabled = true;
+      if (updateRepo) updateRepo.disabled = true;
+      if (updateRepoSave) updateRepoSave.disabled = true;
+      if (updateToken) updateToken.disabled = true;
+      if (updateTokenSave) updateTokenSave.disabled = true;
+      if (updateChannelTest) updateChannelTest.disabled = true;
+      if (updateFolderSave) updateFolderSave.disabled = true;
+      updatePanel?.querySelectorAll('.update-folder-row').forEach((row) => { row.hidden = true; });
+      if (state) { state.textContent = 'Manuelles Update'; state.dataset.state = 'neutral'; }
+      if (status) status.textContent = 'Linux-Versionen werden manuell über ein neues AppImage oder .deb aktualisiert.';
+      return;
+    }
     const source = typeof api.getUpdateSource === 'function' ? await api.getUpdateSource() : null;
-    if (source && typeof api.testUpdateChannel === 'function' && source.repo) {
-      if (tokenHint) {
-        tokenHint.textContent = source.hasToken
-          ? 'Token hinterlegt: ' + source.tokenHint
-          : (source.encryptionAvailable
-            ? 'Kein Token hinterlegt – private Repositories sind ohne Token nicht lesbar.'
-            : 'Achtung: System kann den Token nicht verschlüsseln – dann nur der Ordner-Kanal.');
-      }
+    if (tokenHint && source) {
+      tokenHint.textContent = source.hasToken
+        ? 'Token hinterlegt: ' + source.tokenHint
+        : (source.encryptionAvailable
+          ? 'Kein Token hinterlegt – private Repositories sind ohne Token nicht lesbar.'
+          : 'Achtung: System kann den Token nicht verschlüsseln – dann nur der Ordner-Kanal.');
     }
     const settings = await api.getUpdateSettings();
     updateFolderState = String(settings?.updateFolder || '');
@@ -7570,6 +7593,112 @@ bindId('update-open-folder', 'click', async function () {
   const result = await api.openUpdateFolder();
   if (!result?.ok) toast(result?.error || 'Update-Ordner konnte nicht geöffnet werden.', 'error');
 });
+const portableBackupDialog = document.getElementById('portable-backup-dialog');
+const portableBackupPassword = document.getElementById('portable-backup-password');
+const portableBackupPasswordConfirm = document.getElementById('portable-backup-password-confirm');
+const portableBackupConfirmLabel = document.getElementById('portable-backup-password-confirm-label');
+const portableBackupTitle = document.getElementById('portable-backup-title');
+const portableBackupCopy = document.getElementById('portable-backup-copy');
+const portableBackupStatus = document.getElementById('portable-backup-status');
+const portableBackupSubmit = document.getElementById('portable-backup-submit');
+let portableBackupOperation = 'export';
+
+function resetPortableBackupDialog() {
+  if (portableBackupPassword) portableBackupPassword.value = '';
+  if (portableBackupPasswordConfirm) portableBackupPasswordConfirm.value = '';
+  if (portableBackupStatus) portableBackupStatus.textContent = '';
+  if (portableBackupSubmit) portableBackupSubmit.disabled = false;
+}
+
+function openPortableBackupDialog(operation) {
+  if (!portableBackupDialog || !portableBackupPassword || !portableBackupPasswordConfirm || !portableBackupTitle || !portableBackupCopy || !portableBackupConfirmLabel || !portableBackupSubmit) {
+    toast('Backup-Fenster ist in dieser Version nicht verfügbar.', 'error');
+    return;
+  }
+  portableBackupOperation = operation;
+  const isExport = operation === 'export';
+  portableBackupTitle.textContent = isExport ? 'FHCC-Arbeitsstand exportieren' : 'FHCC-Arbeitsstand importieren';
+  portableBackupCopy.textContent = isExport
+    ? 'Dieses Passwort wird zum Öffnen des Backups auf dem neuen PC benötigt. Mindestens 12 Zeichen verwenden und sicher aufbewahren.'
+    : 'Beim Import wird der vorhandene lokale FHCC-Arbeitsstand ersetzt. Vorhandene Daten bleiben bis zur erfolgreichen Entschlüsselung erhalten. Mindestens 12 Zeichen eingeben.';
+  portableBackupConfirmLabel.hidden = !isExport;
+  portableBackupPasswordConfirm.hidden = !isExport;
+  portableBackupSubmit.textContent = isExport ? 'Export starten' : 'Import starten';
+  portableBackupDialog.showModal();
+  portableBackupPassword.focus();
+}
+
+bindId('portable-backup-export', 'click', function () { openPortableBackupDialog('export'); });
+bindId('portable-backup-import', 'click', async function () {
+  const accepted = await showAppConfirm({
+    eyebrow: 'FHCC · DATENUMZUG',
+    title: 'Arbeitsstand ersetzen?',
+    message: 'Der ausgewählte Arbeitsstand ersetzt die lokalen Serverdaten, Bilder, Backups und Einstellungen auf diesem PC. Erst nach gültigem Passwort und vollständiger Integritätsprüfung wird übernommen.',
+    note: 'Der Bot wird gestoppt und bleibt nach dem Import manuell aus. Discord-Anmeldung muss auf diesem PC neu erfolgen.',
+    tone: 'warning',
+    confirmLabel: 'Import fortsetzen'
+  });
+  if (accepted) openPortableBackupDialog('import');
+});
+bindId('portable-backup-cancel', 'click', function () {
+  portableBackupDialog?.close();
+  resetPortableBackupDialog();
+});  if (portableBackupDialog) portableBackupDialog.addEventListener('close', resetPortableBackupDialog);
+  if (portableBackupDialog) portableBackupDialog.addEventListener('cancel', function (event) {
+    event.preventDefault();
+    portableBackupDialog.close();
+    resetPortableBackupDialog();
+  });
+
+bindId('portable-backup-submit', 'click', async function () {
+  const password = String(portableBackupPassword?.value || '').normalize('NFC');
+  const confirmation = String(portableBackupPasswordConfirm?.value || '').normalize('NFC');
+  if (password.length < 12) {
+    if (portableBackupStatus) portableBackupStatus.textContent = 'Das Backup-Passwort muss mindestens 12 Zeichen lang sein.';
+    portableBackupPassword?.focus();
+    return;
+  }
+  if (portableBackupOperation === 'export' && password !== confirmation) {
+    if (portableBackupStatus) portableBackupStatus.textContent = 'Die beiden Passwörter stimmen nicht überein.';
+    portableBackupPasswordConfirm?.focus();
+    return;
+  }
+  if (portableBackupSubmit) portableBackupSubmit.disabled = true;
+  if (portableBackupStatus) portableBackupStatus.textContent = portableBackupOperation === 'export'
+    ? 'Der Bot wird sicher gestoppt und dein Arbeitsstand wird verschlüsselt …'
+    : 'Backup wird geprüft und entschlüsselt. Der aktuelle Arbeitsstand bleibt bis dahin unverändert …';
+  try {
+    const action = portableBackupOperation === 'export' ? api?.exportPortableBackup : api?.importPortableBackup;
+    if (typeof action !== 'function') throw new Error('Backup-Funktion steht in dieser Version nicht zur Verfügung.');
+    if (portableBackupOperation === 'export' && !await showAppConfirm({
+      eyebrow: 'FHCC · SICHERES BACKUP',
+      title: 'Bot für den Export stoppen?',
+      message: 'Für einen konsistenten Datenstand stoppt FHCC den Bot vor dem Export. Datenbanken und SQLite-WAL-Dateien werden danach unverändert übernommen.',
+      note: 'Nach dem Export bleibt der Bot gestoppt und kann von dir manuell wieder gestartet werden.',
+      tone: 'warning',
+      confirmLabel: 'Bot stoppen & exportieren'
+    })) return;
+    const result = await action({ password });
+    if (result?.canceled) {
+      if (portableBackupStatus) portableBackupStatus.textContent = 'Vorgang abgebrochen.';
+      return;
+    }
+    if (!result?.ok) throw new Error(result?.error || 'Datenumzug fehlgeschlagen.');
+    portableBackupDialog?.close();
+    resetPortableBackupDialog();
+    toast(portableBackupOperation === 'export'
+      ? `Arbeitsstand verschlüsselt exportiert (${result.entries} Einträge). Der Bot bleibt gestoppt.`
+      : `Arbeitsstand importiert (${result.entries} Einträge). Bitte auf diesem PC erneut mit Discord anmelden; der Bot bleibt gestoppt.`, 'success');
+  } catch (error) {
+    if (portableBackupStatus) portableBackupStatus.textContent = String(error?.message || error);
+    if (portableBackupSubmit) portableBackupSubmit.disabled = false;
+  } finally {
+    if (portableBackupPassword) portableBackupPassword.value = '';
+    if (portableBackupPasswordConfirm) portableBackupPasswordConfirm.value = '';
+    if (portableBackupSubmit && !portableBackupDialog?.open) portableBackupSubmit.disabled = false;
+  }
+});
+
 bindId('export-diagnostics', 'click', async function () {
   const result = await api.exportDiagnostics();
   if (result?.canceled) return;

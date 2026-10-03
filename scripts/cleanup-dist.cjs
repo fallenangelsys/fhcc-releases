@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Räumt dist/ nach jedem Build auf: behält nur die neueste EXE (inkl. Blockmap
-// und latest.yml) und entfernt alte Installer sowie Zwischenartefakte.
+// Räumt dist/ nach dem Windows-Build auf: behält nur die neueste EXE (inkl.
+// Blockmap und latest.yml) und entfernt alte Installer sowie Zwischenartefakte.
 const fs = require('fs');
 const path = require('path');
 
