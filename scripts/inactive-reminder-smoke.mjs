@@ -169,11 +169,20 @@ const ok = (label) => { passed += 1; console.log(`  ✅ ${label}`); };
 //     „unbekannt“, wenn nichts aufgezeichnet wurde.
 {
   const { formatActivityDate, fillPlaceholders: fill } = _inactiveReminderInternals;
-  assert.equal(
-    formatActivityDate(new Date('2026-03-12T13:30:00Z').getTime()),
-    '12.03.2026 um 14:30 Uhr',
-    'deutsches Datum mit Uhrzeit (lokale Zeitzone)'
-  );
+  // Die Erinnerung zeigt Aktivitäts-Zeitpunkte bewusst in der Zeitzone, in der
+  // der Bot laeuft. Der Test laeuft aber auf Entwicklerrechnern (Europe/Berlin)
+  // UND auf GitHub-Runnern (UTC) - der Erwartungswert wird deshalb aus demselben
+  // Zeitstempel berechnet statt fest auf eine Zeitzone verdrahtet zu sein.
+  const pad2 = (value) => String(value).padStart(2, '0');
+  const localActivityDate = (iso) => {
+    const date = new Date(iso);
+    return `${pad2(date.getDate())}.${pad2(date.getMonth() + 1)}.${date.getFullYear()} um ${pad2(date.getHours())}:${pad2(date.getMinutes())} Uhr`;
+  };
+  const messageIso = '2026-03-12T13:30:00Z';
+  const voiceIso = '2026-02-01T19:00:00Z';
+  const formattedMessageDate = formatActivityDate(new Date(messageIso).getTime());
+  assert.match(formattedMessageDate, /^\d{2}\.\d{2}\.\d{4} um \d{2}:\d{2} Uhr$/, 'deutsches Format „TT.MM.JJJJ um HH:MM Uhr“');
+  assert.equal(formattedMessageDate, localActivityDate(messageIso), 'Zeitpunkt erscheint in der lokalen Zeitzone des Bots');
   assert.equal(formatActivityDate(0), 'unbekannt', 'ohne Aufzeichnung → „unbekannt“');
   assert.equal(formatActivityDate(null), 'unbekannt');
 
@@ -181,14 +190,14 @@ const ok = (label) => { passed += 1; console.log(`  ✅ ${label}`); };
   const guild = { name: 'FALLEN HEAVEN' };
   const conf = { thresholdDays: 180 };
   const activity = {
-    lastMessageMs: new Date('2026-03-12T13:30:00Z').getTime(),
-    lastVoiceMs: new Date('2026-02-01T19:00:00Z').getTime(),
-    lastActiveMs: new Date('2026-03-12T13:30:00Z').getTime()
+    lastMessageMs: new Date(messageIso).getTime(),
+    lastVoiceMs: new Date(voiceIso).getTime(),
+    lastActiveMs: new Date(messageIso).getTime()
   };
   const text = fill('📩 Letzte Nachricht: {lastMessageAt}\n🎙️ Letzter Call: {lastVoiceAt}\nZuletzt aktiv: {lastActiveAt}', { guild, member, conf, activity });
-  assert.ok(text.includes('12.03.2026 um 14:30 Uhr'), '{lastMessageAt} wird gefüllt');
-  assert.ok(text.includes('01.02.2026 um 20:00 Uhr'), '{lastVoiceAt} wird gefüllt');
-  assert.ok(text.includes('Zuletzt aktiv: 12.03.2026'), '{lastActiveAt} wird gefüllt');
+  assert.ok(text.includes(localActivityDate(messageIso)), '{lastMessageAt} wird gefüllt');
+  assert.ok(text.includes(localActivityDate(voiceIso)), '{lastVoiceAt} wird gefüllt');
+  assert.ok(text.includes(`Zuletzt aktiv: ${localActivityDate(messageIso).slice(0, 10)}`), '{lastActiveAt} wird gefüllt');
   const missing = fill('Voice: {lastVoiceAt}', { guild, member, conf, activity: {} });
   assert.equal(missing, 'Voice: unbekannt', 'fehlende Aktivität → unbekannt');
   ok('Aktivitäts-Beweis: {lastMessageAt}/{lastVoiceAt}/{lastActiveAt} mit echten Daten');
