@@ -144,10 +144,19 @@ jobs:
             cat build-tail.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # Die eigentliche Ursache steht oft in einer Zeile, die weder nach
+          # "error" aussieht noch im Log-Ende liegt (z. B. "Archiv-Inhalt weicht
+          # ab ..."). Diese Zeilen kommen deshalb zuerst und als EIGENE
+          # Annotation - Annotationen mit "error" im Text werden sonst schon
+          # vorher weggefiltert.
+          { grep -aE 'weicht ab|nicht im Archiv|fehlt im Arbeitsordner|PRUEFUNG fehlgeschlagen' build-tail.log || :; } \
+            | tr -d '\r' | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++' | head -n 4 | while IFS= read -r line; do
+            printf '::error title=Archiv-Inhalt::%s\n' "${line//'%'/'%25'}"
+          done
           # GitHub zeigt hoechstens 10 Annotationen - deshalb zuerst die Zeilen,
           # die wie eine Fehlermeldung aussehen, erst danach das Log-Ende.
-          { grep -aiE 'error|fehler|⨯|fail|assert|exception|enoent|exited with' build-tail.log | tail -n 8; tail -n 6 build-tail.log; } \
-            | tr -d '\r' | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++' | head -n 10 | while IFS= read -r line; do
+          { grep -aiE 'error|fehler|⨯|fail|assert|exception|enoent|exited with' build-tail.log | tail -n 6; tail -n 4 build-tail.log; } \
+            | tr -d '\r' | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++' | head -n 6 | while IFS= read -r line; do
             printf '::error title=Build::%s\n' "${line//'%'/'%25'}"
           done
 
