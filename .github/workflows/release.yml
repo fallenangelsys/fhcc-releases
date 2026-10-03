@@ -39,11 +39,17 @@ jobs:
       # Die komplette Release-Verifikation laeuft genau einmal pro Plattform und
       # wird im Log gesichert. Ohne dieses Log bleibt bei einem Abbruch nur
       # "exit code 1" - ohne Hinweis, welches Skript und welche Assertion.
+      # Bewusst OHNE `| tee`: bricht die Pipe (z. B. volle Platte), stirbt der
+      # Build still und das Log endet genau dort, wo die Ursache liegen
+      # wuerde. Das Log landet vollstaendig in der Datei, die letzten Zeilen
+      # erscheinen zusaetzlich im Schritt-Output.
       - name: Run release verification suite
         shell: bash
         run: |
-          set -o pipefail
-          npm run test:release 2>&1 | tee verify.log
+          npm run test:release > verify.log 2>&1
+          status=$?
+          tail -n 200 verify.log
+          exit $status
 
       - name: Report verification failure
         if: failure()
@@ -56,7 +62,10 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           # Annotationen sind auch ohne Token ueber die oeffentliche API lesbar.
-          tail -n 40 verify.log | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -n 12 | while IFS= read -r line; do
+          # GitHub zeigt hoechstens 10 davon - deshalb zuerst die Zeilen, die wie
+          # eine Fehlermeldung aussehen, erst danach das Log-Ende.
+          { grep -aiE 'error|fehler|⨯|fail|assert|exception|enoent|exited with' verify.log | tail -n 8; tail -n 6 verify.log; } \
+            | tr -d '\r' | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++' | head -n 10 | while IFS= read -r line; do
             printf '::error title=Release-Verifikation::%s\n' "${line//'%'/'%25'}"
           done
 
@@ -78,8 +87,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 8 vCPU/16 GB: das Erzeugen der ~600-MB-Installer samt Blockmap ist
+          # der speicherintensivste Schritt des Releases.
           - label: windows-x64
-            os: windows-latest
+            os: windows-latest-8-cores
           - label: linux-x64
             os: ubuntu-latest
     steps:
@@ -110,27 +121,35 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          set -o pipefail
-          npm run build:win:ci 2>&1 | tee build.log
+          npm run build:win:ci > build.log 2>&1
+          status=$?
+          tail -n 200 build.log
+          exit $status
 
       - name: Build Linux packages
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          set -o pipefail
-          npm run build:linux:ci 2>&1 | tee build.log
+          npm run build:linux:ci > build.log 2>&1
+          status=$?
+          tail -n 200 build.log
+          exit $status
 
       - name: Report build failure
         if: failure()
         shell: bash
         run: |
+          tail -n 120 build.log > build-tail.log 2>/dev/null || : > build-tail.log
           {
             echo "### Build fehlgeschlagen"
             echo '```text'
-            tail -n 60 build.log
+            cat build-tail.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          tail -n 40 build.log 2>/dev/null | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -n 12 | while IFS= read -r line; do
+          # GitHub zeigt hoechstens 10 Annotationen - deshalb zuerst die Zeilen,
+          # die wie eine Fehlermeldung aussehen, erst danach das Log-Ende.
+          { grep -aiE 'error|fehler|⨯|fail|assert|exception|enoent|exited with' build-tail.log | tail -n 8; tail -n 6 build-tail.log; } \
+            | tr -d '\r' | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++' | head -n 10 | while IFS= read -r line; do
             printf '::error title=Build::%s\n' "${line//'%'/'%25'}"
           done
 

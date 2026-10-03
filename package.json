@@ -1,6 +1,6 @@
 {
   "name": "fhcc",
-  "version": "4.1.1",
+  "version": "4.1.2",
   "description": "Native Discord Control App für FALLEN HEAVEN",
   "author": "FALLEN HEAVEN",
   "productName": "FHCC",
@@ -103,6 +103,7 @@
       "artifactName": "FHCC-${version}-${arch}.${ext}"
     },
     "deb": {
+      "maintainer": "FALLEN HEAVEN",
       "depends": [
         "libgtk-3-0",
         "libnotify4",
