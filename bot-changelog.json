@@ -8,7 +8,8 @@
         "Neu: Der verschlüsselte Datenumzug (.fhccbackup) überträgt den kompletten Arbeitsstand auf einen anderen Rechner – Serverdaten, Bilder, Embed-Entwürfe, Einstellungen und Zugangsdaten. Der Import ist transaktional: Erst wenn Daten und Oberfläche übernommen sind, gilt er als abgeschlossen; sonst bleibt der vorherige Stand unangetastet.",
         "Fix: Die Inaktivitäts-Erinnerung zeigt „Letzte Nachricht / Letzter Call“ im deutschen Format „TT.MM.JJJJ um HH:MM Uhr“ und in der Zeitzone des Rechners, auf dem der Bot läuft. Die automatische Release-Prüfung hatte dafür eine feste Ortszeit hinterlegt.",
         "Neu: GitHub Actions baut Windows und Linux parallel zu jedem Versions-Tag und hängt beide Paketarten an dasselbe Release. Die vollständige Prüfung läuft einmal je Plattform in einem eigenen Schritt; schlägt etwas fehl, nennt die Meldung das betroffene Prüfskript und das komplette Protokoll wird als Artefakt gespeichert.",
-        "Neu: Das Repository-README zeigt Produktbild, Oberflächen-Galerie, Installations- und Sicherheitsübersicht inklusive Architekturdiagramm."
+        "Neu: Das Repository-README zeigt Produktbild, Oberflächen-Galerie, Installations- und Sicherheitsübersicht inklusive Architekturdiagramm.",
+        "Fix: Das ausgelieferte Programm enthält keine Entwicklungsdateien mehr. Der Bauvorgang packte bislang auch lokale Arbeitsordner und Agent-Sitzungen in die Anwendung, dadurch wurde das Paket rund 780 MB größer und enthielt Session-Kennungen. Windows- und Linux-Paket sind jetzt schlank und enthalten ausschließlich die zur Laufzeit benötigten Dateien."
       ]
     },
     {

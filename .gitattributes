@@ -1,0 +1,35 @@
+# Reproduzierbare Zeilenenden im Release-Build.
+#
+# Ohne diese Festlegung holt sich der Windows-Runner die Dateien per
+# core.autocrlf=true als CRLF, der Linux-Runner als LF. electron-builder packt
+# den Arbeitsordner 1:1 - dadurch unterscheiden sich die ausgelieferten
+# app.asar zwischen den Plattformen, und die Archivpruefung schlaegt fehl,
+# obwohl das Archiv in sich korrekt ist.
+* text=auto eol=lf
+
+# Windows-Batchdateien brauchen zwingend CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binaerdateien duerfen nie umgeschrieben werden.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mp3 binary
+*.mp4 binary
+*.node binary
+*.exe binary
+*.dll binary
+*.deb binary
+*.AppImage binary
+*.asar binary
+*.zip binary

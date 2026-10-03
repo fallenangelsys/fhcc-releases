@@ -41,6 +41,13 @@ for (const entry of files.slice(1)) {
       `${entry}: Archiv-Inhalt weicht ab (Archiv ${archived.length} Bytes, Quelle ${original.length} Bytes, `
       + `Archiv-Anfang ${JSON.stringify(archived.toString('utf8', 0, 60))})`
     );
+    continue;
+  }
+  // Gleicher Inhalt, aber unterschiedliche Zeilenenden zwischen Archiv und
+  // Arbeitsordner: dann stimmt die Byte-Pruefung, der Installer laeuft aber
+  // auf einem anderen Runner mit anderen EOLs. Das muss hier sichtbar sein.
+  if (process.env.FHCC_STRICT_EOL === '1' && !archived.equals(fs.readFileSync(source, 'utf8').replace(/\r\n/g, '\n'))) {
+    problems.push(`${entry}: Archiv nutzt andere Zeilenenden als die Quelle (CRLF/LF-Drift zwischen Runner und Checkout).`);
   }
 }
 
