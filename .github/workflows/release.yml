@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build ${{ matrix.label }}
+  verify:
+    name: Verify ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,10 +25,69 @@ jobs:
             os: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Die komplette Release-Verifikation laeuft genau einmal pro Plattform und
+      # wird im Log gesichert. Ohne dieses Log bleibt bei einem Abbruch nur
+      # "exit code 1" - ohne Hinweis, welches Skript und welche Assertion.
+      - name: Run release verification suite
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:release 2>&1 | tee verify.log
+
+      - name: Report verification failure
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### Release-Verifikation fehlgeschlagen"
+            echo '```text'
+            tail -n 60 verify.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Annotationen sind auch ohne Token ueber die oeffentliche API lesbar.
+          tail -n 40 verify.log | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -n 12 | while IFS= read -r line; do
+            printf '::error title=Release-Verifikation::%s\n' "${line//'%'/'%25'}"
+          done
+
+      - name: Upload verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Kein fhcc-*-Praefix: der Publish-Job laedt per Muster nur echte Pakete.
+          name: verify-log-${{ matrix.label }}
+          path: verify.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x64
+            os: windows-latest
+          - label: linux-x64
+            os: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: npm
@@ -40,6 +99,7 @@ jobs:
           expected="v$(node -p 'require("./package.json").version')"
           if [ "$GITHUB_REF_NAME" != "$expected" ]; then
             echo "Tag $GITHUB_REF_NAME does not match package version $expected" >&2
+            printf '::error title=Release-Version::Tag %s passt nicht zu package.json %s\n' "$GITHUB_REF_NAME" "$expected"
             exit 1
           fi
 
@@ -48,14 +108,43 @@ jobs:
 
       - name: Build Windows installer
         if: runner.os == 'Windows'
-        run: npm run build:win
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build:win:ci 2>&1 | tee build.log
 
       - name: Build Linux packages
         if: runner.os == 'Linux'
-        run: npm run build:linux
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build:linux:ci 2>&1 | tee build.log
+
+      - name: Report build failure
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### Build fehlgeschlagen"
+            echo '```text'
+            tail -n 60 build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          tail -n 40 build.log 2>/dev/null | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -n 12 | while IFS= read -r line; do
+            printf '::error title=Build::%s\n' "${line//'%'/'%25'}"
+          done
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.label }}
+          path: build.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload Windows build artifacts
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4
         with:
           name: fhcc-windows-x64
@@ -67,7 +156,7 @@ jobs:
           retention-days: 7
 
       - name: Upload Linux build artifacts
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && success()
         uses: actions/upload-artifact@v4
         with:
           name: fhcc-linux-x64
