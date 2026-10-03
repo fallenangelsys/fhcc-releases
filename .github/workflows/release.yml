@@ -119,29 +119,38 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          npm run build:win:ci > build.log 2>&1
+          # WICHTIG: Das Log darf nicht im Projektverzeichnis liegen.
+          # electron-builder packt dieses Verzeichnis, und eine Datei, die
+          # waehrend des Packens waechst, verschiebt die ASAR-Datensektion
+          # gegen die Header-Offsets - das Ergebnis ist ein Archiv, in dem
+          # jede Datei die Inhalte ihrer Nachbarn liefert.
+          mkdir -p dist/logs
+          npm run build:win:ci > dist/logs/build.log 2>&1
           status=$?
-          tail -n 200 build.log
+          tail -n 200 dist/logs/build.log
           exit $status
 
       - name: Build Linux packages
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          npm run build:linux:ci > build.log 2>&1
+          mkdir -p dist/logs
+          npm run build:linux:ci > dist/logs/build.log 2>&1
           status=$?
-          tail -n 200 build.log
+          tail -n 200 dist/logs/build.log
           exit $status
 
       - name: Report build failure
         if: failure()
         shell: bash
         run: |
-          tail -n 120 build.log > build-tail.log 2>/dev/null || : > build-tail.log
+          mkdir -p dist/logs
+          cp -f dist/logs/build.log build-tail.log 2>/dev/null || cp -f build.log build-tail.log 2>/dev/null || : > build-tail.log
+          tail -n 120 build-tail.log > build-tail.trimmed.log || : > build-tail.trimmed.log
           {
             echo "### Build fehlgeschlagen"
             echo '```text'
-            cat build-tail.log
+            cat build-tail.trimmed.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           # Die eigentliche Ursache steht oft in einer Zeile, die weder nach
@@ -149,13 +158,13 @@ jobs:
           # ab ..."). Diese Zeilen kommen deshalb zuerst und als EIGENE
           # Annotation - Annotationen mit "error" im Text werden sonst schon
           # vorher weggefiltert.
-          { grep -aE 'weicht ab|nicht im Archiv|fehlt im Arbeitsordner|PRUEFUNG fehlgeschlagen' build-tail.log || :; } \
+          { grep -aE 'weicht ab|nicht im Archiv|fehlt im Arbeitsordner|PRUEFUNG fehlgeschlagen' build-tail.trimmed.log || :; } \
             | tr -d '\r' | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++' | head -n 4 | while IFS= read -r line; do
             printf '::error title=Archiv-Inhalt::%s\n' "${line//'%'/'%25'}"
           done
           # GitHub zeigt hoechstens 10 Annotationen - deshalb zuerst die Zeilen,
           # die wie eine Fehlermeldung aussehen, erst danach das Log-Ende.
-          { grep -aiE 'error|fehler|⨯|fail|assert|exception|enoent|exited with' build-tail.log | tail -n 6; tail -n 4 build-tail.log; } \
+          { grep -aiE 'error|fehler|⨯|fail|assert|exception|enoent|exited with' build-tail.trimmed.log | tail -n 6; tail -n 4 build-tail.trimmed.log; } \
             | tr -d '\r' | sed '/^[[:space:]]*$/d' | awk '!seen[$0]++' | head -n 6 | while IFS= read -r line; do
             printf '::error title=Build::%s\n' "${line//'%'/'%25'}"
           done
@@ -165,7 +174,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log-${{ matrix.label }}
-          path: build.log
+          path: dist/logs/build.log
           if-no-files-found: warn
           retention-days: 7
 

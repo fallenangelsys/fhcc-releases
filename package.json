@@ -67,7 +67,9 @@
       "!dist/**",
       "!build/**",
       "!coverage/**",
-      "!**/*.map"
+      "!**/*.map",
+      "!*.log",
+      "!**/*.log"
     ],
     "appId": "de.fallenheaven.discordbot",
     "productName": "FHCC",
