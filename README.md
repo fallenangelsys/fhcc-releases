@@ -53,7 +53,7 @@ Konsole, kein Docker-Setup.
 | **Bot** | discord.js 14, lokaler Express-5-Dienst auf `127.0.0.1` |
 | **Speicher** | SQLite 13 (Node-API-Prebuilds), atomare JSON-Stores |
 | **Module** | 33 Feature-Module in `src/features/` |
-| **Tests** | Über 140 Smoke-Suiten, gebündelt in `npm run test:release` |
+| **Tests** | Über 80 Smoke-Suiten, gebündelt in `npm run test:release` |
 | **Pakete** | Windows NSIS-Installer, Linux AppImage, Linux `.deb` |
 
 Die App startet **nie von allein**, wenn sie auf einem fremden oder frisch
@@ -135,15 +135,18 @@ Arbeitsstand unangetastet.
 **AppImage** – keine Installation, kein Root:
 
 ```bash
-chmod +x FHCC-<version>-x64.AppImage
-./FHCC-<version>-x64.AppImage
+chmod +x FHCC-<version>-x86_64.AppImage
+./FHCC-<version>-x86_64.AppImage
 ```
 
 **Debian und Ubuntu (`.deb`):**
 
 ```bash
-sudo apt install ./FHCC-<version>-x64.deb
+sudo apt install ./FHCC-<version>-amd64.deb
 ```
+
+Die Dateinamen im Release folgen der Linux-Architektur (`x86_64` für das
+AppImage, `amd64` für das Debian-Paket), nicht der Bezeichnung `x64`.
 
 Voraussetzungen für eine Linux-VM:
 
@@ -169,8 +172,8 @@ Windows-Versionen aktualisieren sich über den Release-Kanal der App
 FHCC-Setup-<version>-x64.exe           Windows-Installer
 FHCC-Setup-<version>-x64.exe.blockmap  Differentialdaten
 latest.yml                             Version, Größe, SHA-512
-FHCC-<version>-x64.AppImage            Linux AppImage
-FHCC-<version>-x64.deb                 Linux Debian und Ubuntu
+FHCC-<version>-x86_64.AppImage         Linux AppImage
+FHCC-<version>-amd64.deb               Linux Debian und Ubuntu
 ```
 
 Linux-Versionen werden manuell aktualisiert: neues AppImage oder `.deb` einspielen.
