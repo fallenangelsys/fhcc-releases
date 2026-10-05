@@ -39,14 +39,17 @@ harness/
 __pycache__/
 *.pyc
 
-# Android: vom Build erzeugtes Laufzeitpaket (Kopie von src/ + node_modules, ~230 MB)
+# Android: vom Build erzeugtes Laufzeitpaket (Kopie von src/ + node_modules, ~190 MB)
 # Wird von android/prepare-runtime.mjs erzeugt und NIEMALS eingecheckt.
 android/app/src/main/assets/runtime/
+# Die 45 MB grosse Node-Laufzeit (libnode.so) gehoert ebenfalls nicht ins Repo.
+android/app/src/main/jniLibs/
 # Android-Build-Artefakte und lokale Geheimnisse
 android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+android/android-env.sh
 android/keystore.properties
 *.jks
 *.keystore

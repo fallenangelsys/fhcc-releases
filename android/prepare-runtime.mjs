@@ -14,9 +14,14 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Nur ausfuehren, wenn die Datei direkt gestartet wurde. Beim Import in Tests
+// darf nicht das ganze Laufzeitpaket kopiert werden.
+const isDirectRun = process.argv[1]
+  && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
 const projectRoot = path.resolve(here, '..');
 const assetsRuntime = path.join(here, 'app', 'src', 'main', 'assets', 'runtime');
 
@@ -25,6 +30,13 @@ const nodeIndex = args.indexOf('--node-dir');
 const providedNodeDir = nodeIndex >= 0 ? args[nodeIndex + 1] : '';
 
 const log = (message) => console.log(`[runtime] ${message}`);
+
+// arm64-v8a deckt jedes moderne Telefon ab. x86_64 ist fuer den Emulator da,
+// damit die App auch ohne Geraet geprueft werden kann.
+const ABIS = ['arm64-v8a', 'x86_64'];
+// e_machine laut ELF-Spezifikation. Damit wird verhindert, dass eine ARM-Binary
+// im x86_64-Ordner landet und beim Laden abstuerzt.
+const ELF_MACHINES = { 'arm64-v8a': 0xb7, 'x86_64': 0x3e };
 
 const copyDir = (from, to, filter) => {
   fs.mkdirSync(to, { recursive: true });
@@ -48,10 +60,9 @@ const isRunnableOnTarget = (filePath, stat) => {
 };
 
 const findBundledNode = () => {
-  const binDir = path.join(assetsRuntime, 'bin');
-  if (!fs.existsSync(binDir)) return null;
-  const entry = fs.readdirSync(binDir).find((name) => name.startsWith('node'));
-  return entry ? path.join(binDir, entry) : null;
+  const abiDir = path.join(here, 'app', 'src', 'main', 'jniLibs', 'arm64-v8a');
+  const soFile = path.join(abiDir, 'libnode.so');
+  return fs.existsSync(soFile) ? soFile : null;
 };
 
 const main = () => {
@@ -109,14 +120,12 @@ const main = () => {
     log(' node-vXX-linux-arm64 ist gegen /lib/ld-linux-aarch64.so.1 gelinkt.');
     log(' Android besitzt diesen Loader nicht, die Binary startet dort nie.');
     log('');
-    log(' Funktionierende Wege:');
-    log('  1. Termux auf dem Geraet installieren, dort "pkg install nodejs-lts",');
-    log('     und die Laufzeit aus Termux in assets/runtime/bin kopieren.');
-    log('  2. Eine statisch gelinkte Node-Binary fuer bionic/arm64 verwenden');
-    log('     (z. B. aus einem termux-ndk-Build).');
+    log(' Funktionierender Weg:');
+    log('  Das Termux-Paket fuer aarch64 herunterladen und die Binary');
+    log('  herausloesen. Sie ist gegen /system/bin/linker64 gelinkt und');
+    log('  braucht damit ausser Bionic nichts aus dem System.');
     log('');
-    log(' Lage mit beiden:');
-    log('   node android/prepare-runtime.mjs --node-dir <ordner>');
+    log('   node android/prepare-runtime.mjs --node-dir <ordner-mit-bin/node>');
     log('=============================================================================');
     return;
   }
@@ -133,49 +142,100 @@ const main = () => {
     }
 
     log('Kopiere Node-Laufzeit aus ' + providedNodeDir + ' ...');
-    fs.mkdirSync(path.join(assetsRuntime, 'bin'), { recursive: true });
-    fs.copyFileSync(sourceBinary, path.join(assetsRuntime, 'bin', 'node'));
-    const libSource = path.join(providedNodeDir, 'lib');
-    if (fs.existsSync(libSource)) {
-      copyDir(libSource, path.join(assetsRuntime, 'lib'), isRunnableOnTarget);
-    }
-    fs.chmodSync(path.join(assetsRuntime, 'bin', 'node'), 0o755);
+    // Bewusst KEINE Kopie nach assets/runtime/bin/node: von dort wuerde die App
+    // sie in ihr schreibbares Datenverzeichnis entpacken, und Android 10+
+    // verbietet dort das Ausfuehren (W^X fuer targetSdk >= 29). Zulaessig ist
+    // nur das nativeLibraryDir, in das das System Dateien aus lib/<abi>/*.so
+    // selbst entpackt und ausfuehrbar ablegt. Eine zweite Kopie in den Assets
+    // waere zudem 45 MB Ballast in der APK.
+    packageAsNativeLibrary(sourceBinary);
   }
 
-  // Gegenprobe: ist die Binary ueberhaupt fuer Android gebaut? Eine
-  // dynamisch gelinkte Linux-Binary faellt hier auf, bevor sie als APK-Test
-  // auf dem Geraet scheitert.
+  // Gegenprobe: ist die Binary ueberhaupt fuer Android gebaut? Entscheidend ist
+  // der Interpreter, nicht das Vorhandensein eines Interpolators.
+  //   statisch              -> auf Android lauffaehig
+  //   /system/bin/linker64  -> Bionic, genau das nutzen Termux-Builds: lauffaehig
+  //   ld-linux*/ld.so*      -> glibc, existiert auf Android nicht: zurueckweisen
   const bundled = findBundledNode();
   if (bundled) {
     const check = inspectElf(bundled);
-    if (check.interpreter) {
+    if (check.glibc) {
       log('');
-      log('FEHLER: Die Laufzeit ist dynamisch gelinkt (' + check.interpreter + ').');
-      log('       Android hat keinen Linux-Loader - sie startet auf dem Geraet nicht.');
-      log('       Bitte eine statisch gelinkte oder fuer bionic gebaute Binary nehmen.');
+      log('FEHLER: Die Laufzeit ist gegen glibc gelinkt (' + check.interpreter + ').');
+      log('       Android hat keinen Linux-Loader - sie startet dort nie.');
+      log('       Bitte eine gegen Bionic gebaute Binary nehmen (Termux-Build),');
+      log('       oder das ganze Laufzeitpaket weglassen und Termux auf dem');
+      log('       Geraet verwenden.');
       process.exitCode = 1;
       return;
     }
-    log('Laufzeit ist statisch gelinkt und damit fuer Android verwendbar.');
+    if (check.interpreter) {
+      log('Laufzeit ist gegen ' + check.interpreter + ' gelinkt (Bionic) - fuer Android verwendbar.');
+    } else {
+      log('Laufzeit ist statisch gelinkt und damit fuer Android verwendbar.');
+    }
   }
 
   log('Fertig. Naechster Schritt: cd android && gradlew assembleRelease');
 };
 
-/** Liest den ELF-Interpreter aus, um dynamisches Linking zu erkennen. */
+/**
+ * Legt die Node-Binary als <abi>/libnode.so unter src/main/jniLibs ab.
+ * AGP extrahiert sie beim Installieren nach nativeLibraryDir und setzt dort
+ * das Ausfuehrungsbit - der einzige Weg, auf dem der Prozess auf Android 10+
+ * ueberhaupt starten darf.
+ */
+const packageAsNativeLibrary = (sourceBinary) => {
+  const machine = readElfMachine(sourceBinary);
+  const abis = ABIS.filter((abi) => ELF_MACHINES[abi] === machine);
+  if (abis.length === 0) {
+    log('');
+    log('FEHLER: Die Binary passt zu keiner unterstuetzten ABI.');
+    log('       erwartet: ' + ABIS.map((a) => a + ' (e_machine 0x' + ELF_MACHINES[a].toString(16) + ')').join(' oder '));
+    log('       gefunden : 0x' + machine.toString(16));
+    process.exitCode = 1;
+    return;
+  }
+  const skipped = ABIS.filter((abi) => !abis.includes(abi));
+  const jniRoot = path.join(here, 'app', 'src', 'main', 'jniLibs');
+  for (const abi of abis) {
+    const dir = path.join(jniRoot, abi);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.copyFileSync(sourceBinary, path.join(dir, 'libnode.so'));
+  }
+  log(`Als native Bibliothek verpackt: ${abis.join(', ')} (libnode.so)`);
+  if (skipped.length) {
+    log(`  ausgelassen: ${skipped.join(', ')} - die Binary ist dafuer nicht gebaut,`);
+    log('  eine fremde Architektur im jniLibs-Ordner wuerde beim Laden abstuerzen.');
+  }
+};
+
+/** e_machine aus dem ELF-Header (Offset 18). */
+const readElfMachine = (filePath) => {
+  const buffer = fs.readFileSync(filePath);
+  if (buffer.length < 20 || buffer[0] !== 0x7f || buffer[1] !== 0x45) return -1;
+  return buffer.readUInt16LE(18);
+};
+
+/** Liest den ELF-Interpreter aus und erkennt, ob es ein glibc-Loader ist. */
 const inspectElf = (filePath) => {
   const buffer = fs.readFileSync(filePath);
   const header = readElfHeader(buffer);
-  if (!header) return { interpreter: null };
+  if (!header) return { interpreter: null, glibc: false };
   const { phoff, phentsize, phnum } = header;
   for (let i = 0; i < phnum; i += 1) {
     const o = phoff + i * phentsize;
     if (buffer.readUInt32LE(o) !== 3) continue; // PT_INTERP
     const offset = Number(buffer.readBigUInt64LE(o + 8));
     const size = Number(buffer.readBigUInt64LE(o + 32));
-    return { interpreter: buffer.subarray(offset, offset + size).toString('utf8').replace(/\0/g, '').trim() };
+    const interpreter = buffer.subarray(offset, offset + size).toString('utf8').replace(/\0/g, '').trim();
+    // glibc-Loader existieren unter Android nicht. Bionics linker64 ist der
+    // regulaere Weg (Termux) und muss durchgelassen werden.
+    const glibc = /(ld-linux|ld\.so|ld64\.so|libc\.so)/i.test(interpreter)
+      && !/linker/i.test(interpreter);
+    return { interpreter, glibc };
   }
-  return { interpreter: null };
+  return { interpreter: null, glibc: false };
 };
 
 const readElfHeader = (buffer) => {
@@ -186,4 +246,6 @@ const readElfHeader = (buffer) => {
   return { phoff, phentsize, phnum };
 };
 
-main();
+if (isDirectRun) main();
+
+export { inspectElf, isRunnableOnTarget };

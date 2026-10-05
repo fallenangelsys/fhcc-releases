@@ -20,6 +20,8 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import org.json.JSONObject;
+
 /**
  * FALLEN HEAVEN Control Center fuer Android.
  *
@@ -190,7 +192,7 @@ public class MainActivity extends AppCompatActivity {
         return response.toString();
     }
 
-    /** Termux installieren? Dann kann die Laufzeit auf dem Geraet liegen. */
+    /** Liegt die mitgelieferte Laufzeit an der Stelle vor, von der Android sie startet? */
     @android.webkit.JavascriptInterface
     public boolean fhHasRuntime() {
         RuntimeProcess probe = new RuntimeProcess(this);
@@ -306,9 +308,12 @@ public class MainActivity extends AppCompatActivity {
         android.widget.TextView warning = findViewById(R.id.splash_warning);
 
         if (status != null) {
-            status.setText("Der Bot antwortet nicht.\n\n"
-                    + "Termux installieren und dort einmalig ausfuehren:\n"
-                    + "  pkg install nodejs-lts");
+            // Kein Termux-Hinweis mehr: die Laufzeit liegt in der APK und wird
+            // aus dem nativeLibraryDir gestartet. Ein fehlgeschlagener Start
+            // liegt fast immer an der Prozesskiller-Einstellung, nicht am Aufbau.
+            status.setText("Der Bot antwortet nach 60 s nicht.\n\n"
+                    + "Laeuft die App ueberhaupt? Falls nicht: Neu starten und "
+                    + "den Knopf \"Bot am Laufen halten\" benutzen.");
         }
         if (retry != null) retry.setVisibility(View.VISIBLE);
         if (battery != null) battery.setVisibility(View.VISIBLE);

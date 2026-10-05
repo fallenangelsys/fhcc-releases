@@ -17,11 +17,20 @@ import java.util.List;
  * Startet den FHCC-Node-Prozess auf dem Geraet und wartet, bis er wirklich
  * bereit ist.
  *
- * Der Weg ueber Termux ist der vorgesehene: Termux paketiert Node gegen
- * Bionic, also genau fuer Android. Die offizielle Linux-Binary von nodejs.org
- * laeuft hier nicht, weil sie /lib/ld-linux-aarch64.so.1 erwartet - diesen
- * Loader hat Android nicht. Eine eigene in der APK mitgelieferte Laufzeit ist
- * moeglich, aber nur als statisch gelinkte Binary.
+ * Die Laufzeit liegt als libnode.so im nativeLibraryDir der installierten App.
+ * Das ist der einzige Ort, von dem aus eine App unter Android 10+ (targetSdk 29)
+ * ueberhaupt ein Programm starten darf - aus dem schreibbaren Datenverzeichnis
+ * verbietet Android das Ausfuehren (W^X). Das System extrahiert Dateien aus
+ * lib/<abi>/*.so beim Installieren selbst und legt sie ausfuehrbar ab.
+ *
+ * Termux als Alternative wurde entfernt: Android gibt der Termux-App keinen
+ * Zugriff auf deren privates Verzeichnis. Weder kann sie unsere Dateien lesen
+ * noch koennen wir ihre schreiben, weder ueber Dateipfade noch ueber die
+ * RunCommandService-Schnittstelle. Ein Fremdprozess kann die Daten also weder
+ * finden noch ablegen.
+ *
+ * Die JavaScript-Dateien liegen dagegen weiterhin im Datenverzeichnis - nur
+ * ausfuehrbare Dateien sind dort verboten.
  */
 public class RuntimeProcess {
 
@@ -46,7 +55,7 @@ public class RuntimeProcess {
 
     /** Liegt eine nutzbare Laufzeit vor? */
     public boolean hasRuntime() {
-        return findBundledNode() != null || findTermuxNode() != null;
+        return nativeNode() != null;
     }
 
     /**
@@ -61,30 +70,22 @@ public class RuntimeProcess {
             ensureDirectories();
             restoreSecrets();
 
-            // Termux zuerst: das ist der realistische Weg auf einem Geraet.
-            // Eine mitgelieferte Laufzeit gibt es nur, wenn sie statisch
-            // gelinkt ist - prepare-runtime.mjs prueft das beim Bauen.
-            String[] termux = findTermuxNode();
-            File bundled = findBundledNode();
-            List<String> command;
-
-            if (termux != null) {
-                // Termux-Dateien liegen im app_home. Der Bot schreibt aber in
-                // unseren App-Speicher, deshalb bleibt das Arbeitsverzeichnis hier.
-                command = new ArrayList<>(Arrays.asList(
-                        termux[0],
-                        new File(rootDir(), "src/index.js").getAbsolutePath()));
-            } else if (bundled != null) {
-                command = new ArrayList<>(Arrays.asList(
-                        bundled.getAbsolutePath(),
-                        new File(rootDir(), "src/index.js").getAbsolutePath()));
-            } else {
-                return "Keine Node-Laufzeit gefunden.\n\n"
-                        + "Termux installieren und dort einmalig ausfuehren:\n"
-                        + "  pkg install nodejs-lts\n\n"
-                        + "Die Laufzeit muss gegen Android (Bionic) gebaut sein - "
-                        + "die Linux-Binary von nodejs.org startet hier nicht.";
+            File node = nativeNode();
+            if (node == null) {
+                return "Die Laufzeit liegt nicht im nativeLibraryDir.\n\n"
+                        + "Die APK wurde ohne passende ABI gebaut oder die "
+                        + "Installation ist unvollstaendig. Neu installieren "
+                        + "loest das.";
             }
+
+            if (!extractRuntimeSources()) {
+                return "Backend und Oberflaeche konnten nicht entpackt werden.\n\n"
+                        + "Bitte die App deinstallieren und neu installieren.";
+            }
+
+            List<String> command = new ArrayList<>(Arrays.asList(
+                    node.getAbsolutePath(),
+                    new File(rootDir(), "src/index.js").getAbsolutePath()));
 
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.directory(rootDir());
@@ -94,7 +95,9 @@ public class RuntimeProcess {
             process = builder.start();
             startedAt = System.currentTimeMillis();
             startLogPump();
-            Log.i(TAG, "Prozess gestartet, PID " + process.pid());
+            // Kein process.pid(): die Methode gibt es in Androids
+            // java.lang.Process nicht, auch nicht ab API 26.
+            Log.i(TAG, "Prozess gestartet via " + node.getAbsolutePath());
 
             String waitError = waitUntilReady(45_000);
             if (waitError != null) {
@@ -155,7 +158,7 @@ public class RuntimeProcess {
         env.put("LANG", "de_DE.UTF-8");
     }
 
-    private void ensureDirectories() {
+    private void ensureDirectories() throws IOException {
         File runtime = new File(context.getFilesDir(), "runtime");
         if (!runtime.exists() && !runtime.mkdirs()) {
             throw new IOException("Laufzeitordner konnte nicht angelegt werden.");
@@ -174,75 +177,87 @@ public class RuntimeProcess {
         return context.getFilesDir();
     }
 
-    private File findBundledNode() {
-        File binary = new File(rootDir(), "bin/node");
+    /**
+     * Die mitgelieferte Laufzeit aus dem nativeLibraryDir.
+     *
+     * Bewusst nicht aus dem Datenverzeichner und nicht aus den Assets: Android
+     * verbietet dort seit Version 10 das Ausfuehren (W^X fuer targetSdk >= 29).
+     * Ausfuehrbar sind nur Dateien, die das System selbst aus lib/<abi>/*.so
+     * entpackt und in das nativeLibraryDir legt.
+     */
+    private File nativeNode() {
+        String nativeDir = context.getApplicationInfo().nativeLibraryDir;
+        if (nativeDir == null) return null;
+        File binary = new File(nativeDir, "libnode.so");
         if (!binary.exists()) {
-            // Noch nicht entpackt? Dann aus dem Asset holen.
-            if (!extractBundledRuntime()) return null;
+            Log.w(TAG, "libnode.so fehlt in " + nativeDir);
+            return null;
         }
-        if (!binary.exists()) return null;
-        binary.setExecutable(true);
+        binary.setExecutable(true, true);
         return binary;
     }
 
     /**
-     * Entpackt die Laufzeit aus dem APK. Wird nur einmal gebraucht, danach
-     * existiert bin/node im App-Speicher.
+     * Entpackt Backend und Oberflaeche aus den Assets in den App-Speicher.
+     *
+     * Nur JavaScript und Daten - ausfuehrbare Dateien duerfen dort nicht liegen,
+     * siehe nativeNode(). Nach dem ersten Start genuegt die Startdatei als
+     * Merkmal, das Ganze wird nicht erneut kopiert.
      */
-    private boolean extractBundledRuntime() {
-        try (InputStream asset = context.getAssets().open("runtime/bin/node")) {
-            File target = new File(rootDir(), "bin/node");
-            File parent = target.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs()) return false;
-            try (FileOutputStream out = new FileOutputStream(target)) {
-                byte[] buffer = new byte[64 * 1024];
-                int read;
-                while ((read = asset.read(buffer)) != -1) {
-                    out.write(buffer, 0, read);
+    private boolean extractRuntimeSources() {
+        if (new File(rootDir(), "src/index.js").exists()) return true;
+        Log.i(TAG, "Entpacke Backend und Oberflaeche aus den Assets ...");
+        return copyAssetTree("runtime", rootDir());
+    }
+
+    private boolean copyAssetTree(String assetPath, File targetDir) {
+        try {
+            String[] children = context.getAssets().list(assetPath);
+            if (children == null || children.length == 0) {
+                return copyAssetFile(assetPath, targetDir);
+            }
+            if (!targetDir.exists() && !targetDir.mkdirs()) return false;
+            for (String child : children) {
+                if (!copyAssetTree(assetPath + "/" + child, new File(targetDir, child))) {
+                    return false;
                 }
             }
-            target.setExecutable(true);
-            return target.exists();
+            return true;
         } catch (IOException error) {
-            // Kein Asset vorhanden - das ist der Normalfall, wenn Termux genutzt wird.
-            Log.i(TAG, "Keine gebuendelte Laufzeit im APK: " + error.getMessage());
+            Log.e(TAG, "Assets konnten nicht entpackt werden: " + assetPath, error);
             return false;
         }
     }
 
-    /**
-     * Termux als Quelle. Der Pfad ist fest, weil Termux sein Home unter
-     * /data/data/com.termux/files/home ablegt. Zurueckgegeben werden Pfad
-     * zur Laufzeit und der Pfad zum Arbeitsverzeichnis von Termux.
-     */
-    private String[] findTermuxNode() {
-        File home = new File("/data/data/" + TERMUX_PACKAGE + "/files/home");
-        if (!home.exists()) return null;
-
-        File[] candidates = {
-                new File(home, "usr/bin/node"),
-                new File(home, "usr/local/bin/node")
-        };
-        for (File candidate : candidates) {
-            if (candidate.exists()) {
-                candidate.setExecutable(true);
-                return new String[]{candidate.getAbsolutePath(), home.getAbsolutePath()};
+    private boolean copyAssetFile(String assetPath, File target) {
+        File parent = target.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) return false;
+        try (InputStream asset = context.getAssets().open(assetPath);
+             FileOutputStream out = new FileOutputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = asset.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
             }
+            return true;
+        } catch (IOException error) {
+            Log.e(TAG, "Asset konnte nicht kopiert werden: " + assetPath, error);
+            return false;
         }
-        return null;
     }
 
-    /** Termux ist installiert - dann kann der Nutzer dort nodejs-lts nachinstallieren. */
+    /** Nur noch zur Anzeige in der Oberflaeche; der Start nutzt Termux nicht. */
     public boolean isTermuxInstalled() {
         try {
             context.getPackageManager().getPackageInfo(TERMUX_PACKAGE, 0);
             return true;
         } catch (Exception ignored) {
-            return new File("/data/data/" + TERMUX_PACKAGE + "/files/home").exists();
+            return false;
         }
     }
 
     /**
+
      * Schreibt Zugangsdaten als .env neben die Daten. Sie kommen aus dem
      * Android-Keystore und werden hier nur im Klartext abgelegt, weil der
      * Node-Prozess sie sonst nicht lesen kann. Datei liegt im privaten

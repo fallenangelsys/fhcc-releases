@@ -8,13 +8,9 @@ buildscript {
     }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
+// Repositories stehen ausschliesslich in settings.gradle. Dort steht
+// FAIL_ON_PROJECT_REPOS, und jede Deklaration hier wuerde den Build abbrechen
+// lassen ("repository 'Google' was added by build file").
 tasks.register('clean', Delete) {
     delete rootProject.layout.buildDirectory
 }

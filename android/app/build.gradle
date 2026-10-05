@@ -13,12 +13,46 @@ android {
         targetSdk 35
         versionCode 40103
         versionName '4.1.3'
+
+        ndk {
+            // Nur die ABI, fuer die eine Bionic-Node-Laufzeit mitgeliefert wird.
+            // Eine arme in einem anderen Ordner wuerde beim Laden abstuerzen,
+            // deshalb filtert prepare-runtime.mjs nach e_machine.
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    // signingConfigs MUSS vor buildTypes stehen. Groovy wertet die Bloecke in
+    // Quelltextreihenfolge aus; andersherum existiert signingConfigs.release beim
+    // Zugriff in buildTypes noch nicht und der Build bricht mit
+    // "Could not get unknown property 'release'" ab.
+    def releaseKeystoreProps = rootProject.file('keystore.properties')
+    def hasReleaseKeystore = releaseKeystoreProps.exists()
+
+    signingConfigs {
+        release {
+            // Werte kommen aus android/keystore.properties, das NICHT
+            // eingecheckt wird. Ohne Datei gibt es bewusst nur Debug-Builds.
+            if (hasReleaseKeystore) {
+                def props = new Properties()
+                releaseKeystoreProps.withInputStream { props.load(it) }
+                // Relativ zu rootProject, nicht zu :app. file() wuerde sonst
+                // in android/app/ suchen, wo das .jks nicht liegt.
+                storeFile rootProject.file(props['storeFile'])
+                storePassword props['storePassword']
+                keyAlias props['keyAlias']
+                keyPassword props['keyPassword']
+            }
+        }
     }
 
     buildTypes {
         release {
-            // Eigener Keystore: FHCC-Android-Release.jks
-            signingConfig signingConfigs.release
+            // Ohne Keystore nicht signieren: der Release-Build wuerde sonst mit
+            // dem Debug-Schluessel erzeugt oder gar nicht erst erzeugt.
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -29,25 +63,14 @@ android {
         }
     }
 
-    signingConfigs {
-        release {
-            // Werte kommen aus android/keystore.properties, das NICHT
-            // eingecheckt wird. Ohne Datei ist nur ein Debug-Build moeglich.
-            def propsFile = rootProject.file('keystore.properties')
-            if (propsFile.exists()) {
-                def props = new Properties()
-                propsFile.withInputStream { props.load(it) }
-                storeFile file(props['storeFile'])
-                storePassword props['storePassword']
-                keyAlias props['keyAlias']
-                keyPassword props['keyPassword']
-            }
-        }
-    }
-
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        // Ausgeschaltet, aber SetupBridge/RuntimeService nutzen die Konstanten.
+        buildConfig true
     }
 
     // Die Node-Laufzeit wird als Asset mitgeliefert und beim ersten Start in
@@ -60,10 +83,13 @@ android {
     }
 
     packagingOptions {
-        // Binaries der Node-Laufzeit muessen unveraendert bleiben.
+        // libnode.so ist eine vollstaendige Binary, keine gewoehnliche
+        // Bibliothek: sie darf weder gestrippt noch verschluesselt werden.
+        // useLegacyPackaging true laesst sie unveraendert in der APK, das
+        // System entpackt sie selbst ins nativeLibraryDir.
         jniLibs {
-            useLegacyPackaging false
-            keepDebugSymbols += '**/*.so'
+            useLegacyPackaging true
+            keepDebugSymbols += '**/libnode.so'
         }
         resources {
             excludes += ['META-INF/**']
@@ -80,4 +106,18 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.core:core:1.13.1'
     implementation 'androidx.webkit:webkit:1.12.1'
+
+    // androidx zieht kotlin-stdlib 1.8.22, einzelne Bibliotheken bringen
+    // kotlin-stdlib-jdk7/jdk8 1.6.21 mit. Ab Kotlin 1.8 sind diese Klassen in
+    // kotlin-stdlib aufgegangen, beide Varianten zusammen fuehren zu
+    // "Duplicate class kotlin.collections.jdk8.CollectionsJDK8Kt".
+    // Der Constraint hebt sie auf dieselbe Version wie kotlin-stdlib.
+    constraints {
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22') {
+            because 'muss zur Version von kotlin-stdlib passen, sonst Duplicate-Klassen'
+        }
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22') {
+            because 'muss zur Version von kotlin-stdlib passen, sonst Duplicate-Klassen'
+        }
+    }
 }
