@@ -51,5 +51,7 @@ android/app/build/
 android/local.properties
 android/android-env.sh
 android/keystore.properties
+# Gebaute APKs gehoeren nicht ins Git (die groesste ist ueber 88 MB)
+*.apk
 *.jks
 *.keystore
