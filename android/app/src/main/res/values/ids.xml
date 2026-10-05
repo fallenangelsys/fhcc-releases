@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Von MainActivity fuer den Startbildschirm benoetigt. -->
+    <item name="splash_status" type="id" />
+    <item name="splash_retry" type="id" />
+    <item name="splash_battery" type="id" />
+    <item name="splash_warning" type="id" />
+</resources>

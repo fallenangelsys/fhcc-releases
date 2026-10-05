@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dunkel wie die App-Oberflaeche, damit beim Start nichts weiss aufblitzt. -->
+    <style name="Theme.FHCC" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">#06071C</item>
+        <item name="android:navigationBarColor">#06071C</item>
+        <item name="android:windowBackground">#06071C</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { createRequire } from 'node:module';
-import Database from 'better-sqlite3';
+import { createSqliteDatabase } from './runtime/sqliteAdapter.js';
 
 const requireFromStore = createRequire(import.meta.url);
 
@@ -353,7 +353,7 @@ const bindLifecycle = () => {
 const initializeDatabase = () => {
   if (database) return database;
   fsSync.mkdirSync(path.dirname(DATABASE_FILE), { recursive: true });
-  database = new Database(DATABASE_FILE, { timeout: 15_000 });
+  database = createSqliteDatabase(DATABASE_FILE, { timeout: 15_000 });
   database.pragma('journal_mode = WAL');
   database.pragma('synchronous = NORMAL');
   database.pragma('foreign_keys = ON');
@@ -1808,16 +1808,35 @@ const runVacuumInWorker = (workerData) => new Promise((resolve) => {
     settled = true;
     resolve(result);
   };
+  // Der Worker laedt seine SQLite-Bibliothek selbst. Auf Android gibt es das
+  // native better-sqlite3 nicht, deshalb wird dort node:sqlite verwendet.
+  // Der Code laeuft als ES-Modul, weil das Projekt "type": "module" setzt.
   const code = `
-    const { parentPort, workerData } = require('node:worker_threads');
-    const Database = require(workerData.betterSqlite3Path);
+    import { parentPort, workerData } from 'node:worker_threads';
+    import { createRequire } from 'node:module';
+    const require = createRequire(import.meta.url);
+    const open = (file) => {
+      if (workerData.sqliteFlavour === 'node') {
+        const { DatabaseSync } = require('node:sqlite');
+        const db = new DatabaseSync(file);
+        db.pragma = (statement) => {
+          const text = String(statement || '').trim();
+          if (!text || text.includes('=')) return [];
+          return db.prepare('PRAGMA ' + text).all();
+        };
+        return db;
+      }
+      const Database = require(workerData.betterSqlite3Path);
+      return new Database(file, { readonly: false });
+    };
     let db;
     try {
-      db = new Database(workerData.databaseFile, { readonly: false });
+      db = open(workerData.databaseFile);
       db.pragma('busy_timeout = 30000');
       const started = Date.now();
       db.exec('VACUUM');
-      const afterPageCount = Number(db.pragma('page_count', { simple: true }) || 0);
+      const pageRows = db.pragma('page_count');
+      const afterPageCount = Number(pageRows?.[0]?.page_count ?? pageRows ?? 0);
       try { db.close(); } catch {}
       parentPort.postMessage({ ran: true, tookMs: Date.now() - started, afterPageCount });
     } catch (error) {
@@ -1825,9 +1844,22 @@ const runVacuumInWorker = (workerData) => new Promise((resolve) => {
       parentPort.postMessage({ ran: false, reason: 'error', message: String(error?.message || error) });
     }
   `;
+  const preferNodeSqlite = String(process.env.FH_SQLITE_FLAVOUR || '').toLowerCase() === 'node';
+  let betterSqlite3Path = '';
+  if (!preferNodeSqlite) {
+    try {
+      betterSqlite3Path = requireFromStore.resolve('better-sqlite3');
+    } catch {
+      betterSqlite3Path = '';
+    }
+  }
   const worker = new Worker(code, {
     eval: true,
-    workerData: { ...workerData, betterSqlite3Path: requireFromStore.resolve('better-sqlite3') }
+    workerData: {
+      ...workerData,
+      betterSqlite3Path,
+      sqliteFlavour: betterSqlite3Path ? 'better' : 'node'
+    }
   });
   const watchdog = setTimeout(() => {
     settle({ ran: false, reason: 'timeout' });

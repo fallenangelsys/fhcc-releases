@@ -181,7 +181,7 @@ import {
 import { migrateDataGenerationV4 } from './runtime/dataGenerationV4.js';
 import crypto from 'node:crypto';
 import { atomicWriteJson } from './runtime/atomicJsonStore.js';
-import { mountDashboard } from './dashboard.js';
+import { mountDashboard, createDashboardSessionValidator } from './dashboard.js';
 import { getLiveDiagnosticsSnapshot, recordDiagnosticError, recordInteractionTiming, recordRateLimit, runTrackedOperation } from './runtime/liveDiagnostics.js';
 import { createFeatureDispatcher } from './runtime/featureDispatcher.js';
 import { patchInteractionForTimeoutSafety } from './runtime/interactionTimeoutGuard.js';
@@ -3640,6 +3640,16 @@ app.use(express.json({ limit: '40mb' }));
 app.use('/public', express.static(PUBLIC_DIR));
 app.use(express.static(PUBLIC_DIR));
 
+// Die eigentliche Control-Center-Oberfläche liegt in desktop/renderer und wird
+// von Electron über file:// geladen. Für den mobilen Client wird dasselbe
+// Verzeichnis per HTTP ausgeliefert – alle Asset-Pfade dort sind bereits
+// relativ, dadurch funktioniert es unverändert. Dadurch bekommt das Handy exakt
+// dieselbe UI, ohne dass sie dupliziert oder neu gebaut werden muss.
+const RENDERER_DIR = path.join(APP_ROOT, 'desktop', 'renderer');
+if (existsSync(RENDERER_DIR)) {
+  app.use('/app', express.static(RENDERER_DIR, { index: 'index.html', extensions: ['html'] }));
+}
+
 // Timing-sicherer Token-Vergleich (konstante Laufzeit, kein früher Abbruch).
 const controlTokenMatches = (expectedToken, suppliedToken) => {
   if (!expectedToken || !suppliedToken) return false;
@@ -3688,6 +3698,29 @@ const requireDesktopSecure = (req, res, next) => {
   return next();
 };
 
+// Der mobile Client (Android/PWA) besitzt den Control-Token nicht – der bleibt
+// auf dem PC. Er meldet sich stattdessen mit derselben Discord-Sitzung an wie
+// jeder andere Dashboard-Nutzer. Deshalb gilt hier: Desktop-Token ODER gültiges
+// Dashboard-JWT.
+const validateDashboardSession = createDashboardSessionValidator(process.env.DASHBOARD_SESSION_SECRET || '');
+
+const requireDesktopOrSession = (req, res, next) => {
+  const expectedToken = String(process.env.FALLEN_HEAVEN_CONTROL_TOKEN || '');
+  const suppliedToken = String(req.get('x-fallen-heaven-control') || '');
+  if (req.get('x-fallen-heaven-app') === 'desktop-control-v2' && controlTokenMatches(expectedToken, suppliedToken)) {
+    res.set('x-fallen-heaven-instance', String(process.env.FALLEN_HEAVEN_INSTANCE_ID || 'unknown'));
+    return next();
+  }
+
+  const session = validateDashboardSession(req);
+  if (!session.ok) {
+    return res.status(session.status).json({ ok: false, message: session.error });
+  }
+  req.dashboardUser = session.payload;
+  res.set('x-fallen-heaven-instance', String(process.env.FALLEN_HEAVEN_INSTANCE_ID || 'mobile'));
+  return next();
+};
+
 app.get('/api/app/health', requireDesktopProbe, (_req, res) => {
   const memory = process.memoryUsage();
   const discordReady = client.isReady();
@@ -3726,13 +3759,13 @@ app.get('/api/app/diagnostics', requireDesktopSecure, async (_req, res) => {
   }
 });
 
-app.get('/api/app/guild/:guildId/forum-cleaner', requireDesktopSecure, (req, res) => {
+app.get('/api/app/guild/:guildId/forum-cleaner', requireDesktopOrSession, (req, res) => {
   const guild = client.guilds.cache.get(String(req.params.guildId || ''));
   if (!guild) return res.status(404).json({ ok: false, error: 'Server wurde nicht gefunden.' });
   return res.json({ ok: true, status: getForumCleanerSnapshot(guild.id) });
 });
 
-app.get('/api/app/guild/:guildId/emoji-rename-preview', requireDesktopSecure, async (req, res) => {
+app.get('/api/app/guild/:guildId/emoji-rename-preview', requireDesktopOrSession, async (req, res) => {
   try {
     const guild = client.guilds.cache.get(String(req.params.guildId || ''));
     if (!guild) return res.status(404).json({ ok: false, error: 'Server wurde nicht gefunden.' });
@@ -4789,9 +4822,14 @@ app.get(/.*/, (req, res, next) => {
   return res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
+// Standard bleibt bewusst Loopback: ohne FALLEN_HEAVEN_BIND_HOST ist der Server
+// nur lokal erreichbar. Für den mobilen Client wird die Variable gesetzt – in der
+// Praxis hinter einem VPN oder Reverse Proxy, niemals offen ins Internet.
+const BIND_HOST = String(process.env.FALLEN_HEAVEN_BIND_HOST || '127.0.0.1').trim() || '127.0.0.1';
+
 const startHttpListener = (port, label) => {
-  const server = app.listen(port, '127.0.0.1', () => {
-    console.log(`${label} erreichbar: http://127.0.0.1${Number(port) === 80 ? '' : `:${port}`}`);
+  const server = app.listen(port, BIND_HOST, () => {
+    console.log(`${label} erreichbar: http://${BIND_HOST}${Number(port) === 80 ? '' : `:${port}`}`);
   });
 
   server.on('error', (error) => {

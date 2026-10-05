@@ -38,3 +38,15 @@ harness/
 # Python-Bytecode-Cache
 __pycache__/
 *.pyc
+
+# Android: vom Build erzeugtes Laufzeitpaket (Kopie von src/ + node_modules, ~230 MB)
+# Wird von android/prepare-runtime.mjs erzeugt und NIEMALS eingecheckt.
+android/app/src/main/assets/runtime/
+# Android-Build-Artefakte und lokale Geheimnisse
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+*.jks
+*.keystore

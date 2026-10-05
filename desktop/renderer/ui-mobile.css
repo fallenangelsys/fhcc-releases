@@ -1,0 +1,457 @@
+/*
+ * Mobile-Ebene fuer Android / PWA.
+ *
+ * Die Oberflaeche ist ab etwa 980 px Breite gebaut. Darunter blendet
+ * ui-aurora.css die Navigation komplett aus und stapelt die Raster. Auf einem
+ * S24 Ultra (412 px im Hochformat) fehlt damit nicht nur Breite, sondern jede
+ * Navigation - und die Desktop-Raster liegen weiterhin.
+ *
+ * Diese Datei wird deshalb per media="(max-width: 860px)" nur auf schmalen
+ * Displays geladen. Sie liegt als letzte Ebene im Kaskadenbaum und ist
+ * spezifischer als die Desktop-Regeln (body.authenticated:not(.public-home)),
+ * damit sie bei gleicher Spezifitaet ueber !important gewinnt.
+ * Desktop-Breiten ab 861 px bleiben unberuehrt.
+ */
+
+/* ---------- Grundlagen: Fensterlaeste und Fenstergroesse ---------- */
+
+@media (max-width: 860px) {
+  /* Fensterknöpfe gibt es auf dem Telefon nicht. */
+  .window-actions .window-button:not(.theme-toggle) {
+    display: none !important;
+  }
+
+  /* Die Titelleiste ist auf dem Telefon nur noch Statuszeile. */
+  .titlebar {
+    --fh-titlebar: 44px;
+    min-height: 44px;
+    padding: 0 14px;
+    gap: 10px;
+  }
+
+  .titlebar .title-drag {
+    -webkit-app-region: no-drag;
+    font-size: 12px;
+    gap: 10px;
+  }
+
+  .titlebar .title-drag span {
+    display: none;
+  }
+
+  /* Dekorative Atmosphaere kostet auf dem Telefon nur Leistung. */
+  .access-atmosphere,
+  .access-orb,
+  .access-grid,
+  .access-emoji-field {
+    display: none !important;
+  }
+}
+
+/* ---------- Zentraler Bausteine ---------- */
+
+@media (max-width: 860px) {
+  :root {
+    --fh-gutter: 14px;
+    --fh-radius: 16px;
+  }
+
+  /* Alle Raster, die am Desktop nebeneinander stehen, werden eine Spalte. */
+  .fh-main,
+  .fh-metrics,
+  .module-layout,
+  .community-shell,
+  .studio-shell,
+  .structure-layout,
+  .member-management-layout,
+  .studio-function-set-grid,
+  .form-grid,
+  .system-health-grid,
+  .fh-service-controls {
+    grid-template-columns: 1fr !important;
+  }
+
+  .fh-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  /* Links/Nebenspalten ueber dem Hauptbereich stapeln. */
+  .module-layout > aside,
+  .community-menu,
+  .studio-preview-column,
+  .member-detail {
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Karten duerfen die Breite nutzen und nicht ueberlaufen. */
+  .fh-card,
+  .fh-metric,
+  .module-card,
+  .fh-service,
+  .fh-quick,
+  .fh-timeline,
+  .panel,
+  .form-section,
+  .module-config,
+  .discord-window {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Lange Discord-IDs, Kanallinks und Nutzernamen brechen um. */
+  .member-table-row,
+  .message-list,
+  .embed-preview,
+  .preview-embed-stack,
+  .log-view,
+  .system-log {
+    min-width: 0 !important;
+  }
+
+  table,
+  .member-table {
+    min-width: 0 !important;
+  }
+}
+
+/* ---------- Navigation ----------
+ *
+ * Wichtig: Die Desktop-Kopfzeile ist inzwischen eine linke Sidebar. Ihre Regeln
+ * stehen in ui-base.css mit !important und als Grid-Spalte (grid-column/row).
+ * Auf dem Telefon wird sie deshalb aus dem Grid genommen und zu einer
+ * unteren, horizontal scrollbaren Leiste gemacht - alles mit !important,
+ * weil die Desktop-Regeln sonst gewinnen.
+ */
+
+@media (max-width: 860px) {
+  body.authenticated:not(.public-home) .main-stage {
+    display: block !important;
+  }
+
+  body.authenticated:not(.public-home) .app-nav {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 60px !important;
+    margin: 0 !important;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+    border-right: 0 !important;
+    border-top: 1px solid rgba(255, 255, 255, .1) !important;
+    border-radius: 0 !important;
+    border-radius: 18px 18px 0 0 !important;
+    background: rgba(9, 10, 32, .97) !important;
+    backdrop-filter: blur(22px);
+    box-shadow: 0 -14px 44px rgba(0, 0, 0, .45) !important;
+    overflow: visible !important;
+    z-index: 90 !important;
+  }
+
+  /* Die Sidebar ist jetzt eine Leiste: Marke und Konto raeumen auf. */
+  body.authenticated:not(.public-home) .app-brand,
+  .app-brand {
+    display: none !important;
+  }
+
+  body.authenticated:not(.public-home) .app-account {
+    display: none !important;
+  }
+
+  body.authenticated:not(.public-home) .command-palette-trigger,
+  .command-palette-trigger {
+    display: none !important;
+  }
+
+  body.authenticated:not(.public-home) .modern-recent {
+    display: none !important;
+  }
+
+  /* Sieben Bereiche nebeneinander, horizontal scrollbar. */
+  body.authenticated:not(.public-home) .app-links,
+  .app-links {
+    display: flex !important;
+    flex: 1 1 100% !important;
+    flex-direction: row !important;
+    align-items: stretch !important;
+    gap: 6px !important;
+    width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    padding: 2px 2px 4px !important;
+    margin: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .app-links::-webkit-scrollbar {
+    display: none;
+  }
+
+  body.authenticated:not(.public-home) .app-link,
+  .app-link {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    gap: 3px !important;
+    min-height: 52px !important;
+    min-width: 62px !important;
+    padding: 5px 9px !important;
+    border-radius: 12px !important;
+    font-size: 9px !important;
+    text-align: center !important;
+    white-space: nowrap;
+    scroll-snap-align: center;
+  }
+
+  /* Der aktive Marker sitzt am Desktop links - unten waere er ein Pfeil. */
+  body.authenticated:not(.public-home) .app-link.active::before,
+  .app-link.active::before {
+    left: 50% !important;
+    top: 2px !important;
+    bottom: auto !important;
+    width: 18px !important;
+    height: 3px !important;
+    transform: translateX(-50%) !important;
+    border-radius: 0 0 4px 4px !important;
+  }
+
+  body.authenticated:not(.public-home) .app-link svg,
+  .app-link svg {
+    width: 19px !important;
+    height: 19px !important;
+  }
+
+  /* Platz fuer die untere Leiste schaffen. */
+  body.authenticated:not(.public-home) .main-stage,
+  .main-stage {
+    padding-bottom: 84px !important;
+  }
+
+  /* Der Zugangs-Button bleibt auf dem Telefon erreichbar. */
+  body.authenticated:not(.public-home) .command-palette-open,
+  #command-palette-open {
+    display: flex !important;
+    position: fixed !important;
+    right: 14px !important;
+    bottom: 78px !important;
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    border-radius: 50% !important;
+    justify-content: center !important;
+    align-items: center !important;
+    z-index: 91 !important;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .5) !important;
+  }
+
+  #command-palette-open span,
+  #command-palette-open kbd {
+    display: none !important;
+  }
+}
+
+/* ---------- Community: Spezialmenue wird Reiter ---------- */
+
+@media (max-width: 860px) {
+  .community-menu {
+    display: flex !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    gap: 8px !important;
+    padding: 10px var(--fh-gutter) !important;
+    scrollbar-width: none;
+  }
+
+  .community-menu::-webkit-scrollbar {
+    display: none;
+  }
+
+  .community-tab {
+    flex: 0 0 auto !important;
+    white-space: nowrap;
+    padding: 10px 12px !important;
+  }
+
+  .community-tab span small {
+    display: none;
+  }
+
+  .member-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  /* Mitgliedertabelle: Kopfzeile verbergen, Zeilen stapeln. */
+  .member-table-head {
+    display: none !important;
+  }
+
+  .member-table-row {
+    grid-template-columns: 1fr !important;
+    gap: 6px !important;
+    padding: 12px !important;
+  }
+
+  .member-pagination {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  .vip-toolbar,
+  .boost-baseline-toolbar,
+  .studio-toolbar {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ---------- Studio ---------- */
+
+@media (max-width: 860px) {
+  .studio-limit-status {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .studio-toolbar {
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+
+  .template-row {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none;
+  }
+
+  .template-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .template-row button {
+    flex: 0 0 auto !important;
+    white-space: nowrap;
+  }
+
+  /* Bilder duerfen ihre volle Breite nutzen. */
+  .discord-window {
+    font-size: 13px !important;
+  }
+}
+
+/* ---------- Dialoge auf dem Telefon als Bottom-Sheet ---------- */
+
+@media (max-width: 860px) {
+  dialog {
+    width: calc(100vw - 16px) !important;
+    max-width: none !important;
+    max-height: 88vh !important;
+    margin: auto 8px 8px !important;
+    border-radius: 22px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  dialog::backdrop {
+    background: rgba(3, 4, 16, .78);
+  }
+
+  .member-dialog-actions {
+    flex-direction: column-reverse !important;
+    gap: 10px !important;
+  }
+
+  /* Daumenreichweite: Primaeraktionen unten, volle Breite. */
+  .member-dialog-actions .button {
+    width: 100% !important;
+    min-height: 48px !important;
+  }
+}
+
+/* ---------- Bedienelemente auf Mindest-Tippflaeche ---------- */
+
+@media (max-width: 860px) {
+  .button,
+  .text-button,
+  .app-link,
+  .community-tab,
+  .module-filter button,
+  .template-row button {
+    min-height: 44px;
+  }
+
+  /* Keine Texteingabe kleiner als 16px, sonst zoomt Android beim Tippen. */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+    min-height: 44px;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 24px;
+  }
+
+  /* Abstaende statt fester Breiten. */
+  .page-head,
+  .page-head-actions,
+  .fh-console-head,
+  .fh-console-actions {
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+    height: auto !important;
+  }
+
+  .page-head h1,
+  .fh-console-title h1 {
+    font-size: 26px !important;
+  }
+}
+
+/* ---------- Anmeldeszene: kein toter Raum ---------- */
+
+@media (max-width: 860px) {
+  .access-scene {
+    min-height: auto !important;
+    padding: 0 0 24px !important;
+    align-items: start !important;
+  }
+
+  .access-panel {
+    margin: 12px var(--fh-gutter) !important;
+    padding: 20px !important;
+    border-radius: 22px !important;
+  }
+
+  .access-brand-stage {
+    display: none !important;
+  }
+
+  #access-title {
+    font-size: 28px !important;
+  }
+
+  .access-assurance {
+    grid-template-columns: 1fr !important;
+  }
+
+  .access-login-action {
+    min-height: 56px !important;
+  }
+}

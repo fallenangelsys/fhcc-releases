@@ -213,6 +213,13 @@ export default [
     }
   },
   {
+    // Build-Hilfsskripte des Android-Projekts laufen in Node.
+    files: ['android/*.mjs', 'android/**/*.mjs'],
+    languageOptions: {
+      globals: nodeGlobals
+    }
+  },
+  {
     ignores: [
       'node_modules/**',
       'dist/**',
@@ -224,6 +231,11 @@ export default [
       'scripts/**',
       'public/**',
       'tests/**',
+      // Vom Build erzeugtes Laufzeitpaket: Kopie von src/ und node_modules.
+      'android/app/src/main/assets/**',
+      'android/.gradle/**',
+      'android/build/**',
+      'android/app/build/**',
       '**/*.cjs',
       '**/*.html'
     ]

@@ -134,6 +134,20 @@ const authPayload = (token, secret) => {
   }
 };
 
+// Exportiert, damit src/index.js Routen, die nicht im Dashboard-Mount liegen
+// (Diagnose, Forum-Cleaner, Emoji-Umbenennung) für den mobilen Client über
+// dieselbe Sitzungsprüfung freigeben kann, statt die Logik zu duplizieren.
+export const createDashboardSessionValidator = (secret) => (req) => {
+  const token = getToken(req);
+  if (!token) return { ok: false, status: 401, error: 'Discord-Anmeldung erforderlich.' };
+  const payload = authPayload(token, String(secret || ''));
+  if (!payload) return { ok: false, status: 401, error: 'Discord-Sitzung ist abgelaufen. Bitte erneut anmelden.' };
+  if (payload.accessVersion !== DASHBOARD_ACCESS_VERSION) {
+    return { ok: false, status: 401, error: 'Dashboard-Login ist veraltet. Bitte neu mit Discord anmelden.' };
+  }
+  return { ok: true, payload };
+};
+
 const cleanupOauthState = () => {
   const now = Date.now();
   for (const [state, meta] of oauthStates.entries()) {

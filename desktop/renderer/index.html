@@ -147,9 +147,12 @@
       .fh-preboot-bar i { width: 100%; transform: none; }
     }
   </style>
-<link rel="stylesheet" href="ui-base.css?v=4.1.3" data-live-diagnostics-v2>
+  <link rel="stylesheet" href="ui-base.css?v=4.1.3" data-live-diagnostics-v2>
   <link rel="stylesheet" href="ui-aurora.css?v=4.1.3">
   <link rel="stylesheet" href="ui-system.css?v=4.1.3">
+  <!-- Mobile-Ebene: bewusst als LETZTE Ebene, damit sie die Desktop-Regeln
+       ueberstimmt. Laedt nur auf schmalen Displays, Desktop bleibt unberuehrt. -->
+  <link rel="stylesheet" href="ui-mobile.css?v=4.1.3" media="(max-width: 860px)">
   </head>
 <body data-theme="dark">
   <div class="app-shell">
@@ -722,6 +725,10 @@
     </form>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- Muss vor allen anderen Modulen laufen: In Electron stellt der Preload
+       window.fallenHeaven bereit, ausserhalb davon dieser mobile-bridge.js.
+       app.js liest die Bridge in Zeile 1 als const api = window.fallenHeaven. -->
+  <script src="mobile-bridge.js?v=4.1.3"></script>
   <script src="stability.js"></script>
   <script src="runtime-state.js"></script>
 <script src="modern-ui-v5.js?v=4.1.3"></script>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- adaptive-icon erwartet einen Drawable als Vordergrund, kein zweites
+     adaptive-icon. Adaptive-Icons sind erst ab API 26 verfuegbar; minSdk
+     ist 26, deshalb genuegt diese eine Variante. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 108x108 mit Sicherheitszone: das Logo sitzt in den mittleren 72dp,
+         damit es auf runden Masken nicht beschnitten wird. -->
+    <group
+        android:scaleX="0.52"
+        android:scaleY="0.52"
+        android:translateX="25.9"
+        android:translateY="25.9">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M54,4L16,22v28c0,23 16,43.6 38,50.5C76,93.6 92,73 92,50V22L54,4zM54,50h22c-2,16.6 -13.8,28.7 -22,31.7V53H32V32.2L54,24.4V50z" />
+    </group>
+</vector>
